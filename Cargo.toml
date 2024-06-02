@@ -22,15 +22,13 @@ tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["sync"] }
 tokio-tungstenite = "0.21.0"
 url = "2.5.0"
-
-alloy-provider = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false, features = [
-    "reqwest",
-] }
 alloy-sol-types = { version = "0.7.0", default-features = false, features = [
     "std",
 ] }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d" }
 
+alloy-provider = { git = "https://github.com/alloy-rs/alloy", version = "0.1.0", rev = "4ecb7d86882ece8a9a7a5a892b71a3c198030731", features = [
+] }
 alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false }
@@ -44,3 +42,4 @@ reqwest = { version = "0.12" }
 revm = { git = "https://github.com/bluealloy/revm", rev = "d54bd99", features = [
     "alloydb",
 ] }
+alloy = "0.1.0"
