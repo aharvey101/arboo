@@ -9,10 +9,6 @@ edition = "2021"
 anyhow = "1.0.82"
 async-trait = "0.1.80"
 dotenv = "0.15.0"
-ethers = "2.0.14"
-ethers-contract = "2.0.14"
-ethers-core = "2.0.14"
-ethers-providers = "2.0.14"
 futures = "0.3.30"
 futures-util = "0.3.30"
 itertools = "0.12.1"
@@ -25,13 +21,6 @@ url = "2.5.0"
 alloy-sol-types = { version = "0.7.0", default-features = false, features = [
     "std",
 ] }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d" }
-
-alloy-provider = { git = "https://github.com/alloy-rs/alloy", version = "0.1.0", rev = "4ecb7d86882ece8a9a7a5a892b71a3c198030731", features = [
-] }
-alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy.git", rev = "44b8a6d", default-features = false }
 cacache = { version = "12.0.0", default-features = false, features = [
     "tokio-runtime",
     "mmap",
@@ -42,4 +31,21 @@ reqwest = { version = "0.12" }
 revm = { git = "https://github.com/bluealloy/revm", rev = "d54bd99", features = [
     "alloydb",
 ] }
-alloy = "0.1.0"
+alloy = { git = "https://github.com/alloy-rs/alloy", rev = "3edca45", features = [
+    "consensus",
+    "contract",
+    "eips",
+    "kzg",
+    "network",
+    "node-bindings",
+    "provider-http",
+    "provider-ipc",
+    "provider-ws",
+    "providers",
+    "rpc-client-ipc",
+    "rpc-client-ws",
+    "rpc-client",
+    "rpc-types-eth",
+    "rpc-types-trace",
+    "signers",
+] }
