@@ -2,5 +2,12 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# solc_version = "0.8.24"
+# auto_detect_solc = false
+remappings = [
+    "@uniswap=lib",
+    "@openzeppelin/contracts/token/ERC20=lib/openzeppelin-contracts/contracts/interfaces/",
+]
+[profile]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
