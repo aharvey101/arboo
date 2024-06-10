@@ -1,5 +1,4 @@
 use alloy::eips::BlockId;
-use alloy::hex;
 use alloy::primitives::Address;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
@@ -7,15 +6,12 @@ use alloy::providers::ProviderBuilder;
 use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
-use alloy::rpc::types::eth::{Block, Filter};
-use alloy_json_abi::Event;
-use alloy_sol_types::abi;
+use alloy::rpc::types::eth::Filter;
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use csv::StringRecord;
-use home::home_dir;
 use indicatif::{ProgressBar, ProgressStyle};
-use sha3::{Digest, Keccak256};
+use revm::primitives::FixedBytes;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -29,12 +25,14 @@ use std::{
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum DexVariant {
     UniswapV2, // 2
+    UniswapV3,
 }
 
 impl DexVariant {
     pub fn num(&self) -> u8 {
         match self {
             DexVariant::UniswapV2 => 2,
+            DexVariant::UniswapV3 => 3,
         }
     }
 }
@@ -150,6 +148,7 @@ pub async fn load_all_pools(
             let pool = Pool::from(row);
             match pool.version {
                 DexVariant::UniswapV2 => v2_pool_cnt += 1,
+                _ => {}
             }
             pools.push(pool);
         }
@@ -171,16 +170,6 @@ pub async fn load_all_pools(
     let ws_client = WsConnect::new(wss_url);
     let ws = ProviderBuilder::new().on_ws(ws_client).await?;
     let provider = Arc::new(ws);
-
-    // Uniswap V2
-    let pair_created_event = "event PairCreated(address,address,address,uint256)";
-
-    let mut hasher = Keccak256::default();
-    hasher.update(pair_created_event.to_string().as_bytes());
-    println!("hasher: {:?}", hasher.clone());
-    let result = hasher.finalize();
-    let hash_bytes: [u8; 32] = result.as_slice().try_into()?;
-    let hasher = B256::from(hash_bytes);
 
     let mut id = if pools.len() > 0 {
         pools.last().as_ref().unwrap().id as i64
@@ -225,11 +214,15 @@ pub async fn load_all_pools(
         let mut requests = Vec::new();
         requests.push(tokio::task::spawn(load_uniswap_v2_pools(
             provider.clone(),
-            range.0,
-            range.1,
-            pair_created_event,
-            hasher,
+            range.0.clone(),
+            range.1.clone(),
         )));
+        requests.push(tokio::task::spawn(load_uniswap_v3_pools(
+            provider.clone(),
+            range.0.clone(),
+            range.1.clone(),
+        )));
+
         let results = futures::future::join_all(requests).await;
         for result in results {
             match result {
@@ -268,10 +261,7 @@ pub async fn load_uniswap_v2_pools(
     provider: Arc<RootProvider<PubSubFrontend>>,
     from_block: u64,
     to_block: u64,
-    event: &str,
-    signature: B256,
 ) -> Result<Vec<Pool>> {
-    println!("Loading v2 pool");
     let mut pools = Vec::new();
     let mut timestamp_map = HashMap::new();
 
@@ -279,22 +269,12 @@ pub async fn load_uniswap_v2_pools(
         .from_block(from_block)
         .to_block(to_block)
         .event("PairCreated(address,address,address,uint256)");
-    println!("Event Filter: {:?}", event_filter);
+
     let logs = provider.get_logs(&event_filter).await?;
-    println!("Logs? {:?}", logs.clone());
-    println!("signature: {:?}", signature);
+
     for log in logs {
-        let topic = log.topics()[0];
         let block_number = log.block_number.unwrap_or_default();
-        println!("Topic:  {:?}", topic);
-        if topic != signature {
-            continue;
-        }
-        println!("Block: {:?}", block_number);
-        println!(
-            "Block as BlockId : {:?}",
-            BlockId::from(block_number.clone())
-        );
+
         let timestamp = if !timestamp_map.contains_key(&block_number) {
             let block = provider
                 .get_block(BlockId::from(block_number), false)
@@ -308,16 +288,24 @@ pub async fn load_uniswap_v2_pools(
             let timestamp = *timestamp_map.get(&block_number).unwrap();
             timestamp
         };
-        let token0 = Address::from_str(log.topics()[1].to_string().as_str()).unwrap();
-        let token1 = Address::from_str(log.topics()[2].to_string().as_str()).unwrap();
-        println!("{:?}, {:?}", token0, token1);
-        // let token0_as_Address: [u8; 20] ;
+        if log.topics()[2].to_string() != "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string() {
+            println!("Token 2 isn't weth but is: {}", log.topics()[2]);
+            continue;
+        }
+        if log.topics()[1].is_zero() {
+            println!("emtpy topic 1");
+            continue;
+        }
+        let topic0 = FixedBytes::from(log.topics()[1]);
+        let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
+        let token0 = Address::from(topic0);
 
+        let token1 = Address::from(
+            FixedBytes::<20>::try_from(&FixedBytes::from(log.topics()[2])[12..32]).unwrap(),
+        );
         let log_data = log.inner.data.data.to_vec();
         let log_data = log_data.as_slice();
 
-        // let log_data = log.data().to_owned().to_vec().as_slice();
-        println!("Decoding");
         let decoded: (Address, B256) = SolValue::abi_decode(log_data, false).unwrap();
         let pool_data = Pool {
             id: -1,
@@ -330,7 +318,72 @@ pub async fn load_uniswap_v2_pools(
             timestamp,
         };
         pools.push(pool_data);
-        println!("decoded: {:?}", decoded);
+    }
+
+    Ok(pools)
+}
+
+pub async fn load_uniswap_v3_pools(
+    provider: Arc<RootProvider<PubSubFrontend>>,
+    from_block: u64,
+    to_block: u64,
+) -> Result<Vec<Pool>> {
+    let mut pools = Vec::new();
+    let mut timestamp_map = HashMap::new();
+
+    let event_filter = Filter::new()
+        .from_block(from_block)
+        .to_block(to_block)
+        .event("PoolCreated(address,address,uint24,int24,address)");
+
+    let logs = provider.get_logs(&event_filter).await?;
+    for log in logs {
+        if log.topics()[1].is_zero() {
+            println!("V3 log 1 empty");
+            continue;
+        }
+        let block_number = log.block_number.unwrap_or_default();
+
+        let timestamp = if !timestamp_map.contains_key(&block_number) {
+            let block = provider
+                .get_block(BlockId::from(block_number), false)
+                .await?
+                .unwrap();
+            let timestamp = block.header.timestamp;
+            timestamp_map.insert(block_number, timestamp);
+            timestamp
+        } else {
+            *timestamp_map.get(&block_number).unwrap()
+        };
+
+        let topic0 = FixedBytes::from(log.topics()[1]);
+        let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
+        let token0 = Address::from(topic0);
+
+        let topic1 = FixedBytes::from(log.topics()[2]);
+        let topic1 = FixedBytes::<20>::try_from(&topic1[12..32]).unwrap();
+        let token1 = Address::from(topic1);
+
+        // Decode the log data
+        let log_data = &log.inner.data.data;
+        let decoded: (B256, B256) = SolValue::abi_decode(log_data, false).unwrap();
+        let pool_address = FixedBytes::<32>::try_from(decoded.1).unwrap();
+        let pool_address = FixedBytes::<20>::try_from(&pool_address[12..32]).unwrap();
+        let pool_address = Address::from(pool_address);
+        let fee = u32::from_str_radix(decoded.0.to_string().as_str().trim_start_matches("0x"), 16)
+            .unwrap();
+
+        let pool_data = Pool {
+            id: -1,
+            address: pool_address,
+            version: DexVariant::UniswapV3,
+            token0,
+            token1,
+            fee,
+            block_number,
+            timestamp,
+        };
+        pools.push(pool_data);
     }
 
     Ok(pools)

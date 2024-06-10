@@ -1,8 +1,9 @@
-use alloy_provider::network::TransactionBuilder;
-use alloy_provider::{network::Ethereum, Provider, RootProvider};
-use alloy_rpc_types::TransactionRequest;
+use alloy::network::Ethereum;
+use alloy::network::TransactionBuilder;
+use alloy::providers::{Provider, RootProvider};
+use alloy::rpc::types::eth::TransactionRequest;
+use alloy::transports::http::Http;
 use alloy_sol_types::SolValue;
-use alloy_transport_http::Http;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use revm::primitives::{keccak256, AccountInfo, Bytecode};
