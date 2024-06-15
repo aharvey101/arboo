@@ -8,7 +8,7 @@ use alloy::{
 use anyhow::Result;
 use dotenv::var;
 use futures::StreamExt;
-use revm_primitives::Address;
+use revm::primitives::Address;
 use std::sync::Arc;
 
 pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()> {
@@ -33,22 +33,25 @@ pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()>
         // continue;
         // }
         println!("Log address: {:#?}", log.inner.address);
-        if address
-            != "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
-                .parse::<Address>()
-                .unwrap()
-        {
-            continue;
-        }
+        // if address
+        //     != Address::try_from(
+        //         "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
+        //             .parse()
+        //             .unwrap(),
+        //     )
+        //     .unwrap()
+        // {
+        //     continue;
+        // }
         println!("Yay a pool we care about");
         // now do simulations!
 
         let adjacent_pool = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
             .parse::<Address>()
             .unwrap();
-        let join_handle = tokio::spawn(simulation(address, adjacent_pool))
-            .await?
-            .expect("Error with spawn");
+        // let join_handle = tokio::spawn(simulation(address, adjacent_pool))
+        // .await?
+        // .expect("Error with spawn");
     }
 
     // subscribe to price changes on events?

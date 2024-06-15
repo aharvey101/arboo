@@ -1,5 +1,6 @@
 use alloy::eips::BlockId;
 use alloy::primitives::Address;
+use alloy::primitives::FixedBytes;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::providers::ProviderBuilder;
@@ -11,8 +12,6 @@ use alloy_sol_types::SolValue;
 use anyhow::Result;
 use csv::StringRecord;
 use indicatif::{ProgressBar, ProgressStyle};
-use revm::primitives::FixedBytes;
-
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{
