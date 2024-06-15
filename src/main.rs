@@ -1,19 +1,13 @@
-use alloy::primitives::TxHash;
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use alloy::pubsub::PubSubFrontend;
+use alloy::providers::ProviderBuilder;
 use alloy::rpc::client::WsConnect;
-use alloy::rpc::types::eth::Block;
 use anyhow::Result;
-use arbooo::arbitrage::strategy::strategy;
-use arbooo::common::abi::*;
-use arbooo::common::helpers::*;
+use arbooo::arbitrage::simulation::simulation;
 use dotenv::dotenv;
 use dotenv::var;
-use revm::db::{AlloyDB, CacheDB};
-use revm::primitives::{address, Address, Bytecode, Bytes, U256};
+
+use revm::primitives::{Address, U256};
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,7 +21,8 @@ async fn main() -> Result<()> {
 
     let provider = ProviderBuilder::new().on_ws(ws_client).await?;
     let provider = Arc::new(provider);
-    strategy(provider).await?;
+    // strategy(provider).await?;
+    simulation(Address::default(), Address::default()).await?;
     // let (pool, other) = load_all_pools(ws_url, 10_000_000, 50000).await.unwrap();
     // simple_test(http_url).await?;
     // 2 - Scan for price changes?
