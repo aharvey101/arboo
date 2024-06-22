@@ -23,8 +23,6 @@ async fn main() -> Result<()> {
     let provider = Arc::new(provider);
     // strategy(provider).await?;
     simulation(Address::default(), Address::default()).await?;
-    // let (pool, other) = load_all_pools(ws_url, 10_000_000, 50000).await.unwrap();
-    // simple_test(http_url).await?;
     // 2 - Scan for price changes?
 
     // to build a arbitrage bot need to do the following:
