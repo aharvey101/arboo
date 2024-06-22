@@ -16,7 +16,7 @@ pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()>
     // 1 load all pools
 
     // let (pools, last_id) = load_all_pools(var("WS_URL").unwrap(), 10_000_000, 50000).await?;
-    // let pools = get_pools()?;
+    let pools = get_pools();
     let contract_address: Address = "0x3ffeea07a27fab7ad1df5297fa75e77a43cb5790".parse()?;
 
     // Define the event filter
@@ -29,26 +29,17 @@ pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()>
     while let Some(log) = stream.next().await {
         // Print the log data (you can parse it further based on the event structure)
         let address = log.inner.address;
-        // if !pools.contains(&address.clone().to_string().as_str()) {
-        // continue;
-        // }
+        if !pools
+            .clone()
+            .into_iter()
+            .any(|(pool_a, pool_b)| pool_a == address.to_string() || pool_b == address.to_string())
+        {
+            continue;
+        }
         println!("Log address: {:#?}", log.inner.address);
-        // if address
-        //     != Address::try_from(
-        //         "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
-        //             .parse()
-        //             .unwrap(),
-        //     )
-        //     .unwrap()
-        // {
-        //     continue;
-        // }
         println!("Yay a pool we care about");
         // now do simulations!
 
-        let adjacent_pool = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
-            .parse::<Address>()
-            .unwrap();
         // let join_handle = tokio::spawn(simulation(address, adjacent_pool))
         // .await?
         // .expect("Error with spawn");
@@ -66,16 +57,20 @@ pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()>
 
     Ok(())
 }
-// fn get_pools() -> Result<Vec<&str>> {
-//     todo!();
-//     // just define some pools, we gotta work out a better way to get pools that exist on v2 and v3
-//     //
-//     let pools: Vec<&str> = vec![
-//         "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8", //USDC/ETH v3
-//         "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc", //USDC/ETH v2 0.3% fee
-//         "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36", //ETH/USDT v3? 0.3% fee
-//         "0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852", //ETH/USDT v2 0.3% fee
-//     ];
+fn get_pools() -> Vec<(String, String)> {
+    // todo!();
+    // just define some pools, we gotta work out a better way to get pools that exist on v2 and v3
+    //
+    let pools: Vec<(String, String)> = vec![
+        (
+            "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc".to_string(), //USDC/ETH v2 0.3% fee
+            "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36".to_string(), //ETH/USDT v3? 0.3% fee
+        ),
+        (
+            "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8".to_string(), //USDC/ETH v3
+            "0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852".to_string(), //ETH/USDT v2 0.3% fee
+        ),
+    ];
 
-//     Ok(pools.to_owned())
-// }
+    pools
+}
