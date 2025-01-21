@@ -1,76 +1,51 @@
-use crate::arbitrage::simulation::{self, simulation};
-use crate::common::pools::load_all_pools;
-use alloy::rpc::types::eth::Filter;
+use crate::arbitrage::simulation::simulation;
+use crate::common::pools::{load_all_pools, Pool};
 use alloy::{
     providers::{Provider, RootProvider},
     pubsub::PubSubFrontend,
 };
 use anyhow::Result;
-use dotenv::var;
-use futures::StreamExt;
 use revm::primitives::Address;
-use std::sync::Arc;
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()> {
-    //
-    // 1 load all pools
+    // Load all pools
+    let (pools, _) = load_all_pools(std::env::var("WS_URL").unwrap(), 10_000_000, 50000).await?;
 
-    // let (pools, last_id) = load_all_pools(var("WS_URL").unwrap(), 10_000_000, 50000).await?;
-    let pools = get_pools();
-    let contract_address: Address = "0x3ffeea07a27fab7ad1df5297fa75e77a43cb5790".parse()?;
+    // Create a map of pool addresses to their paired pools
+    let pool_map: HashMap<Address, Address> = get_pool_pairs()
+        .iter()
+        .flat_map(|(pool_a, pool_b)| {
+            let addr_a = Address::from_str(pool_a).unwrap();
+            let addr_b = Address::from_str(pool_b).unwrap();
+            vec![(addr_a, addr_b), (addr_b, addr_a)]
+        })
+        .collect();
 
-    // Define the event filter
-    let swap_event = "Swap(address,address,int256,int256,uint160,uint128,int24)";
-    let event_filter = Filter::new().event(swap_event);
-
-    // Subscribe to the events
-    let mut stream = provider.subscribe_logs(&event_filter).await?.into_stream();
-    println!("Bout to stream: {:?}", stream);
-    while let Some(log) = stream.next().await {
-        // Print the log data (you can parse it further based on the event structure)
-        let address = log.inner.address;
-        if !pools
-            .clone()
-            .into_iter()
-            .any(|(pool_a, pool_b)| pool_a == address.to_string() || pool_b == address.to_string())
-        {
-            continue;
-        }
-        println!("Log address: {:#?}", log.inner.address);
-        println!("Yay a pool we care about");
-        // now do simulations!
-
-        // let join_handle = tokio::spawn(simulation(address, adjacent_pool))
-        // .await?
-        // .expect("Error with spawn");
+    // Iterate through the pools and perform simulations
+    for (pool_a, pool_b) in pool_map {
+        // Perform simulation for each pool pair
+        let result = simulation(pool_a, pool_b).await?;
+        println!(
+            "Simulation result for pools {:?} and {:?}: {:?}",
+            pool_a, pool_b, result
+        );
     }
-
-    // subscribe to price changes on events?
-
-    // 2. Subscribe to all pools
-    // 3. When an event happens:
-    //      - spawn a thread handling the event
-    //      - spawned thread should run the simulation function
-    //      - simulation function should calculate the potential for profit
-    //      - profit is something like:
-    //          - arb revenue - gas cost
 
     Ok(())
 }
-fn get_pools() -> Vec<(String, String)> {
-    // todo!();
-    // just define some pools, we gotta work out a better way to get pools that exist on v2 and v3
-    //
-    let pools: Vec<(String, String)> = vec![
-        (
-            "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc".to_string(), //USDC/ETH v2 0.3% fee
-            "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36".to_string(), //ETH/USDT v3? 0.3% fee
-        ),
-        (
-            "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8".to_string(), //USDC/ETH v3
-            "0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852".to_string(), //ETH/USDT v2 0.3% fee
-        ),
-    ];
 
-    pools
+fn get_pool_pairs() -> Vec<(String, String)> {
+    vec![
+        // USDC/ETH V2 0.3% <-> ETH/USDT V3 0.3%
+        (
+            "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc".to_string(),
+            "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36".to_string(),
+        ),
+        // USDC/ETH V3 0.3% <-> ETH/USDT V2 0.3%
+        (
+            "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8".to_string(),
+            "0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852".to_string(),
+        ),
+    ]
 }

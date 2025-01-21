@@ -1,9 +1,7 @@
 use crate::common::revm::{EvmSimulator, Tx};
-use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
-use alloy::json_abi::JsonAbi;
 use alloy::network::primitives::BlockTransactionsKind;
-use alloy::network::{AnyNetwork, BlockResponse};
+use alloy::network::{AnyNetwork};
 use alloy::primitives::{address as alloy_address, Address as alloy_Address, Bytes as alloy_Bytes, Signed, B256, U160, U64};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider, Network};
 use alloy::pubsub::PubSubFrontend;
