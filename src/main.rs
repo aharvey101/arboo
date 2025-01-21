@@ -1,6 +1,8 @@
 use alloy::providers::ProviderBuilder;
 use alloy::rpc::client::WsConnect;
 use anyhow::Result;
+use arbooo::arbitrage::liquidity;
+use arbooo::arbitrage::simple_swap_sim::simple_swap_simulation;
 use arbooo::arbitrage::simulation::simulation;
 use dotenv::dotenv;
 use dotenv::var;
@@ -19,10 +21,14 @@ async fn main() -> Result<()> {
     let http_url = url::Url::from_str(http_url).unwrap();
     let ws_client = WsConnect::new(ws_url.clone());
 
-    let provider = ProviderBuilder::new().on_ws(ws_client).await?;
+        let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
     let provider = Arc::new(provider);
     // strategy(provider).await?;
-    simulation(Address::default(), Address::default()).await?;
+    // simulation(Address::default(), Address::default()).await?;
+    // liquidity::liquidity().await?;
+    simulation().await?;
+    // simple_swap_simulation().await?;
+
     // 2 - Scan for price changes?
 
     // to build a arbitrage bot need to do the following:
