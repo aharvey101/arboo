@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.9.2", default-features = false, features = ["consensus", "contract", "eips", "kzg", "network", "node-bindings", "provider-http", "provider-ipc", "provider-ws", "providers", "rpc-client-ws", "rpc-client", "rpc-types-eth", "rpc-types-trace", "signers", "reqwest", "signer-local", "full"] }
+alloy = { version = "0.7.3", default-features = false, features = ["consensus", "contract", "eips", "kzg", "network", "node-bindings", "provider-http", "provider-ipc", "provider-ws", "providers", "rpc-client-ws", "rpc-client", "rpc-types-eth", "rpc-types-trace", "signers", "reqwest", "signer-local", "full"] }
 anyhow = "1.0.82"
 async-trait = "0.1.85"
 dotenv = "0.15.0"
@@ -38,6 +38,5 @@ keccak = "0.1.5"
 sha3 = "0.10.8"
 eth-encode-packed = "0.1.0"
 hash = "0.3.0"
-foundry-evm = { git = "https://github.com/foundry-rs/foundry.git", version = "0.3.0" }
 alloy-primitives = "0.8.19"
 lazy_static = "1.4.0"
