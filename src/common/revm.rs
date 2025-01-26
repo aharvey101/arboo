@@ -1,12 +1,14 @@
+use alloy::contract::{ContractInstance, Interface};
 use anyhow::{anyhow, Result};
-use alloy::providers::{Provider, ReqwestProvider, RootProvider, ProviderLayer};
-use alloy::pubsub::{PubSubConnect, PubSubFrontend};
-use foundry_evm::backend::{Backend, BlockchainDb, BlockchainDbMeta, SharedBackend};
+use alloy_sol_types::SolCall;
+use alloy::providers::{RootProvider};
+use alloy::pubsub::{PubSubFrontend};
 use alloy::primitives::{U64, Address};
-use revm::db::{EmptyDB, EmptyDBTyped, CacheDB , AlloyDB};
+use revm::db::{AlloyDB, CacheDB, DbAccount, EmptyDB, EmptyDBTyped};
 use alloy::signers::local::PrivateKeySigner;
-use revm::inspectors::CustomPrintTracer;
-use revm::primitives::{Bytes,  Log, };
+use revm::handler::register::EvmHandler;
+use revm::primitives::SpecId::LATEST;
+use revm::primitives::{handler_cfg, Bytes, HandlerCfg, Log, SpecId };
 use revm::{
     primitives::{
         keccak256, AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256, specification::{Spec, LatestSpec},
@@ -14,20 +16,14 @@ use revm::{
     Evm,
     Database,
     EvmContext,
-    Handler,
     InMemoryDB,
     Context,
-
-    GetInspector,
-    inspector_handle_register,
 };
-use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
-use alloy::network::{AnyNetwork};
+use alloy::network::{AnyNetwork, Ethereum};
 use std::str::FromStr;
-use alloy::transports::ws::WsConnect;
-
+use alloy::eips::BlockId;
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
@@ -75,53 +71,47 @@ pub struct TxResult {
     pub gas_refunded: u64,
 }
 
+// type My_Evm_Context = EvmContext<CacheDB<AlloyDB<Client, AnyNetwork, RootProvider<PubSubFrontend>>>>;
 
 #[derive(Debug )]
 pub struct EvmSimulator<'a> {
     pub owner: Address,
-    pub evm: Arc<Mutex<Evm<'a, EvmContext<CacheDB<SharedBackend>>, CacheDB<CacheDB<EmptyDBTyped<Infallible>>>>>>,
+    pub evm: Arc<Mutex<Evm<'a, EvmContext<CacheDB<InMemoryDB>>,CacheDB<AlloyDB<PubSubFrontend, AnyNetwork, Arc<RootProvider<PubSubFrontend, AnyNetwork>>>>>>>,  
     pub block_number: U64,
 }
 impl<'a> EvmSimulator<'a> {
     pub fn new(provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>, owner: Option<Address>, block_number: U64) -> Self {
-
-        let shared_backend = SharedBackend::spawn_backend_thread(
-            provider.clone(),
-            BlockchainDb::new(
-                BlockchainDbMeta {
-         cfg_env: Default::default(),
-                    block_env: Default::default(),
-                    hosts: BTreeSet::from(["".to_string()]),
-                },
-                None,
-            ),
-            Some(block_number.into()),
-        );
-        let db = CacheDB::new(shared_backend);
-        EvmSimulator::new_with_db(owner, block_number, db)
+        EvmSimulator::new_with_db(owner, block_number, provider)
     }
 
     pub fn new_with_db(
         owner: Option<Address>,
         block_number: U64,
-        my_db: CacheDB<SharedBackend>,
+        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>
     ) -> Self {
         let owner = match owner {
             Some(owner) => owner,
             None => PrivateKeySigner::random().address(),
         };
 
-        let evm_external = EvmContext::new(my_db.clone());
-        // let alloy_db = AlloyDB::new(provider.clone(), block_number.into()).unwrap();
-        // let cached_db = CacheDB::new(alloy_db);
+        let alloy_db =  AlloyDB::new(provider, BlockId::from(block_number)).unwrap();
+
+        // let evm_external = EvmContext::new(alloy_db);
+        // isshe here is that this should be an Queryable DB but it's not? Maybe InMemoryDB isn't what I am looking for
         let empty_db = CacheDB::new(InMemoryDB::default());    
-        let evm_internal= EvmContext::new(empty_db.clone());
+        let evm_external = EvmContext::new(empty_db);
+
+        // let evm_internal= EvmContext::new(empty_db);
+        let evm_internal = EvmContext::new(CacheDB::new(alloy_db));
 
         let context = Context::new(evm_internal, evm_external);
 
-        let handler = Handler::mainnet::<LatestSpec>();
+        let handler_cfg = HandlerCfg {
+           spec_id: SpecId::LATEST,
+        };
+        let handler = EvmHandler::new(handler_cfg);
 
-        let evm = Evm::new(context, handler);   
+        let evm= Evm::new(context, handler);   
 
         let evm = evm 
         .modify() 
@@ -178,6 +168,7 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub fn staticcall(&mut self, tx: Tx) -> Result<TxResult> {
+
         self._call(tx, false)
     }
 
@@ -195,10 +186,10 @@ impl<'a> EvmSimulator<'a> {
             evm.context.evm.env.tx.gas_price = tx.gas_price;
             evm.context.evm.env.tx.gas_limit = tx.gas_limit;
 
-        let result;
+        let result: revm::primitives::ExecutionResult;
 
         if commit {
-            result = match evm.transact_commit() {
+            result = match evm.transact_commit(){
                 Ok(result) => result,
                 Err(e) => return Err(anyhow!("EVM call failed: {:?}", e)),
             };
@@ -209,7 +200,6 @@ impl<'a> EvmSimulator<'a> {
             result = ref_tx.result;
         }
 
-        println!("result: {:?}", result);
         let output = match result {
             ExecutionResult::Success {
                 gas_used,
@@ -272,6 +262,23 @@ impl<'a> EvmSimulator<'a> {
         }
     }
 
+    pub fn load_account(&mut self, address: Address) ->  (){
+        if let Ok(mut evm) = self.evm.clone().lock() {
+         evm.context.evm.db.load_account(address).unwrap();
+        }
+        else {
+        ()
+        }
+    }
+
+    // pub fn get_code_at(&mut self, address: Address) -> AccountInfo{
+    //     if let Ok(mut evm) = self.evm.clone().lock() {
+    // let accountInfo = evm.context.evm.db.load_account(address).unwrap().info.clone();
+    //     } else {
+    //         AccountInfo::default()    
+    //     }
+    // }
+
     pub fn get_erc20_balance(&mut self, address: Address, token: Address, index: U256) -> U256 {
         if let Ok(mut evm) = self.evm.clone().lock() {
             evm.context.evm.db.storage(address, index).unwrap()
@@ -295,5 +302,67 @@ impl<'a> EvmSimulator<'a> {
             println!("Failed to insert account storage");
         }
     }
+    // NOTE: probably want to change this and not have to get the abi from that folder
+    pub fn get_weth_balance(&mut self, address: Address, token: Address, provider:Arc<RootProvider<PubSubFrontend, AnyNetwork>>, latest_gas_limit: &u64, latest_gas_price: &U256)  {
+
+        alloy::sol!{
+            function balanceOf(address account) external view returns (uint256);
+        }
+
+        let abi = serde_json::from_str(include_str!("../arbitrage/weth.json")).unwrap();
+
+        let contract = ContractInstance::<Address, Arc<RootProvider<PubSubFrontend, AnyNetwork>>, Interface>::new(
+            self.owner,
+            provider,
+            Interface::new(abi),
+        );
+
+        // create a transaction, call the balanceOf function of the token contract
+        let data = balanceOfCall {
+            account: address,
+        };
+
+        let data = data.abi_encode();
+
+        let tx = Tx {
+            caller: self.owner,
+            transact_to: token,
+            data: data.into(),
+            value: U256::ZERO,
+            gas_price: *latest_gas_price,
+            gas_limit: *latest_gas_limit,
+        };
+
+        let result = self.call(tx).unwrap();
+
+        print!("result from balance of call: {:?}", result);
+
+        let res = contract.decode_output("balanceOf", &result.output, false).unwrap();
+
+        let balance = res[0].clone();
+
+        println!("balance: {:?}", balance);
+        // decode result 
+
+    }
+
+    pub fn get_accounts(&mut self) {
+           if let Ok(evm)= self.evm.clone().lock() {
+               let accounts = &evm.context.evm.db.accounts;
+               println!("Accounts: {:?}", accounts);
+           }; 
+           ()
+    }
+
+    pub fn get_db(&mut self ) {
+        if let Ok(evm) = self.evm.clone().lock() {
+            let db = &evm.context.evm.db;
+            println!("//////////////////////////////////////////////////////");
+            println!("Logs: {:?}", db);
+        }
+        ()
+    }
+
+
 
 }

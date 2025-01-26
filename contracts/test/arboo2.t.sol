@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.24;
+pragma solidity ^0.8.0;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {
@@ -35,16 +35,16 @@ contract UniswapV3FlashTest is Test {
         flashSwap = new UniswapV3FlashSwap();
 
         // Create an arbitrage opportunity on v3 pool - make WETH cheaper on pool0
-        weth.deposit{value: 500 * 1e18}();
-        weth.approve(address(router), 500 * 1e18);
+        weth.deposit{value: 5000 * 1e18}();
+        weth.approve(address(router), 5000 * 1e18);
         router.exactInputSingle(
             ISwapRouter02.ExactInputSingleParams({
                 tokenIn: WETH,
                 tokenOut: DAI,
                 fee: FEE_0,
                 recipient: address(0),
-                amountIn: 500 * 1e18,
-                amountOutMinimum: 0,
+                amountIn: 4999 * 1e18,
+                amountOutMinimum: 1500000,
                 sqrtPriceLimitX96: 0
                 })
 
@@ -64,18 +64,10 @@ contract UniswapV3FlashTest is Test {
 
         /*uint[] memory amountOut = v2_router.getAmountsOut(500 * 1e18, path);*/
 
-        v2_router.swapExactTokensForETH(
-            500 * 1e18,
-            /*amountOut[1],*/
-            1750000 * 1e18,
-            path,
-            address(0),
-            block.timestamp
-        );
     }
 
-    function test_flashSwap_V3_to_V3() public {
-        uint256 bal0 = dai.balanceOf(address(this));
+    function test_flashSwap_V3_to_V2() public {
+        uint256 bal0 = weth.balanceOf(address(this));
         flashSwap.flashSwap_V3_to_V2({
             pool0: address(pool0),
             fee1: FEE_1,
@@ -83,7 +75,7 @@ contract UniswapV3FlashTest is Test {
             tokenOut: WETH,
             amountIn: DAI_AMOUNT_IN
         });
-        uint256 bal1 = dai.balanceOf(address(this));
+        uint256 bal1 = weth.balanceOf(address(this));
         uint256 profit = bal1 - bal0;
         assertGt(profit, 0, "profit = 0");
         console2.log("Profit %e", profit);
