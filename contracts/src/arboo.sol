@@ -135,18 +135,6 @@ contract UniswapV3FlashSwap {
             amountOutMin: 1
         });
 
-        if (buyBackAmount < amountIn) {
-            revert(
-                string(
-                    abi.encodePacked(
-                        "Would underflow: ",
-                        toString(buyBackAmount), // using helper function below
-                        " vs ",
-                        toString(amountIn)
-                    )
-                )
-            );
-        }
         require(buyBackAmount > amountIn, "buyBackAmount < amountIn");
         uint256 profit = buyBackAmount - amountIn;
         require(profit > 0, "profit = 0");
@@ -161,25 +149,6 @@ contract UniswapV3FlashSwap {
         }
     }
 
-    // Helper function to convert uint to string
-    function toString(uint256 value) internal pure returns (string memory) {
-        if (value == 0) {
-            return "0";
-        }
-        uint256 temp = value;
-        uint256 digits;
-        while (temp != 0) {
-            digits++;
-            temp /= 10;
-        }
-        bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits -= 1;
-            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
-            value /= 10;
-        }
-        return string(buffer);
-    }
 }
 
 interface ISwapRouter02 {
