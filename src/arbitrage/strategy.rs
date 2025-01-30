@@ -1,4 +1,5 @@
 use crate::arbitrage::simulation::simulation;
+use crate::common::logs::LogEvent;
 use crate::common::pools::{load_all_pools, Pool};
 use alloy::{
     providers::{Provider, RootProvider},
@@ -7,32 +8,33 @@ use alloy::{
 use anyhow::Result;
 use revm::primitives::Address;
 use std::{collections::HashMap, str::FromStr, sync::Arc};
+use tokio::sync::broadcast::Sender;
 
-pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>) -> Result<()> {
-    // Load all pools
-    let (pools, _) = load_all_pools(std::env::var("WS_URL").unwrap(), 10_000_000, 50000).await?;
+pub async fn strategy(
+    provider: Arc<RootProvider<PubSubFrontend>>,
+    sender: Sender<LogEvent>,
+){
 
-    // Create a map of pool addresses to their paired pools
-    let pool_map: HashMap<Address, Address> = get_pool_pairs()
-        .iter()
-        .flat_map(|(pool_a, pool_b)| {
-            let addr_a = Address::from_str(pool_a).unwrap();
-            let addr_b = Address::from_str(pool_b).unwrap();
-            vec![(addr_a, addr_b), (addr_b, addr_a)]
-        })
-        .collect();
+    let mut event_reciever = sender.subscribe();
 
-    // Iterate through the pools and perform simulations
-    for (pool_a, pool_b) in pool_map {
-        // Perform simulation for each pool pair
-        let result = simulation(pool_a, pool_b).await?;
-        println!(
-            "Simulation result for pools {:?} and {:?}: {:?}",
-            pool_a, pool_b, result
-        );
+    loop {
+        match event_reciever.recv().await {
+            Ok(event) => 
+            {
+
+            // doing the simulation is very slow
+            // we can maybe do it faster by doing two quote simulations and checking the difference??
+            
+            // run the simulation twice?
+            simulation(event.token0, event.token1).await.expect("Error running simulation");
+            simulation(event.token1, event.token0).await.expect("Error doing second simulation");
+
+            }
+            Err(err) => print!("Error recieving event {:?}", err),
+        }
     }
 
-    Ok(())
+
 }
 
 fn get_pool_pairs() -> Vec<(String, String)> {

@@ -8,6 +8,7 @@ use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
 use alloy::rpc::types::eth::Filter;
+use alloy::rpc::types::BlockTransactionsKind;
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use csv::StringRecord;
@@ -26,7 +27,6 @@ pub enum DexVariant {
     UniswapV2, // 2
     UniswapV3,
 }
-
 impl DexVariant {
     pub fn num(&self) -> u8 {
         match self {
@@ -118,11 +118,7 @@ pub async fn load_all_pools(
     from_block: u64,
     chunk: u64,
 ) -> Result<(Vec<Pool>, i64)> {
-    match create_dir_all("cache") {
-        _ => {
-            println!("Created directory")
-        }
-    }
+    create_dir_all("cache").expect("Error creating directory");
 
     let cache_file = "cache/.cached-pools.csv";
     let file_path = Path::new(cache_file);
@@ -276,7 +272,7 @@ pub async fn load_uniswap_v2_pools(
 
         let timestamp = if !timestamp_map.contains_key(&block_number) {
             let block = provider
-                .get_block(BlockId::from(block_number), false)
+                .get_block(BlockId::from(block_number), BlockTransactionsKind::Full)
                 .await
                 .unwrap()
                 .unwrap();
@@ -287,14 +283,14 @@ pub async fn load_uniswap_v2_pools(
             let timestamp = *timestamp_map.get(&block_number).unwrap();
             timestamp
         };
-        if log.topics()[2].to_string() != "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string() {
-            println!("Token 2 isn't weth but is: {}", log.topics()[2]);
-            continue;
-        }
-        if log.topics()[1].is_zero() {
-            println!("emtpy topic 1");
-            continue;
-        }
+        // if log.topics()[2].to_string() != weth_address() {
+        //     println!("Token 2 isn't weth but is: {}", log.topics()[2]);
+        //     continue;
+        // }
+        // if log.topics()[1].is_zero() {
+        //     println!("emtpy topic 1");
+        //     continue;
+        // }
         let topic0 = FixedBytes::from(log.topics()[1]);
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
         let token0 = Address::from(topic0);
@@ -345,7 +341,7 @@ pub async fn load_uniswap_v3_pools(
 
         let timestamp = if !timestamp_map.contains_key(&block_number) {
             let block = provider
-                .get_block(BlockId::from(block_number), false)
+                .get_block(BlockId::from(block_number), BlockTransactionsKind::Full)
                 .await?
                 .unwrap();
             let timestamp = block.header.timestamp;
@@ -386,4 +382,8 @@ pub async fn load_uniswap_v3_pools(
     }
 
     Ok(pools)
+}
+
+fn weth_address()-> String{
+    String::from("0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
 }
