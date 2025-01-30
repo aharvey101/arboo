@@ -1,40 +1,33 @@
-use crate::arbitrage::simulation::simulation;
+use super::quoter::execute_quotes;
+use crate::arbitrage::simulation::{simulation, usdc_addr, weth_addr};
 use crate::common::logs::LogEvent;
-use crate::common::pools::{load_all_pools, Pool};
-use alloy::{
-    providers::{Provider, RootProvider},
-    pubsub::PubSubFrontend,
-};
-use anyhow::Result;
-use revm::primitives::Address;
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use alloy::primitives::U256;
+use alloy::{providers::RootProvider, pubsub::PubSubFrontend};
+use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 
-pub async fn strategy(
-    provider: Arc<RootProvider<PubSubFrontend>>,
-    sender: Sender<LogEvent>,
-){
-
+pub async fn strategy(provider: Arc<RootProvider<PubSubFrontend>>, sender: Sender<LogEvent>) {
     let mut event_reciever = sender.subscribe();
 
     loop {
         match event_reciever.recv().await {
-            Ok(event) => 
-            {
+            Ok(event) => {
+                // doing the simulation is very slow
+                // we can maybe do it faster by doing two quote simulations and checking the difference??
 
-            // doing the simulation is very slow
-            // we can maybe do it faster by doing two quote simulations and checking the difference??
-            
-            // run the simulation twice?
-            simulation(event.token0, event.token1).await.expect("Error running simulation");
-            simulation(event.token1, event.token0).await.expect("Error doing second simulation");
+                //
 
+                // run the simulation twice?
+                // simulation(event.token0, event.token1)
+                //     .await
+                //     .expect("Error running simulation");
+                // simulation(event.token1, event.token0)
+                //     .await
+                //     .expect("Error doing second simulation");
             }
             Err(err) => print!("Error recieving event {:?}", err),
         }
     }
-
-
 }
 
 fn get_pool_pairs() -> Vec<(String, String)> {
@@ -51,3 +44,5 @@ fn get_pool_pairs() -> Vec<(String, String)> {
         ),
     ]
 }
+
+// execute_quotes(U256::from(1000), usdc_addr(), weth_addr()).await.expect("Failed");

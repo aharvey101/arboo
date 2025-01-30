@@ -1,11 +1,9 @@
 use super::pairs::Event;
-use crate::common::pairs::{V2PoolCreated, V3PoolCreated};
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::Address;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::Filter;
-use anyhow::Result;
 use futures::StreamExt;
 use revm::primitives::{address, keccak256};
 use std::{collections::HashMap, sync::Arc};
@@ -34,23 +32,16 @@ pub async fn get_logs(
     let mut stream = sub.into_stream();
 
     while let Some(res) = stream.next().await {
-        // here we need to filter for logs that match our pairs
         let key = res.address();
         let token0 = res.data().topics()[1];
         let token0 = Address::from_slice(&token0.0[12..32]);
         let token1 = Address::from_slice(&res.data().topics()[2].0[12..32]);
-        // filter our pairs that dont have weth
-        // println!("Log: {:?}", res);
-        let weth = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
-        // For now we will just loop through the hashmap and find the corresponding pool address
         if pairs.contains_key::<Address>(&key) {
 
             match pairs.get(&key).unwrap() {
                 Event::PairCreated(pair) => {
-                    if pair.token0 != weth && pair.token1 != weth {
-                        continue;
-                    }
                     let value = pairs.values().find(|value| {
                         let test = match value {
                             Event::PoolCreated(v3_pair) => {
@@ -65,13 +56,10 @@ pub async fn get_logs(
                         };
                         test
                     });
-
-
                     let v3_address = match value {
                         Some(Event::PoolCreated(pair)) => pair.pair_address,
                         _ => continue,
                     };
-                    println!("V2 Pair: {v3_address:?}");
                     match event_sender.send(LogEvent {
                         pool_variant:2,
                         corresponding_pool_address: v3_address,
@@ -82,12 +70,9 @@ pub async fn get_logs(
                         Ok(_) => {}
                         Err(_) => {}
                     }
-                    println!("pair: {pair:?}");
                     continue;
                 }
                 Event::PoolCreated(pair) => {
-
-                    // do same thing
                     let value = pairs.values().find(|value| {
                         let test = match value {
                             Event::PairCreated(v2_pair) => {
@@ -107,7 +92,6 @@ pub async fn get_logs(
                         Some(Event::PoolCreated(pair)) => pair.pair_address,
                         _ => continue,
                     };
-
                     match event_sender.send(LogEvent {
                         pool_variant: 3,
                         corresponding_pool_address: v2_address,

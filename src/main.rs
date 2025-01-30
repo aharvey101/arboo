@@ -1,6 +1,7 @@
 use alloy::providers::ProviderBuilder;
 use alloy::rpc::client::WsConnect;
 use anyhow::Result;
+use arbooo::arbitrage::evm::threaded_evm;
 use arbooo::arbitrage::strategy::strategy;
 use arbooo::common::logs;
 use arbooo::common::logs::LogEvent;
@@ -10,7 +11,7 @@ use arbooo::common::pairs::V3PoolCreated;
 use arbooo::common::pools;
 use dotenv::dotenv;
 use dotenv::var;
-use revm::primitives::{Address, U256};
+use revm::primitives::Address;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -27,7 +28,6 @@ async fn main() -> Result<()> {
     let ws_url = var::<&str>("WS_URL").unwrap();
     let http_url = var::<&str>("HTTP_URL").unwrap();
     let http_url = http_url.as_str();
-    let http_url = url::Url::from_str(http_url).unwrap();
     let ws_client = WsConnect::new(ws_url.clone());
 
     let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
             .await
             .unwrap();
     }
-    
+
     let mut set = JoinSet::new();
 
     let (sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
@@ -90,6 +90,11 @@ async fn main() -> Result<()> {
     // 2. Listen for logs on pools
     set.spawn(logs::get_logs(provider.clone(), pools_map, sender));
 
+
+    let (new_sender, _): (Sender<()>, _) = broadcast::channel(512); 
+    // create evm thread:
+    threaded_evm(new_sender.clone()).await.unwrap();
+
     // 3. If a log has a pool in a hashmap, it could be a buy or sell on that pool
     // 4. do corresponding simulations (if buy, then price increased, so check if sim creates profit by selling on other pool and vice versa)
     // 5.
@@ -100,3 +105,4 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+    
