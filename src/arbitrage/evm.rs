@@ -99,7 +99,7 @@ pub async fn threaded_evm(
     }
     // we want to load all of the contracts into memory
     println!("Loading pools");
-    for (addr, event) in pools_map.iter().take(5) {
+    for (addr, event) in pools_map.iter(){
         println!("Loading pool, {:?}, number:", addr);
         let mut sim = simulator.lock().await;
         sim.load_account(*addr).await;
@@ -111,18 +111,19 @@ pub async fn threaded_evm(
         }
     }
 
-    println!("Loaded Pools");
-    // when we get a message, handle it and
-
     let mut event_reciever = sender.subscribe();
     loop {
         match event_reciever.recv().await {
             Ok(message) => {
-                println!("messsage: {:?}", message);
+
             }
             Err(err) => {
                 println!("OOP")
             }
         }
     }
+}
+
+pub fn start_evm_thread(sender: Sender<()>) {
+    tokio::spawn(threaded_evm(sender));
 }
