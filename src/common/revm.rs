@@ -1,29 +1,30 @@
 use alloy::contract::{ContractInstance, Interface};
-use anyhow::{anyhow, Result};
-use alloy_sol_types::SolCall;
-use alloy::providers::{RootProvider};
-use alloy::pubsub::{PubSubFrontend};
-use alloy::primitives::{U64, Address};
-use revm::db::{AlloyDB, CacheDB, DbAccount, EmptyDB, EmptyDBTyped};
+use alloy::dyn_abi::DynSolValue;
+use alloy::eips::BlockId;
+use alloy::hex;
+use alloy::network::{AnyNetwork, Ethereum};
+use alloy::primitives::{Address, U64};
+use alloy::providers::RootProvider;
+use alloy::pubsub::PubSubFrontend;
+use alloy::rpc::types::trace::geth::call;
 use alloy::signers::local::PrivateKeySigner;
+use alloy_sol_types::SolCall;
+use anyhow::{anyhow, Error, Result};
+use revm::db::{AlloyDB, CacheDB, DbAccount, EmptyDB, EmptyDBTyped};
 use revm::handler::register::EvmHandler;
 use revm::primitives::SpecId::LATEST;
-use revm::primitives::{handler_cfg, Bytes, HandlerCfg, Log, SpecId };
+use revm::primitives::{handler_cfg, Bytes, HandlerCfg, Log, SpecId};
 use revm::{
     primitives::{
-        keccak256, AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256, specification::{Spec, LatestSpec},
+        keccak256,
+        specification::{LatestSpec, Spec},
+        AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256,
     },
-    Evm,
-    Database,
-    EvmContext,
-    InMemoryDB,
-    Context,
+    Context, Database, Evm, EvmContext, InMemoryDB,
 };
 use std::convert::Infallible;
-use std::sync::{Arc, Mutex};
-use alloy::network::{AnyNetwork, Ethereum};
 use std::str::FromStr;
-use alloy::eips::BlockId;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
@@ -73,53 +74,69 @@ pub struct TxResult {
 
 // type My_Evm_Context = EvmContext<CacheDB<AlloyDB<Client, AnyNetwork, RootProvider<PubSubFrontend>>>>;
 
-#[derive(Debug )]
+#[derive(Debug)]
 pub struct EvmSimulator<'a> {
     pub owner: Address,
-    pub evm: Arc<Mutex<Evm<'a, EvmContext<CacheDB<InMemoryDB>>,CacheDB<AlloyDB<PubSubFrontend, AnyNetwork, Arc<RootProvider<PubSubFrontend, AnyNetwork>>>>>>>,  
+    pub evm: Arc<
+        Mutex<
+            Evm<
+                'a,
+                EvmContext<CacheDB<InMemoryDB>>,
+                CacheDB<
+                    AlloyDB<
+                        PubSubFrontend,
+                        AnyNetwork,
+                        Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+                    >,
+                >,
+            >,
+        >,
+    >,
     pub block_number: U64,
 }
 impl<'a> EvmSimulator<'a> {
-    pub fn new(provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>, owner: Option<Address>, block_number: U64) -> Self {
+    pub fn new(
+        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+        owner: Option<Address>,
+        block_number: U64,
+    ) -> Self {
         EvmSimulator::new_with_db(owner, block_number, provider)
     }
 
     pub fn new_with_db(
         owner: Option<Address>,
         block_number: U64,
-        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>
+        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
     ) -> Self {
         let owner = match owner {
             Some(owner) => owner,
             None => PrivateKeySigner::random().address(),
         };
 
-        let alloy_db =  AlloyDB::new(provider, BlockId::from(block_number)).unwrap();
+        let alloy_db = AlloyDB::new(provider, BlockId::from(block_number)).unwrap();
 
-        // let evm_external = EvmContext::new(alloy_db);
-        // isshe here is that this should be an Queryable DB but it's not? Maybe InMemoryDB isn't what I am looking for
-        let empty_db = CacheDB::new(InMemoryDB::default());    
+        let empty_db = CacheDB::new(InMemoryDB::default());
         let evm_external = EvmContext::new(empty_db);
 
-        // let evm_internal= EvmContext::new(empty_db);
         let evm_internal = EvmContext::new(CacheDB::new(alloy_db));
 
         let context = Context::new(evm_internal, evm_external);
 
         let handler_cfg = HandlerCfg {
-           spec_id: SpecId::LATEST,
+            spec_id: SpecId::LATEST,
         };
         let handler = EvmHandler::new(handler_cfg);
 
-        let evm= Evm::new(context, handler);   
+        let evm = Evm::new(context, handler);
 
-        let evm = evm 
-        .modify() 
-        .modify_env(|env| {
-            env.block.number = U256::from(block_number);
-            env.block.coinbase = Address::from_str("0xDAFEA492D9c6733ae3d56b7Ed1ADB60692c98Bc5").unwrap();
-        })
-        .build();
+        let evm = evm
+            .modify()
+            .modify_env(|env| {
+                env.block.number = U256::from(block_number);
+                env.block.coinbase =
+                    Address::from_str("0xDAFEA492D9c6733ae3d56b7Ed1ADB60692c98Bc5").unwrap();
+            })
+            .build();
 
         let evm = Arc::new(Mutex::new(evm));
 
@@ -160,15 +177,13 @@ impl<'a> EvmSimulator<'a> {
 
     pub fn set_base_fee(&mut self, base_fee: U256) {
         if let Ok(mut evm) = self.evm.clone().try_lock() {
-                evm.context.evm.env.block.basefee = base_fee;
-            ;
+            evm.context.evm.env.block.basefee = base_fee;
         } else {
             println!("Failed to set base fee");
         }
     }
 
     pub fn staticcall(&mut self, tx: Tx) -> Result<TxResult> {
-
         self._call(tx, false)
     }
 
@@ -177,7 +192,6 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub fn _call(&mut self, tx: Tx, commit: bool) -> Result<TxResult> {
-
         if let Ok(mut evm) = self.evm.clone().try_lock() {
             evm.context.evm.env.tx.caller = tx.caller;
             evm.context.evm.env.tx.transact_to = TransactTo::Call(tx.transact_to);
@@ -186,69 +200,111 @@ impl<'a> EvmSimulator<'a> {
             evm.context.evm.env.tx.gas_price = tx.gas_price;
             evm.context.evm.env.tx.gas_limit = tx.gas_limit;
 
-        let result: revm::primitives::ExecutionResult;
+            let result: revm::primitives::ExecutionResult;
 
-        if commit {
-            result = match evm.transact_commit(){
-                Ok(result) => result,
-                Err(e) => return Err(anyhow!("EVM call failed: {:?}", e)),
-            };
-        } else {
-            let ref_tx = evm
-                .transact() 
-                .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
-            result = ref_tx.result;
-        }
-
-        let output = match result {
-            ExecutionResult::Success {
-                gas_used,
-                gas_refunded,
-                output,
-                logs,
-                ..
-            } => match output {
-                Output::Call(o) => TxResult {
-                    output: o,
-                    logs: Some(logs),
-                    gas_used,
-                    gas_refunded,
-                },
-                Output::Create(o, _) => TxResult {
-                    output: o,
-                    logs: Some(logs),
-                    gas_used,
-                    gas_refunded,
-                },
-            },
-            ExecutionResult::Revert { gas_used, output } => {
-                return Err(anyhow!(
-                    "EVM REVERT: {:?} / Gas used: {:?}",
-                    output,
-                    gas_used
-                ))
+            if commit {
+                result = match evm.transact_commit() {
+                    Ok(result) => result,
+                    Err(e) => return Err(anyhow!("EVM call failed: {:?}", e)),
+                };
+            } else {
+                let ref_tx = evm
+                    .transact()
+                    .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
+                result = ref_tx.result;
             }
-            ExecutionResult::Halt { reason, .. } => return Err(anyhow!("EVM HALT: {:?}", reason)),
-        };
-        Ok(output)
+
+            let output = match result {
+                ExecutionResult::Success {
+                    gas_used,
+                    gas_refunded,
+                    output,
+                    logs,
+                    ..
+                } => match output {
+                    Output::Call(o) => TxResult {
+                        output: o,
+                        logs: Some(logs),
+                        gas_used,
+                        gas_refunded,
+                    },
+                    Output::Create(o, _) => TxResult {
+                        output: o,
+                        logs: Some(logs),
+                        gas_used,
+                        gas_refunded,
+                    },
+                },
+                ExecutionResult::Revert { gas_used, output } => {
+                    // return Err(anyhow!(
+                    //     "EVM REVERT: {:?} / Gas used: {:?}",
+                    //     output,
+                    //     gas_used
+                    // ))
+                    TxResult {
+                        output,
+                        logs: None,
+                        gas_used,
+                        gas_refunded: 0,
+                    }
+                }
+                ExecutionResult::Halt { reason, .. } => {
+                    return Err(anyhow!("EVM HALT: {:?}", reason))
+                }
+            };
+
+            Ok(output)
         } else {
             Err(anyhow!("EVM lock failed"))
         }
     }
 
-    pub fn insert_account_info( &mut self, target: Address, account_info: AccountInfo){
+    pub fn insert_account_info(&mut self, target: Address, account_info: AccountInfo) {
         if let Ok(mut evm) = self.evm.clone().lock() {
-            evm.context.evm.db.insert_account_info(target, account_info);        
+            evm.context.evm.db.insert_account_info(target, account_info);
         } else {
             println!("Failed to insert account info");
         }
     }
 
-    pub fn deploy(&mut self, target: Address, bytecode: Bytecode) {
-        let contract_info = AccountInfo::new(U256::ZERO, 0, B256::ZERO, bytecode);
-        self.insert_account_info(target, contract_info);
+    pub fn insert_contract(&mut self, data: Bytecode) {
+        if let Ok(mut evm) = self.evm.clone().lock() {
+            let code_hash = data.hash_slow();
+            println!("code hash in insert_contract: {:?}", code_hash);
+            let mut account_info = AccountInfo::new(U256::from(0), 0, code_hash, data);
+            evm.context.evm.db.insert_contract(&mut account_info);
+        }
     }
-    pub fn set_eth_balance(&mut self, target: Address, amount: U256){
+
+    pub fn deploy(&mut self, bytecode: Bytecode) {
+        let code_hash = bytecode.clone().hash_slow();
+        let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode.clone());
+        self.insert_account_info(self.owner, contract_info);
+    }
+
+    pub fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
+        if let Ok(mut evm) = self.evm.clone().lock() {
+            let account = evm.context.evm.db.basic(address).unwrap().unwrap();
+            Ok(account)
+        } else {
+            Err(anyhow!("Error"))
+        }
+    }
+
+    pub fn get_contract(&mut self, code_hash: B256) -> Result<(), Error> {
+        if let Ok(mut evm) = self.evm.clone().lock() {
+            let new_code_hash = B256::from_str(
+                "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            )?;
+            let contracts = evm.context.evm.db.code_by_hash(new_code_hash);
+            println!("contracts: {:?}", contracts);
+            Ok(())
+        } else {
+            Err(anyhow!("There was an error"))
+        }
+    }
+
+    pub fn set_eth_balance(&mut self, target: Address, amount: U256) {
         let user_balance = amount.into();
         let user_info = AccountInfo::new(user_balance, 0, B256::ZERO, Bytecode::default());
         self.insert_account_info(target.into(), user_info);
@@ -256,28 +312,41 @@ impl<'a> EvmSimulator<'a> {
 
     pub fn get_eth_balance(&mut self, address: Address) -> U256 {
         if let Ok(mut evm) = self.evm.clone().lock() {
-            evm.context.evm.db.load_account(address).unwrap().info.balance
+            evm.context
+                .evm
+                .db
+                .load_account(address)
+                .unwrap()
+                .info
+                .balance
         } else {
             U256::ZERO
         }
     }
 
-    pub fn load_account(&mut self, address: Address) ->  (){
+    pub fn load_account(&mut self, address: Address) -> () {
         if let Ok(mut evm) = self.evm.clone().lock() {
-         evm.context.evm.db.load_account(address).unwrap();
-        }
-        else {
-        ()
+            let account = evm.context.evm.db.load_account(address).unwrap();
+            println!("Load account: {:?}", account)
+        } else {
+            ()
         }
     }
 
-    // pub fn get_code_at(&mut self, address: Address) -> AccountInfo{
-    //     if let Ok(mut evm) = self.evm.clone().lock() {
-    // let accountInfo = evm.context.evm.db.load_account(address).unwrap().info.clone();
-    //     } else {
-    //         AccountInfo::default()    
-    //     }
-    // }
+    pub fn get_code_at(&mut self, address: Address) -> Result<AccountInfo, Error> {
+        if let Ok(mut evm) = self.evm.clone().lock() {
+            Ok(evm
+                .context
+                .evm
+                .db
+                .load_account(address)
+                .unwrap()
+                .info
+                .clone())
+        } else {
+            Err(anyhow!("It Failed"))
+        }
+    }
 
     pub fn get_erc20_balance(&mut self, address: Address, token: Address, index: U256) -> U256 {
         if let Ok(mut evm) = self.evm.clone().lock() {
@@ -289,7 +358,13 @@ impl<'a> EvmSimulator<'a> {
 
     pub fn get_storage(&mut self, address: Address) -> AccountInfo {
         if let Ok(mut evm) = self.evm.clone().lock() {
-            evm.context.evm.db.load_account(address).unwrap().info.clone()
+            evm.context
+                .evm
+                .db
+                .load_account(address)
+                .unwrap()
+                .info
+                .clone()
         } else {
             AccountInfo::default()
         }
@@ -297,30 +372,38 @@ impl<'a> EvmSimulator<'a> {
 
     pub fn insert_account_storage(&mut self, target: Address, index: U256, value: U256) {
         if let Ok(mut evm) = self.evm.clone().lock() {
-            evm.context.evm.db.insert_account_storage(target, index, value).unwrap();
+            evm.context
+                .evm
+                .db
+                .insert_account_storage(target, index, value)
+                .unwrap();
         } else {
             println!("Failed to insert account storage");
         }
     }
     // NOTE: probably want to change this and not have to get the abi from that folder
-    pub fn get_weth_balance(&mut self, address: Address, token: Address, provider:Arc<RootProvider<PubSubFrontend, AnyNetwork>>, latest_gas_limit: &u64, latest_gas_price: &U256)  {
-
-        alloy::sol!{
+    pub fn get_weth_balance(
+        &mut self,
+        address: Address,
+        token: Address,
+        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+        latest_gas_limit: &u64,
+        latest_gas_price: &U256,
+    ) {
+        alloy::sol! {
             function balanceOf(address account) external view returns (uint256);
         }
 
         let abi = serde_json::from_str(include_str!("../arbitrage/weth.json")).unwrap();
 
-        let contract = ContractInstance::<Address, Arc<RootProvider<PubSubFrontend, AnyNetwork>>, Interface>::new(
-            self.owner,
-            provider,
-            Interface::new(abi),
-        );
+        let contract = ContractInstance::<
+            Address,
+            Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+            Interface,
+        >::new(self.owner, provider, Interface::new(abi));
 
         // create a transaction, call the balanceOf function of the token contract
-        let data = balanceOfCall {
-            account: address,
-        };
+        let data = balanceOfCall { account: address };
 
         let data = data.abi_encode();
 
@@ -337,24 +420,25 @@ impl<'a> EvmSimulator<'a> {
 
         print!("result from balance of call: {:?}", result);
 
-        let res = contract.decode_output("balanceOf", &result.output, false).unwrap();
+        let res = contract
+            .decode_output("balanceOf", &result.output, false)
+            .unwrap();
 
         let balance = res[0].clone();
 
         println!("balance: {:?}", balance);
-        // decode result 
-
+        // decode result
     }
 
     pub fn get_accounts(&mut self) {
-           if let Ok(evm)= self.evm.clone().lock() {
-               let accounts = &evm.context.evm.db.accounts;
-               println!("Accounts: {:?}", accounts);
-           }; 
-           ()
+        if let Ok(evm) = self.evm.clone().lock() {
+            let accounts = &evm.context.evm.db.accounts;
+            println!("Accounts: {:?}", accounts);
+        };
+        ()
     }
 
-    pub fn get_db(&mut self ) {
+    pub fn get_db(&mut self) {
         if let Ok(evm) = self.evm.clone().lock() {
             let db = &evm.context.evm.db;
             println!("//////////////////////////////////////////////////////");
@@ -362,7 +446,4 @@ impl<'a> EvmSimulator<'a> {
         }
         ()
     }
-
-
-
 }
