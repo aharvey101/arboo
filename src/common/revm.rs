@@ -16,8 +16,8 @@ use revm::{
     },
     Context, Database, Evm, EvmContext, InMemoryDB,
 };
+use std::sync::Arc;
 use std::str::FromStr;
-use std::sync::{Arc};
 use tokio::sync::Mutex as TokioMutex;
 
 #[derive(Debug, Clone, Default)]
@@ -71,7 +71,7 @@ pub struct TxResult {
 #[derive(Debug)]
 pub struct EvmSimulator<'a> {
     pub owner: Address,
-    pub evm: Arc<
+    pub evm: 
         TokioMutex<
             Evm<
                 'a,
@@ -85,7 +85,6 @@ pub struct EvmSimulator<'a> {
                 >,
             >,
         >,
-    >,
     pub block_number: U64,
 }
 impl<'a> EvmSimulator<'a> {
@@ -132,7 +131,7 @@ impl<'a> EvmSimulator<'a> {
             })
             .build();
 
-        let evm = Arc::new(TokioMutex::new(evm));
+        let evm = TokioMutex::new(evm);
 
         Self {
             owner,
@@ -174,7 +173,7 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub fn _call(&mut self, tx: Tx, commit: bool) -> Result<TxResult> {
-        if let Ok(mut evm) = self.evm.clone().try_lock() {
+        if let Ok(mut evm) = self.evm.try_lock() {
             evm.context.evm.env.tx.caller = tx.caller;
             evm.context.evm.env.tx.transact_to = TransactTo::Call(tx.transact_to);
             evm.context.evm.env.tx.data = tx.data.clone();
