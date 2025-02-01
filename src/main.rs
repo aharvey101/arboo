@@ -3,6 +3,7 @@ use alloy::rpc::client::WsConnect;
 use anyhow::Result;
 use arbooo::arbitrage::evm::threaded_evm;
 use arbooo::arbitrage::strategy::strategy;
+use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::logs::LogEvent;
 use arbooo::common::pairs::Event;
@@ -20,11 +21,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::task::JoinSet;
+use log::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv()?;
-
+    logger::setup_logger();
+    println!("Logger setup but this is a println");
+    info!("Logger setup");
     let ws_url = var::<&str>("WS_URL").unwrap();
     let http_url = var::<&str>("HTTP_URL").unwrap();
     let http_url = http_url.as_str();
@@ -93,6 +97,7 @@ async fn main() -> Result<()> {
 
     let (new_sender, _): (Sender<()>, _) = broadcast::channel(512); 
     // create evm thread:
+    info!("Spawning evm");
     threaded_evm(new_sender.clone()).await.unwrap();
 
     // 3. If a log has a pool in a hashmap, it could be a buy or sell on that pool
@@ -100,7 +105,7 @@ async fn main() -> Result<()> {
     // 5.
 
     while let Some(res) = set.join_next().await {
-        println!("{:?}", res);
+        info!("{:?}", res);
     }
 
     Ok(())

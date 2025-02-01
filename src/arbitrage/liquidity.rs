@@ -29,7 +29,7 @@ pub async fn liquidity() -> Result<()> {
     let latest_block = provider
         .get_block(block_id, BlockTransactionsKind::Full)
         .await?;
-    // println!("Latest Block: {:?}", latest_block);
+    // info!("Latest Block: {:?}", latest_block);
 
     // Initialize the database with the current state
     let latest_block = provider
@@ -52,8 +52,8 @@ pub async fn liquidity() -> Result<()> {
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
 
-    println!("Latest Block Number: {:?}", latest_block_number);
-    println!("Latest gas price : {:?}", latest_gas_price);
+    info!("Latest Block Number: {:?}", latest_block_number);
+    info!("Latest gas price : {:?}", latest_gas_price);
     let wallet = PrivateKeySigner::random();
     let wallet_address = wallet.address();
     let wallet_address_revm =
@@ -85,7 +85,7 @@ pub async fn liquidity() -> Result<()> {
         .unwrap()
         .get_eth_balance(wallet_address_revm);
 
-    println!("Balance: {:?}", balance);
+    info!("Balance: {:?}", balance);
 
     alloy::sol! {
         interface IUniswapV3Pool {
@@ -131,7 +131,7 @@ pub async fn liquidity() -> Result<()> {
     };
 
     let liquidity = simulator.clone().lock().unwrap().call(tx).unwrap();
-    println!("Liquidity: {:?}", liquidity);
+    info!("Liquidity: {:?}", liquidity);
 
     Ok(())
 }

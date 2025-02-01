@@ -13,6 +13,7 @@ use anyhow::Result;
 use revm::primitives::{Address, Bytecode, U256};
 use std::str::FromStr;
 use std::sync::Arc;
+use log::info;
 
 sol! {
         function getUniswapV2Quote(address tokenIn, address tokenOut, uint256 amountIn) external view returns (uint256);
@@ -70,7 +71,7 @@ pub async fn execute_quotes(amount: U256, token_a: Address, token_b: Address) ->
     let result = simulator
         .staticcall(tx)
         .expect("shouldn't have failed static_call");
-    println!("v2 result: {:?}", result);
+    info!("v2 result: {:?}", result);
 
     // do v3 swap
     simulator.deploy(arboo_bytecode());
@@ -93,7 +94,7 @@ pub async fn execute_quotes(amount: U256, token_a: Address, token_b: Address) ->
     let result = simulator
         .staticcall(tx)
         .expect("shouldn't have failed static_call");
-    println!("result: {:?}", result);
+    info!("result: {:?}", result);
 
     Ok(())
 }

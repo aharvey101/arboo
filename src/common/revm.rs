@@ -18,7 +18,9 @@ use revm::{
 };
 use std::sync::Arc;
 use std::str::FromStr;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{MutexGuard as TokioMutexGuard, Mutex as TokioMutex};
+use log::info;
+
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
@@ -242,15 +244,15 @@ impl<'a> EvmSimulator<'a> {
     pub async fn insert_contract(&mut self, data: Bytecode) {
         let mut evm = self.evm.lock().await;
             let code_hash = data.hash_slow();
-            println!("code hash in insert_contract: {:?}", code_hash);
+            info!("code hash in insert_contract: {:?}", code_hash);
             let mut account_info = AccountInfo::new(U256::from(0), 0, code_hash, data);
             evm.context.evm.db.insert_contract(&mut account_info);
     }
 
-    pub fn deploy(&mut self, bytecode: Bytecode) {
+    pub async fn deploy(&mut self, bytecode: Bytecode) {
         let code_hash = bytecode.clone().hash_slow();
         let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode.clone());
-        self.insert_account_info(self.owner, contract_info);
+        self.insert_account_info(self.owner, contract_info).await;
     }
 
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
@@ -265,14 +267,14 @@ impl<'a> EvmSimulator<'a> {
                 "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
             )?;
             let contracts = evm.context.evm.db.code_by_hash(new_code_hash);
-            println!("contracts: {:?}", contracts);
+            info!("contracts: {:?}", contracts);
             Ok(())
     }
 
-    pub fn set_eth_balance(&mut self, target: Address, amount: U256) {
+    pub async fn set_eth_balance(&mut self, target: Address, amount: U256) {
         let user_balance = amount.into();
         let user_info = AccountInfo::new(user_balance, 0, B256::ZERO, Bytecode::default());
-        self.insert_account_info(target.into(), user_info);
+        self.insert_account_info(target.into(), user_info).await;
     }
 
     pub async fn get_eth_balance(&mut self, address: Address) -> U256 {
@@ -372,21 +374,21 @@ impl<'a> EvmSimulator<'a> {
 
         let balance = res[0].clone();
 
-        println!("balance: {:?}", balance);
+        info!("balance: {:?}", balance);
         // decode result
     }
 
     pub async fn get_accounts(&mut self) {
         let evm = self.evm.lock().await;
             let accounts = &evm.context.evm.db.accounts;
-            println!("Accounts: {:?}", accounts);
+            info!("Accounts: {:?}", accounts);
     }
 
     pub async fn get_db(&mut self) {
     let evm = self.evm.lock().await;
             let db = &evm.context.evm.db;
-            println!("//////////////////////////////////////////////////////");
-            println!("Logs: {:?}", db);
+            info!("//////////////////////////////////////////////////////");
+            info!("Logs: {:?}", db);
     }
 
     pub async fn load_pool_state(&self, pool_address: Address) -> Result<(), Error> {
@@ -433,6 +435,10 @@ impl<'a> EvmSimulator<'a> {
         let token1_balance = evm.context.evm.db.storage(pool_address, token1_balance_slot)?;
         evm.context.evm.db.insert_account_storage(pool_address, token1_balance_slot, token1_balance)?;
 
+        //lets log out the balances?
+
+        info!("Token Balances for V2 Pool: {}, {}, {}", pool_address, token0_balance, token1_balance);
+
         Ok(())
     }
 
@@ -458,6 +464,8 @@ impl<'a> EvmSimulator<'a> {
 
         // You might want to load tick bitmap and positions too
         
+        info!("V3 pool info : {}, {}, {}", pool_address, liquidity, sqrt_price);
         Ok(())
     }
+
 }

@@ -21,6 +21,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use::log::info;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum DexVariant {
@@ -95,7 +96,7 @@ impl Pool {
     }
 
     pub fn pretty_print(&self) {
-        println!("{}", self.pretty_msg());
+        info!("{}", self.pretty_msg());
     }
 }
 
@@ -148,7 +149,7 @@ pub async fn load_all_pools(
             pools.push(pool);
         }
     } else {
-        println!("Writing");
+        info!("Writing");
         writer.write_record(&[
             "id",
             "address",
@@ -160,8 +161,8 @@ pub async fn load_all_pools(
             "timestamp",
         ])?;
     }
-    println!("Pools loaded: {:?}", pools.len());
-    println!("V2 pools: {:?}", v2_pool_cnt);
+    info!("Pools loaded: {:?}", pools.len());
+    info!("V2 pools: {:?}", v2_pool_cnt);
     let ws_client = WsConnect::new(wss_url);
     let ws = ProviderBuilder::new().on_ws(ws_client).await?;
     let provider = Arc::new(ws);
@@ -194,7 +195,7 @@ pub async fn load_all_pools(
         block_range.push((start_idx, end_idx));
         blocks_processed += chunk;
     }
-    println!("Block range: {:?}", block_range);
+    info!("Block range: {:?}", block_range);
 
     let pb = ProgressBar::new(block_range.len() as u64);
     pb.set_style(
@@ -247,7 +248,7 @@ pub async fn load_all_pools(
         }
     }
     writer.flush()?;
-    println!("Added {:?} new pools", added);
+    info!("Added {:?} new pools", added);
 
     Ok((pools, last_id))
 }
@@ -284,11 +285,11 @@ pub async fn load_uniswap_v2_pools(
             timestamp
         };
         // if log.topics()[2].to_string() != weth_address() {
-        //     println!("Token 2 isn't weth but is: {}", log.topics()[2]);
+        //     info!("Token 2 isn't weth but is: {}", log.topics()[2]);
         //     continue;
         // }
         // if log.topics()[1].is_zero() {
-        //     println!("emtpy topic 1");
+        //     info!("emtpy topic 1");
         //     continue;
         // }
         let topic0 = FixedBytes::from(log.topics()[1]);
@@ -334,7 +335,7 @@ pub async fn load_uniswap_v3_pools(
     let logs = provider.get_logs(&event_filter).await?;
     for log in logs {
         if log.topics()[1].is_zero() {
-            println!("V3 log 1 empty");
+            info!("V3 log 1 empty");
             continue;
         }
         let block_number = log.block_number.unwrap_or_default();
