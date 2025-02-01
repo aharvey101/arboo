@@ -7,6 +7,8 @@ use revm::primitives::{B256, U256};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::info;
+
 
 pub async fn get_pairs(
     client: Arc<RootProvider<PubSubFrontend>>,
@@ -38,7 +40,7 @@ pub async fn get_pairs(
         }
     }
     pools.sort();
-    // println!("pools? {pools:?}");
+    // info!("pools? {pools:?}");
     let mut result = HashMap::<Address, Event>::new();
 
     let mut iter = pools.into_iter().peekable();
@@ -56,7 +58,7 @@ pub async fn get_pairs(
     // My thoughts are we could just get the data of each uniswap pair and get the product of the two tokens
 
     // get_pair_data(client, result.clone()).await.unwrap();
-    println!("hash map size: {:?}", result.capacity());
+    info!("hash map size: {:?}", result.capacity());
     Ok(result)
 }
 
@@ -104,13 +106,13 @@ async fn get_pair_data(
 ) -> Result<()> {
     todo!();
     for pair in pairs {
-        // println!("pair: {pair:?}");
+        // info!("pair: {pair:?}");
         let storage = provider
             .get_storage_at(pair.0, U256::from(2))
             .await
             .unwrap();
 
-        // println!("Storage: {storage:?}");
+        // info!("Storage: {storage:?}");
     }
 
     Ok(())

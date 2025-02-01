@@ -1,7 +1,7 @@
 use crate::common::revm::{EvmSimulator, Tx};
+use ::log::info;
 use alloy::eips::BlockId;
 use alloy::network::AnyNetwork;
-use alloy::primitives::U64;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
@@ -11,8 +11,14 @@ use anyhow::Result;
 use revm::primitives::{address, Address, Bytecode, U256};
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::{Mutex, MutexGuard};
 
-pub async fn simulation(pool_a: Address, pool_b: Address) -> Result<()> {
+pub async fn simulation(
+    target_pool: Address,
+    token_a: Address,
+    token_b: Address,
+    simulator: Arc<Mutex<EvmSimulator<'_>>>,
+) -> Result<()> {
     //      - Simulation:
     //       - Simply we are going to, get required info (latest block, pool needed?, adjacent pool?)
     //       - deploy our contract
@@ -20,6 +26,13 @@ pub async fn simulation(pool_a: Address, pool_b: Address) -> Result<()> {
     //       - Execute the transaction
     //       - Log the results
     //       - check if eth balance has increased
+
+    info!("Starting simulation...");
+    // Start a timer
+    let start_time = std::time::Instant::now();
+
+    // Simulate some delay
+    info!("Simulation started at: {:?}", start_time);
 
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
     let provider: RootProvider<PubSubFrontend, AnyNetwork> =
@@ -39,33 +52,50 @@ pub async fn simulation(pool_a: Address, pool_b: Address) -> Result<()> {
     let contract_wallet = PrivateKeySigner::random();
     let contract_wallet_address = contract_wallet.address();
 
-    let mut simulator = EvmSimulator::new(
-        provider.clone(),
-        Some(contract_wallet_address),
-        U64::from(latest_block_number),
-    );
+    // Load WETH contract state
+    simulator.lock().await.load_account(token_a).await;
+    simulator.lock().await.load_account(token_b).await;
+    simulator.lock().await.load_account(weth_addr()).await;
+    simulator.lock().await.load_v3_pool_state(target_pool).await.unwrap();
 
     let my_wallet = PrivateKeySigner::random();
     // set initial eth value;
     let initial_eth_balance = U256::from(1000) * U256::from(10).pow(U256::from(18));
-    simulator.set_eth_balance(my_wallet.address(), initial_eth_balance);
+    simulator
+        .lock()
+        .await
+        .set_eth_balance(my_wallet.address(), initial_eth_balance)
+        .await;
 
-    simulator.deploy(arboo_bytecode());
+    check_weth_balance(
+        my_wallet.address(),
+        simulator.lock().await,
+        &latest_gas_limit,
+        &latest_gas_price,
+        None,
+    )
+    .await
+    .expect("error checking weth balance");
+
+    simulator.lock().await.deploy(arboo_bytecode()).await;
 
     let hundred_thousand_usdc = U256::from(100_000) * U256::from(10).pow(U256::from(6));
     let hundred_thousand_eighteen = U256::from(100_000) * U256::from(10).pow(U256::from(18));
- 
+
     // let trillion_pepe = U256::from(100_000_000_000_000u64) * U256::from(10).pow(U256::from(18));
     // let hundred_thousand_usdc = U256::from(100_000_000) * U256::from(10).pow(U256::from(6));
 
     // NOTE: to test the simulation I am swapping here to depress the price on the v2 pool
-    // simulation_swap(
-    //     &mut simulator,
-    //     &latest_gas_price,
-    //     &latest_gas_limit,
-    //     &provider,
-    // )
-    // .await?;
+
+    simulation_swap(
+        simulator.lock().await,
+        &latest_gas_price,
+        &latest_gas_limit,
+        token_a,
+        token_b,
+    )
+    .await
+    .expect("Error doing setup swap");
 
     // test our hello world function
 
@@ -85,10 +115,10 @@ pub async fn simulation(pool_a: Address, pool_b: Address) -> Result<()> {
 
     // Note: create the params
     let function_call = flashSwap_V3_to_V2Call {
-        pool0: pool_500_addr(),
+        pool0: target_pool,
         fee1: fee1,
-        tokenIn: pool_a,
-        tokenOut: pool_b,
+        tokenIn: token_a,
+        tokenOut: token_b,
         amountIn: hundred_thousand_eighteen,
     };
 
@@ -106,64 +136,65 @@ pub async fn simulation(pool_a: Address, pool_b: Address) -> Result<()> {
     };
 
     // Call said transaction
-    match simulator.call(new_tx) {
+    match simulator.lock().await.call(new_tx) {
         Ok(res) => println!("Tx Result: {:?}", res),
-        Err(err)=> println!("Tx not successful: {:?}", err)
+        Err(err) => println!("Tx not successful: {:?}", err),
     }
-
 
     check_weth_balance(
         my_wallet.address(),
-        &mut simulator,
+        simulator.lock().await,
         &latest_gas_limit,
         &latest_gas_price,
         None,
-    )?;
-    
-    Ok(())
-}
+    )
+    .await
+    .expect("Error checking weth balance");
 
-fn hello_world(
-    latest_gas_limit: u64,
-    latest_gas_price: alloy_primitives::Uint<256, 4>,
-    contract_wallet_address: Address,
-    simulator: &mut EvmSimulator<'_>,
-    my_wallet_address: &Address,
-) -> Result<(), anyhow::Error> {
-    alloy::sol! {
-        #[derive(Debug)]
-        function hello_world() public pure returns(string memory);
-    }
-    let params = hello_worldCall {}.abi_encode();
-    let tx_hello_world = Tx {
-        caller: *my_wallet_address,
-        transact_to: contract_wallet_address,
-        data: params.into(),
-        value: U256::ZERO,
-        gas_limit: latest_gas_limit as u64,
-        gas_price: latest_gas_price,
-    };
-    let res = simulator.call(tx_hello_world)?;
-    println!("res: {:?}", res);
-    println!(
-        "Res from hello world, {:?}",
-        hello_worldCall::abi_decode_returns(&res.output, false)?
-    );
+    info!("Simulation took: {:?}", start_time.elapsed());
     Ok(())
 }
 
 async fn simulation_swap<'a>(
-    evm_simulator: &mut EvmSimulator<'a>,
+    mut evm_simulator: MutexGuard<'_, EvmSimulator<'a>>,
     latest_gas_price: &U256,
     latest_gas_limit: &u64,
-    provider: &Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+    token_a: Address,
+    token_b: Address,
 ) -> Result<()> {
+    // the idea here is to swap a bunch of token_a for token_b to create an arbitrage opp simulation
+
     let wallet = PrivateKeySigner::random();
 
     let wallet_address = wallet.address();
 
     let amount_in = U256::from(600_000) * U256::from(10).pow(U256::from(18));
-    evm_simulator.set_eth_balance(wallet_address, amount_in);
+    evm_simulator
+        .set_eth_balance(wallet_address, amount_in)
+        .await;
+
+    // Do approvals
+    router_token_approve(
+        &mut evm_simulator,
+        latest_gas_price,
+        latest_gas_limit,
+        wallet_address,
+        v2_router_addr(),
+        weth_addr(),
+    )
+    .await
+    .unwrap();
+
+    // Before V2 swap
+    log_all_balances(
+        &mut evm_simulator,
+        wallet_address,
+        token_a,
+        token_b,
+        latest_gas_limit,
+        latest_gas_price,
+    )
+    .await?;
 
     alloy::sol! {
         function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline)
@@ -171,63 +202,142 @@ async fn simulation_swap<'a>(
         payable
         returns (uint[] memory amounts);
     }
-
-    alloy::sol! {
-        function exactInputSingle(
-            address tokenIn,
-            address tokenOut,
-            uint24 fee,
-            address recipient,
-            uint256 amountIn,
-            uint256 amountOutMinimum,
-            uint160 sqrtPriceLimitX96
-        ) external payable returns (uint256 amountOut);
+    let input_params = swapExactETHForTokensCall {
+        amountOutMin: U256::from(1),
+        path: vec![weth_addr(), token_a].into(),
+        to: wallet_address,
+        deadline: U256::MAX,
     }
-
-    let exact_input_params = exactInputSingleCall {
-        tokenIn: weth_addr(),
-        tokenOut: pepe_addr(),
-        fee: alloy_primitives::aliases::U24::from(3000),
-        recipient: wallet_address,
-        amountIn: one_hundred_ether(),
-        amountOutMinimum: U256::from(1),
-        sqrtPriceLimitX96: alloy::primitives::U160::ZERO,
-    };
-
-    let exact_input_data = exact_input_params.abi_encode();
+    .abi_encode();
 
     let new_tx = Tx {
         caller: wallet_address,
         transact_to: v2_router_addr(),
-        data: exact_input_data.into(),
-        value: U256::ZERO,
+        data: input_params.into(),
+        value: one_ether(),
         gas_limit: *latest_gas_limit,
         gas_price: *latest_gas_price,
     };
 
-    evm_simulator.call(new_tx)?;
+    match evm_simulator.call(new_tx) {
+        Ok(res) => info!("Swap successful: {:?}", res),
+        Err(err) => info!("Error: {:?}", err),
+    };
 
-    // let swap_params = swapExactETHForTokensCall {
-    //     amountOutMin: U256::from(1),
-    //     path: vec![weth_addr(), usdc_addr()],
-    //     to: wallet_address,
-    //     deadline: U256::from(9999999999_u64),
+    info!("Swapped eth for token a");
+
+    // After V2 swap
+    log_all_balances(
+        &mut evm_simulator,
+        wallet_address,
+        token_a,
+        token_b,
+        latest_gas_limit,
+        latest_gas_price,
+    )
+    .await?;
+
+    router_token_approve(
+        &mut evm_simulator,
+        latest_gas_price,
+        latest_gas_limit,
+        wallet_address,
+        v2_router_addr(),
+        token_a,
+    )
+    .await
+    .unwrap();
+
+    // alloy::sol! {
+    //     #[derive(Debug)]
+    //     function exactInputSingle(
+    //         address tokenIn,
+    //         address tokenOut,
+    //         uint24 fee,
+    //         address recipient,
+    //         uint256 amountIn,
+    //         uint256 amountOutMinimum,
+    //         uint160 sqrtPriceLimitX96
+    //     ) external payable returns (uint256 amountOut);
+    // }
+
+    // let exact_input_params = exactInputSingleCall {
+    //     tokenIn: token_a,
+    //     tokenOut: token_b,
+    //     fee: alloy_primitives::aliases::U24::from(3000),
+    //     recipient: wallet_address,
+    //     amountIn: one_ether(),
+    //     amountOutMinimum: U256::from(1),
+    //     sqrtPriceLimitX96: alloy::primitives::U160::MAX,
     // };
+    // info!("params:  {:?}", exact_input_params);
+    // let exact_input_data = exact_input_params.abi_encode();
 
-    // let swap_params = swap_params.abi_encode();
-
-    // // Execute the transaction
     // let new_tx = Tx {
     //     caller: wallet_address,
-    //     transact_to: v2_router_addr(),
-    //     data: swap_params.into(),
-    //     value: one_thousand_eth(),
+    //     transact_to: v3_router_addr(),
+    //     data: exact_input_data.into(),
+    //     value: U256::ZERO,
     //     gas_limit: *latest_gas_limit,
     //     gas_price: *latest_gas_price,
     // };
 
-    // evm_simulator.call(new_tx)?;
+    // evm_simulator.call(new_tx).expect("Failed to do sim swap");
 
+    // After V3 swap
+    log_all_balances(
+        &mut evm_simulator,
+        wallet_address,
+        token_a,
+        token_b,
+        latest_gas_limit,
+        latest_gas_price,
+    )
+    .await?;
+
+    // router_token_approve(
+    //     &mut evm_simulator,
+    //     latest_gas_price,
+    //     latest_gas_limit,
+    //     wallet_address,
+    //     v2_router_addr(),
+    //     token_b,
+    // )
+    // .await
+    // .unwrap();
+
+    Ok(())
+}
+
+async fn router_token_approve<'a>(
+    evm_simulator: &mut MutexGuard<'_, EvmSimulator<'a>>,
+    latest_gas_price: &alloy_primitives::Uint<256, 4>,
+    latest_gas_limit: &u64,
+    wallet_address: Address,
+    v2_router: Address,
+    token: Address,
+) -> Result<(), anyhow::Error> {
+    // First, approve WETH for the V2 router
+    alloy::sol! {
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+    let approve_data = approveCall {
+        spender: v2_router,
+        amount: U256::MAX, // Infinite approval, you can set a specific amount instead
+    }
+    .abi_encode();
+    let approve_tx = Tx {
+        caller: wallet_address,
+        transact_to: token,
+        data: approve_data.into(),
+        value: U256::ZERO,
+        gas_limit: *latest_gas_limit,
+        gas_price: *latest_gas_price,
+    };
+    info!("Approving {} for V2 router...", token);
+    let approve_result = evm_simulator
+        .call(approve_tx)
+        .expect("Error approving router for token");
     Ok(())
 }
 
@@ -277,6 +387,10 @@ pub fn custom_quoter_addr() -> Address {
 
 pub fn pool_3000_pepe_addr() -> Address {
     address!("11950d141EcB863F01007AdD7D1A342041227b58")
+}
+
+pub fn uni_addr()-> Address {
+    address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984")
 }
 
 pub fn pepe_addr() -> Address {
@@ -352,9 +466,9 @@ fn withdraw_weth(
     Ok(())
 }
 
-fn check_weth_balance(
+async fn check_weth_balance(
     wallet_address: Address,
-    simulator: &mut EvmSimulator<'_>,
+    mut simulator: MutexGuard<'_, EvmSimulator<'_>>,
     latest_gas_limit: &u64,
     latest_gas_price: &U256,
     caller: Option<Address>,
@@ -386,6 +500,90 @@ fn check_weth_balance(
 
     let balance = balance / U256::from(10).pow(U256::from(18));
 
-    println!("WETH balance: {:?}", balance);
+    info!("WETH balance: {:?}", balance);
+    Ok(())
+}
+
+fn hello_world(
+    latest_gas_limit: u64,
+    latest_gas_price: alloy_primitives::Uint<256, 4>,
+    contract_wallet_address: Address,
+    simulator: &mut EvmSimulator<'_>,
+    my_wallet_address: &Address,
+) -> Result<(), anyhow::Error> {
+    alloy::sol! {
+        #[derive(Debug)]
+        function hello_world() public pure returns(string memory);
+    }
+    let params = hello_worldCall {}.abi_encode();
+    let tx_hello_world = Tx {
+        caller: *my_wallet_address,
+        transact_to: contract_wallet_address,
+        data: params.into(),
+        value: U256::ZERO,
+        gas_limit: latest_gas_limit as u64,
+        gas_price: latest_gas_price,
+    };
+    let res = simulator.call(tx_hello_world)?;
+    println!("res: {:?}", res);
+    println!(
+        "Res from hello world, {:?}",
+        hello_worldCall::abi_decode_returns(&res.output, false)?
+    );
+    Ok(())
+}
+async fn check_contract_state(
+    evm_simulator: &mut EvmSimulator<'_>,
+    contract_address: Address,
+) -> Result<()> {
+    let account_info = evm_simulator.get_account(contract_address).await?;
+    info!("Contract at {:?} state:", contract_address);
+    // info!("Has code: {}", account_info.code.unwrap());
+    info!("Balance: {:?}", account_info.balance);
+    Ok(())
+}
+async fn check_token_balance(
+    evm_simulator: &mut MutexGuard<'_, EvmSimulator<'_>>,
+    token: Address,
+    wallet: Address,
+    latest_gas_limit: &u64,
+    latest_gas_price: &U256,
+) -> Result<U256> {
+    alloy::sol! {
+        function balanceOf(address) external view returns (uint256);
+    }
+
+    let balance_call = balanceOfCall { _0: wallet }.abi_encode();
+
+    let tx = Tx {
+        caller: wallet,
+        transact_to: token,
+        data: balance_call.into(),
+        value: U256::ZERO,
+        gas_limit: *latest_gas_limit,
+        gas_price: *latest_gas_price,
+    };
+
+    let result = evm_simulator.call(tx).expect("Error getting balance");
+    let balance = U256::from_be_slice(&result.output);
+    Ok(balance)
+}
+async fn log_all_balances(
+    evm_simulator: &mut MutexGuard<'_, EvmSimulator<'_>>,
+    wallet: Address,
+    token_a: Address,
+    token_b: Address,
+    latest_gas_limit: &u64,
+    latest_gas_price: &U256,
+) -> Result<()> {
+    let eth_balance = evm_simulator.get_eth_balance(wallet).await;
+    let token_a_balance = check_token_balance(evm_simulator, token_a, wallet, latest_gas_limit, latest_gas_price).await?;
+    let token_b_balance = check_token_balance(evm_simulator, token_b, wallet, latest_gas_limit, latest_gas_price).await?;
+
+    info!("Balances for wallet {:?}:", wallet);
+    info!("ETH: {:?}", eth_balance);
+    info!("Token A: {:?}", token_a_balance);
+    info!("Token B: {:?}", token_b_balance);
+    
     Ok(())
 }

@@ -1,3 +1,8 @@
+use crate::arbitrage::simulation;
+use crate::arbitrage::simulation::pepe_addr;
+use crate::arbitrage::simulation::uni_addr;
+use crate::arbitrage::simulation::usdc_addr;
+use crate::arbitrage::simulation::weth_addr;
 use crate::common::pairs::Event;
 use crate::common::pairs::V2PoolCreated;
 use crate::common::pairs::V3PoolCreated;
@@ -10,16 +15,18 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
+use itertools::Itertools;
+use log::info;
 use revm::primitives::{address, Address, Bytecode, U256};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
+use std::ops::Add;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
-use tokio::sync::Mutex as TokioMutex;
-
+use tokio::sync::{Mutex as TokioMutex, Mutex};
 pub async fn threaded_evm(
     sender: Sender<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -98,32 +105,76 @@ pub async fn threaded_evm(
         };
     }
     // we want to load all of the contracts into memory
-    println!("Loading pools");
-    for (addr, event) in pools_map.iter(){
-        println!("Loading pool, {:?}, number:", addr);
-        let mut sim = simulator.lock().await;
-        sim.load_account(*addr).await;
-        sim.load_pool_state(*addr).await.expect("Failed to load basic state");
-        if let Event::PairCreated(V2PoolCreated { .. }) = event {
-            sim.load_v2_pool_state(*addr).await.expect("Failed to load v2 pool state");
-        } else {
-            sim.load_v3_pool_state(*addr).await.expect("Failed to load v3 state");
-        }
-    }
+    info!("Loading pools");
 
+    let target_pool = pools_map
+        .iter()
+        .find(|(_, event)| match event {
+            Event::PairCreated(V2PoolCreated { token0, token1, .. })
+            | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
+                (token0 == &uni_addr() && token1 == &weth_addr()) || (token0 == &weth_addr() && token1 == &uni_addr())
+            }
+            _ => false,
+        })
+        .map(|(address, _)| address)
+        .expect("WETH-USDC pool not found");
+
+    let pepe_usdc_pools: HashMap<Address, Event> = pools_map
+        .iter()
+        .filter_map(|(address, event)| match event {
+            Event::PairCreated(V2PoolCreated { token0, token1, .. })
+            | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
+                if (token0 == &uni_addr() && token1 == &weth_addr()) || (token0 == &weth_addr() && token1 == &uni_addr()) {
+                    Some((*address, event.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    load_pools(pepe_usdc_pools, simulator.clone()).await;
+
+    // println!("Random addresses")
+
+    simulation::simulation(*target_pool, uni_addr(), weth_addr(), simulator)
+        .await
+        .expect("Error running simulation");
+
+    info!("Pools Loaded");
     let mut event_reciever = sender.subscribe();
     loop {
         match event_reciever.recv().await {
             Ok(message) => {
-
+                println!("The Message: {:?}", message)
             }
             Err(err) => {
-                println!("OOP")
+                info!("OOP")
             }
         }
     }
 }
 
-pub fn start_evm_thread(sender: Sender<()>) {
-    tokio::spawn(threaded_evm(sender));
+async fn load_pools<'a>(
+    pools_map: HashMap<Address, Event>,
+    simulator: Arc<Mutex<EvmSimulator<'a>>>,
+) {
+    let mut sim = simulator.lock().await;
+    for event in pools_map.iter() {
+        info!("Loading pool, {:?}, number:", event.0);
+        sim.load_account(*event.0).await;
+        sim.load_pool_state(*event.0)
+            .await
+            .expect("Failed to load basic state");
+        if let (_, Event::PairCreated(V2PoolCreated { .. })) = event {
+            sim.load_v2_pool_state(*event.0)
+                .await
+                .expect("Failed to load v2 pool state");
+        } else {
+            sim.load_v3_pool_state(*event.0)
+                .await
+                .expect("Failed to load v3 state");
+        }
+    }
 }

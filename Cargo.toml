@@ -41,3 +41,5 @@ hash = "0.3.0"
 alloy-primitives = "0.8.19"
 lazy_static = "1.4.0"
 hex = "0.4.3"
+fern = { version = "0.7.1", features = ["colored"] }
+chrono = "0.4.39"
