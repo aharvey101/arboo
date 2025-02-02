@@ -1,27 +1,35 @@
-use alloy::providers::ProviderBuilder;
-use alloy::rpc::client::WsConnect;
+use alloy::providers::{Provider, RootProvider, ProviderBuilder};
+use alloy::{
+    network::AnyNetwork,
+    primitives::U64,
+    pubsub::PubSubFrontend,
+    rpc::client::WsConnect,
+    signers::local::PrivateKeySigner,
+};
+use arbooo::common::{
+    logs::LogEvent,
+    pairs::{Event, V2PoolCreated, V3PoolCreated},
+    revm::{EvmSimulator, Tx},
+};
 use anyhow::Result;
 use arbooo::arbitrage::evm::threaded_evm;
 use arbooo::arbitrage::strategy::strategy;
 use arbooo::common::logger;
 use arbooo::common::logs;
-use arbooo::common::logs::LogEvent;
-use arbooo::common::pairs::Event;
-use arbooo::common::pairs::V2PoolCreated;
-use arbooo::common::pairs::V3PoolCreated;
 use arbooo::common::pools;
 use dotenv::dotenv;
 use dotenv::var;
+use log::info;
 use revm::primitives::Address;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::Arc;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::task::JoinSet;
-use log::info;
+use tokio::sync::{Mutex as TokioMutex};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -92,22 +100,45 @@ async fn main() -> Result<()> {
     }
 
     // 2. Listen for logs on pools
-    set.spawn(logs::get_logs(provider.clone(), pools_map, sender));
+    set.spawn(logs::get_logs(provider.clone(), pools_map, sender.clone()));
 
 
-    let (new_sender, _): (Sender<()>, _) = broadcast::channel(512); 
+    let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
+    let provider: RootProvider<PubSubFrontend, AnyNetwork> = ProviderBuilder::new()
+        .network()
+        .on_ws(ws_client)
+        .await
+        .expect("Provider failed to build");
+    let provider = Arc::new(provider);
+
+    let latest_block_number = provider
+        .get_block_number()
+        .await
+        .expect("Error getting block number");
+
+    let contract_wallet = PrivateKeySigner::random();
+    let contract_wallet_address = contract_wallet.address();
+
+    let simulator = EvmSimulator::new(
+        provider.clone(),
+        Some(contract_wallet_address),
+        U64::from(latest_block_number),
+    );
+
+    let simulator: Arc<TokioMutex<EvmSimulator<'_>>> = Arc::new(TokioMutex::new(simulator));
     // create evm thread:
     info!("Spawning evm");
-    threaded_evm(new_sender.clone()).await.unwrap();
-
-    // 3. If a log has a pool in a hashmap, it could be a buy or sell on that pool
-    // 4. do corresponding simulations (if buy, then price increased, so check if sim creates profit by selling on other pool and vice versa)
-    // 5.
-
+    // set.spawn(threaded_evm(sender, simulator.clone()));
+    threaded_evm(sender, simulator.clone()).await;
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
     }
 
     Ok(())
 }
-    
+
+
+// MVP What is left to do:
+// Get the evm onto it's own thread
+// get the logs to send to the evm and have it recieve those events 
+// Figure out a strategy for finding out how much to arb, ie; what amount is profitable
