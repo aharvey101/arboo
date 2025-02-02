@@ -1,70 +1,27 @@
-use crate::arbitrage::simulation;
-use crate::arbitrage::simulation::pepe_addr;
-use crate::arbitrage::simulation::uni_addr;
-use crate::arbitrage::simulation::usdc_addr;
-use crate::arbitrage::simulation::weth_addr;
-use crate::common::pairs::Event;
-use crate::common::pairs::V2PoolCreated;
-use crate::common::pairs::V3PoolCreated;
-use crate::common::revm::{EvmSimulator, Tx};
-use alloy::eips::BlockId;
-use alloy::network::AnyNetwork;
-use alloy::primitives::U64;
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::client::WsConnect;
-use alloy::signers::local::PrivateKeySigner;
+use crate::arbitrage::simulation::{self, arboo_bytecode, get_address, AddressType};
+use crate::common::{
+    logs::LogEvent,
+    pairs::{Event, V2PoolCreated, V3PoolCreated},
+    revm::{EvmSimulator, Tx},
+};
 use anyhow::Result;
-use itertools::Itertools;
 use log::info;
-use revm::primitives::{address, Address, Bytecode, U256};
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufRead};
-use std::ops::Add;
-use std::path::Path;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::broadcast::Sender;
-use tokio::sync::{Mutex as TokioMutex, Mutex};
-pub async fn threaded_evm(
-    sender: Sender<()>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
-    let provider: RootProvider<PubSubFrontend, AnyNetwork> = ProviderBuilder::new()
-        .network()
-        .on_ws(ws_client)
-        .await
-        .expect("Provider failed to build");
-    let provider = Arc::new(provider);
+use revm::primitives::{address, Address, U256};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{self, BufRead},
+    path::Path,
+    str::FromStr,
+    sync::Arc,
+};
+use tokio::sync::Mutex;
+use tokio::sync::{broadcast::Sender, Mutex as TokioMutex};
 
-    let latest_block_number = provider
-        .get_block_number()
-        .await
-        .expect("Error getting block number");
-    let block_id = BlockId::from_str(latest_block_number.to_string().as_str()).unwrap();
-    let latest_block = provider
-        .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
-        .await
-        .expect("Error getting latest block")
-        .expect("Expected block");
-
-    let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
-
-    let contract_wallet = PrivateKeySigner::random();
-    let contract_wallet_address = contract_wallet.address();
-
-    let simulator = EvmSimulator::new(
-        provider.clone(),
-        Some(contract_wallet_address),
-        U64::from(latest_block_number),
-    );
-
-    let simulator = Arc::new(TokioMutex::new(simulator));
+pub async fn threaded_evm(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimulator<'_>>>) {
+    simulator.lock().await.deploy(arboo_bytecode()).await;
 
     // Laod all pools:
-
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
     let path = Path::new("cache/.cached-pools.csv");
     let file = File::open(&path).expect("Error getting File");
@@ -76,27 +33,27 @@ pub async fn threaded_evm(
         let fields: Vec<&str> = line.split(',').collect();
         match fields[2] {
             "2" => {
-                let pair_address = Address::from_str(fields[1]).unwrap();
+                let pair_address = Address::from_str(fields[1]).expect("error");
                 pools_map.insert(
                     pair_address,
                     Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap(),
-                        token0: Address::from_str(fields[3]).unwrap(),
-                        token1: Address::from_str(fields[4]).unwrap(),
-                        fee: fields[5].parse::<u32>().unwrap(),
-                        block_number: fields[6].parse::<u64>().unwrap(),
+                        pair_address: Address::from_str(fields[1]).expect("error"),
+                        token0: Address::from_str(fields[3]).expect("error"),
+                        token1: Address::from_str(fields[4]).expect("error"),
+                        fee: fields[5].parse::<u32>().expect("error"),
+                        block_number: fields[6].parse::<u64>().expect("error"),
                     }),
                 );
             }
             "3" => {
-                let pair_address = Address::from_str(fields[1]).unwrap();
+                let pair_address = Address::from_str(fields[1]).expect("error");
                 pools_map.insert(
                     pair_address,
                     Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap(),
-                        token0: Address::from_str(fields[3]).unwrap(),
-                        token1: Address::from_str(fields[4]).unwrap(),
-                        fee: fields[5].parse::<u32>().unwrap(),
+                        pair_address: Address::from_str(fields[1]).expect("error"),
+                        token0: Address::from_str(fields[3]).expect("error"),
+                        token1: Address::from_str(fields[4]).expect("error"),
+                        fee: fields[5].parse::<u32>().expect("error"),
                         tick_spacing: 0i32,
                     }),
                 );
@@ -107,47 +64,63 @@ pub async fn threaded_evm(
     // we want to load all of the contracts into memory
     info!("Loading pools");
 
-    let target_pool = pools_map
-        .iter()
-        .find(|(_, event)| match event {
-            Event::PairCreated(V2PoolCreated { token0, token1, .. })
-            | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
-                (token0 == &uni_addr() && token1 == &weth_addr()) || (token0 == &weth_addr() && token1 == &uni_addr())
-            }
-            _ => false,
-        })
-        .map(|(address, _)| address)
-        .expect("WETH-USDC pool not found");
+    // let v2_pool = address!("d3d2E2692501A5c9Ca623199D38826e513033a17");
+    // simulator.lock().await.load_account(v2_pool).await;
+    // simulator
+    //     .lock()
+    //     .await
+    //     .load_v2_pool_state(v2_pool)
+    //     .await
+    //     .expect("Failed ");
 
-    let pepe_usdc_pools: HashMap<Address, Event> = pools_map
-        .iter()
-        .filter_map(|(address, event)| match event {
-            Event::PairCreated(V2PoolCreated { token0, token1, .. })
-            | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
-                if (token0 == &uni_addr() && token1 == &weth_addr()) || (token0 == &weth_addr() && token1 == &uni_addr()) {
-                    Some((*address, event.clone()))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        })
-        .collect();
-
-    load_pools(pepe_usdc_pools, simulator.clone()).await;
+    // let v3_pool = address!("1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801");
+    // load_pools(test_pools, simulator.clone()).await;
 
     // println!("Random addresses")
 
-    simulation::simulation(*target_pool, uni_addr(), weth_addr(), simulator)
-        .await
-        .expect("Error running simulation");
-
     info!("Pools Loaded");
+
     let mut event_reciever = sender.subscribe();
+
     loop {
         match event_reciever.recv().await {
+            // this has to recieve the event
             Ok(message) => {
-                println!("The Message: {:?}", message)
+                info!("The Message: {:?}", message);
+
+                if message.pool_variant == 3 {
+
+                simulator
+                    .lock()
+                    .await
+                    .load_account(message.corresponding_pool_address)
+                    .await;
+                simulator.lock().await.load_v2_pool_state(message.corresponding_pool_address).await.unwrap();
+                simulator
+                    .lock()
+                    .await
+                    .load_account(message.log_pool_address)
+                    .await;
+                simulator
+                    .lock()
+                    .await
+                    .load_v3_pool_state(message.log_pool_address)
+                    .await
+                    .expect("Failed");
+
+                    // Calculate optimal amount
+                    let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18)); // 1000
+                    let optimal_result = find_optimal_amount_v3_to_v2(
+                        message.log_pool_address,
+                        message.token0,
+                        message.token1,
+                        simulator.clone(),
+                        max_input,
+                    )
+                    .await
+                    .expect("Failed");
+                    info!("optimal_result {:?}", optimal_result);
+                }
             }
             Err(err) => {
                 info!("OOP")
@@ -155,10 +128,9 @@ pub async fn threaded_evm(
         }
     }
 }
-
 async fn load_pools<'a>(
-    pools_map: HashMap<Address, Event>,
     simulator: Arc<Mutex<EvmSimulator<'a>>>,
+    pools_map: HashMap<Address, Event>,
 ) {
     let mut sim = simulator.lock().await;
     for event in pools_map.iter() {
@@ -178,3 +150,123 @@ async fn load_pools<'a>(
         }
     }
 }
+
+#[derive(Debug)]
+pub struct ArbitrageResult {
+    pub optimal_amount: U256,
+    pub expected_profit: U256,
+}
+
+pub async fn find_optimal_amount_v3_to_v2<'a>(
+    v3_pool: Address,
+    token_in: Address,
+    token_out: Address,
+    simulator: Arc<TokioMutex<EvmSimulator<'a>>>,
+    max_input: U256,
+) -> Result<ArbitrageResult> {
+    let mut best_profit = U256::ZERO;
+    let mut optimal_amount = U256::ZERO;
+
+    // Binary search parameters
+    let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
+    let mut right = max_input;
+
+    while left <= right {
+        let mid = (left + right) / U256::from(2);
+
+        let v3_out = simulation::simulation(
+            v3_pool,
+            token_in,
+            token_out,
+            optimal_amount,
+            simulator.clone(),
+        )
+        .await
+        .expect("failed to simulate");
+
+        // Calculate potential profit based on output amount
+        // Here you might want to adjust the profit calculation based on your specific needs
+        let current_profit = if v3_out > mid {
+            v3_out - mid
+        } else {
+            U256::ZERO
+        };
+
+        // Update best profit if we found better results
+        if current_profit > best_profit {
+            best_profit = current_profit;
+            optimal_amount = mid;
+            info!(
+                "New optimal amount found: {} with expected output: {}, profit: {}",
+                optimal_amount, v3_out, best_profit
+            );
+        }
+
+        // Binary search adjustment
+        let mid_plus_delta = mid + U256::from(10).pow(U256::from(17)); // 0.1 token increment
+        let next_v3_out = simulation::simulation(
+            v3_pool,
+            token_in,
+            token_out,
+            optimal_amount,
+            simulator.clone(),
+        )
+        .await
+        .expect("Failed to simulate");
+
+        let next_profit = if next_v3_out > mid_plus_delta {
+            next_v3_out - mid_plus_delta
+        } else {
+            U256::ZERO
+        };
+
+        if next_profit > current_profit {
+            left = mid + U256::from(1);
+        } else {
+            right = mid - U256::from(1);
+        }
+
+        // if next_profit > current_profit {
+        //     left = mid + U256::from(1);
+        // } else {
+        //     right = mid - U256::from(1);
+        // }
+    }
+
+    Ok(ArbitrageResult {
+        optimal_amount,
+        expected_profit: best_profit,
+    })
+}
+
+// let target_pool = pools_map
+//     .iter()
+//     .find(|(_, event)| match event {
+//         Event::PairCreated(V2PoolCreated { token0, token1, .. })
+//         | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
+//             (token0 == &get_address(AddressType::Uni)
+//                 && token1 == &get_address(AddressType::Weth))
+//                 || (token0 == &get_address(AddressType::Weth)
+//                     && token1 == &get_address(AddressType::Uni))
+//         }
+//         _ => false,
+//     })
+//     .map(|(address, _)| address)
+//     .expect("UNI-ETH pool not found");
+
+// let test_pools: HashMap<Address, Event> = pools_map
+//     .iter()
+//     .filter(|(_, event)| match event {
+//         Event::PairCreated(V2PoolCreated { token0, token1, .. })
+//         | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
+//             (token0 == &get_address(AddressType::Uni)
+//                 && token1 == &get_address(AddressType::Weth))
+//                 || (token0 == &get_address(AddressType::Weth)
+//                     && token1 == &get_address(AddressType::Uni))
+//         }
+//         _ => false,
+//     })
+//     .map(|(address, event)| (*address, event.clone()))
+//     .collect();
+
+// info!("pools {:?}", test_pools);

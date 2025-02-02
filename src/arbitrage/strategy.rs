@@ -1,5 +1,4 @@
 use super::quoter::execute_quotes;
-use crate::arbitrage::simulation::{simulation, usdc_addr, weth_addr};
 use crate::common::logs::LogEvent;
 use alloy::primitives::U256;
 use alloy::{providers::RootProvider, pubsub::PubSubFrontend};

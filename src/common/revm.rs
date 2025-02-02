@@ -1,26 +1,24 @@
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
-use alloy::network::AnyNetwork ;
+use alloy::network::AnyNetwork;
 use alloy::primitives::{Address, U64};
 use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
 use alloy::signers::local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use anyhow::{anyhow, Error, Result};
+use log::info;
 use revm::db::{AlloyDB, CacheDB};
 use revm::handler::register::EvmHandler;
-use revm::primitives::{ Bytes, HandlerCfg, Log, SpecId};
+use revm::primitives::{Bytes, HandlerCfg, Log, SpecId};
 use revm::{
-    primitives::{
-        AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256,
-    },
+    primitives::{AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256},
     Context, Database, Evm, EvmContext, InMemoryDB,
 };
-use std::sync::Arc;
+use std::io::Read;
 use std::str::FromStr;
-use tokio::sync::{MutexGuard as TokioMutexGuard, Mutex as TokioMutex};
-use log::info;
-
+use std::sync::Arc;
+use tokio::sync::{Mutex as TokioMutex, MutexGuard as TokioMutexGuard};
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
@@ -73,20 +71,15 @@ pub struct TxResult {
 #[derive(Debug)]
 pub struct EvmSimulator<'a> {
     pub owner: Address,
-    pub evm: 
-        TokioMutex<
-            Evm<
-                'a,
-                EvmContext<CacheDB<InMemoryDB>>,
-                CacheDB<
-                    AlloyDB<
-                        PubSubFrontend,
-                        AnyNetwork,
-                        Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
-                    >,
-                >,
+    pub evm: TokioMutex<
+        Evm<
+            'a,
+            EvmContext<CacheDB<InMemoryDB>>,
+            CacheDB<
+                AlloyDB<PubSubFrontend, AnyNetwork, Arc<RootProvider<PubSubFrontend, AnyNetwork>>>,
             >,
         >,
+    >,
     pub block_number: U64,
 }
 impl<'a> EvmSimulator<'a> {
@@ -148,22 +141,22 @@ impl<'a> EvmSimulator<'a> {
 
     pub async fn get_block_number(&mut self) -> U256 {
         let evm = self.evm.lock().await;
-            evm.block().number
+        evm.block().number
     }
 
     pub async fn get_coinbase(&mut self) -> Address {
-            let evm = self.evm.lock().await;
-            evm.block().coinbase
+        let evm = self.evm.lock().await;
+        evm.block().coinbase
     }
 
     pub async fn get_base_fee(&mut self) -> U256 {
         let evm = self.evm.lock().await;
-            evm.block().basefee
+        evm.block().basefee
     }
 
     pub async fn set_base_fee(&mut self, base_fee: U256) {
         let mut evm = self.evm.lock().await;
-            evm.context.evm.env.block.basefee = base_fee;
+        evm.context.evm.env.block.basefee = base_fee;
     }
 
     pub fn staticcall(&mut self, tx: Tx) -> Result<TxResult> {
@@ -237,16 +230,16 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub async fn insert_account_info(&mut self, target: Address, account_info: AccountInfo) {
-        let mut evm = self.evm.lock().await; 
-            evm.context.evm.db.insert_account_info(target, account_info);
+        let mut evm = self.evm.lock().await;
+        evm.context.evm.db.insert_account_info(target, account_info);
     }
 
     pub async fn insert_contract(&mut self, data: Bytecode) {
         let mut evm = self.evm.lock().await;
-            let code_hash = data.hash_slow();
-            info!("code hash in insert_contract: {:?}", code_hash);
-            let mut account_info = AccountInfo::new(U256::from(0), 0, code_hash, data);
-            evm.context.evm.db.insert_contract(&mut account_info);
+        let code_hash = data.hash_slow();
+        info!("code hash in insert_contract: {:?}", code_hash);
+        let mut account_info = AccountInfo::new(U256::from(0), 0, code_hash, data);
+        evm.context.evm.db.insert_contract(&mut account_info);
     }
 
     pub async fn deploy(&mut self, bytecode: Bytecode) {
@@ -257,18 +250,17 @@ impl<'a> EvmSimulator<'a> {
 
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
         let mut evm = self.evm.lock().await;
-            let account = evm.context.evm.db.basic(address).unwrap().unwrap();
-            Ok(account)
+        let account = evm.context.evm.db.basic(address).unwrap().unwrap();
+        Ok(account)
     }
 
     pub async fn get_contract(&mut self, code_hash: B256) -> Result<(), Error> {
         let mut evm = self.evm.lock().await;
-            let new_code_hash = B256::from_str(
-                "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-            )?;
-            let contracts = evm.context.evm.db.code_by_hash(new_code_hash);
-            info!("contracts: {:?}", contracts);
-            Ok(())
+        let new_code_hash =
+            B256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")?;
+        let contracts = evm.context.evm.db.code_by_hash(new_code_hash);
+        info!("contracts: {:?}", contracts);
+        Ok(())
     }
 
     pub async fn set_eth_balance(&mut self, target: Address, amount: U256) {
@@ -279,55 +271,60 @@ impl<'a> EvmSimulator<'a> {
 
     pub async fn get_eth_balance(&mut self, address: Address) -> U256 {
         let mut evm = self.evm.lock().await;
-            evm.context
-                .evm
-                .db
-                .load_account(address)
-                .unwrap()
-                .info
-                .balance
+        evm.context
+            .evm
+            .db
+            .load_account(address)
+            .unwrap()
+            .info
+            .balance
     }
 
     pub async fn load_account(&mut self, address: Address) -> () {
         let mut evm = self.evm.lock().await;
-            evm.context.evm.db.load_account(address).unwrap();
+        evm.context.evm.db.load_account(address).unwrap();
     }
 
     pub async fn get_code_at(&mut self, address: Address) -> Result<AccountInfo, Error> {
         let mut evm = self.evm.lock().await;
-            Ok(evm
-                .context
-                .evm
-                .db
-                .load_account(address)
-                .unwrap()
-                .info
-                .clone())
+        Ok(evm
+            .context
+            .evm
+            .db
+            .load_account(address)
+            .unwrap()
+            .info
+            .clone())
     }
 
-    pub async fn get_erc20_balance(&mut self, address: Address, token: Address, index: U256) -> U256 {
+    pub async fn get_erc20_balance(
+        &mut self,
+        address: Address,
+        token: Address,
+        index: U256,
+    ) -> U256 {
         let mut evm = self.evm.lock().await;
-            evm.context.evm.db.storage(address, index).unwrap()
+        evm.context.evm.db.storage(address, index).unwrap()
     }
 
     pub async fn get_storage(&mut self, address: Address) -> AccountInfo {
         let mut evm = self.evm.lock().await;
-            evm.context
-                .evm
-                .db
-                .load_account(address)
-                .unwrap()
-                .info
-                .clone()
+        evm.context
+            .evm
+            .db
+            .load_account(address)
+            .unwrap()
+            .info
+            .clone()
     }
 
     pub async fn insert_account_storage(&mut self, target: Address, index: U256, value: U256) {
         let mut evm = self.evm.lock().await;
-            evm.context
-                .evm
-                .db
-                .insert_account_storage(target, index, value)
-                .unwrap();
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(target, index, value)
+            .unwrap();
     }
     // NOTE: probably want to change this and not have to get the abi from that folder
     pub fn get_weth_balance(
@@ -380,36 +377,43 @@ impl<'a> EvmSimulator<'a> {
 
     pub async fn get_accounts(&mut self) {
         let evm = self.evm.lock().await;
-            let accounts = &evm.context.evm.db.accounts;
-            info!("Accounts: {:?}", accounts);
+        let accounts = &evm.context.evm.db.accounts;
+        info!("Accounts: {:?}", accounts);
     }
 
     pub async fn get_db(&mut self) {
-    let evm = self.evm.lock().await;
-            let db = &evm.context.evm.db;
-            info!("//////////////////////////////////////////////////////");
-            info!("Logs: {:?}", db);
+        let evm = self.evm.lock().await;
+        let db = &evm.context.evm.db;
+        info!("//////////////////////////////////////////////////////");
+        info!("Logs: {:?}", db);
     }
 
     pub async fn load_pool_state(&self, pool_address: Address) -> Result<(), Error> {
         let mut evm = self.evm.lock().await;
-        
+
         // Load the basic account info (code, balance, etc)
-        let account = evm.context.evm.db.basic(pool_address)?
+        let account = evm
+            .context
+            .evm
+            .db
+            .basic(pool_address)?
             .ok_or_else(|| anyhow!("Pool not found"))?;
 
         // Get all storage slots from the provider
         // You might want to batch this or load specific slots based on the pool type (V2 or V3)
         let storage_slots = vec![
-            U256::from(0),  // reserves for V2
-            U256::from(1),  // fees
-            U256::from(2),  // token balances
-            // Add more slots based on the pool type
+            U256::from(0), // reserves for V2
+            U256::from(1), // fees
+            U256::from(2), // token balances
+                           // Add more slots based on the pool type
         ];
 
         for slot in storage_slots {
             let value = evm.context.evm.db.storage(pool_address, slot)?;
-            evm.context.evm.db.insert_account_storage(pool_address, slot, value)?;
+            evm.context
+                .evm
+                .db
+                .insert_account_storage(pool_address, slot, value)?;
         }
 
         Ok(())
@@ -418,26 +422,48 @@ impl<'a> EvmSimulator<'a> {
     // Helper method to load V2 pool specific storage
     pub async fn load_v2_pool_state(&self, pool_address: Address) -> Result<(), Error> {
         let mut evm = self.evm.lock().await;
-        
+
         // V2 pools store reserves in slot 0
         let reserves_slot = U256::from(0);
         let reserves = evm.context.evm.db.storage(pool_address, reserves_slot)?;
-        evm.context.evm.db.insert_account_storage(pool_address, reserves_slot, reserves)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, reserves_slot, reserves)?;
 
         // Load other V2-specific storage slots
         // token0 balance
         let token0_balance_slot = U256::from(1);
-        let token0_balance = evm.context.evm.db.storage(pool_address, token0_balance_slot)?;
-        evm.context.evm.db.insert_account_storage(pool_address, token0_balance_slot, token0_balance)?;
+        let token0_balance = evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, token0_balance_slot)?;
+        evm.context.evm.db.insert_account_storage(
+            pool_address,
+            token0_balance_slot,
+            token0_balance,
+        )?;
 
         // token1 balance
         let token1_balance_slot = U256::from(2);
-        let token1_balance = evm.context.evm.db.storage(pool_address, token1_balance_slot)?;
-        evm.context.evm.db.insert_account_storage(pool_address, token1_balance_slot, token1_balance)?;
+        let token1_balance = evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, token1_balance_slot)?;
+        evm.context.evm.db.insert_account_storage(
+            pool_address,
+            token1_balance_slot,
+            token1_balance,
+        )?;
 
         //lets log out the balances?
 
-        info!("Token Balances for V2 Pool: {}, {}, {}", pool_address, token0_balance, token1_balance);
+        info!(
+            "Token Balances for V2 Pool: {}, {}, {}",
+            pool_address, token0_balance, token1_balance
+        );
 
         Ok(())
     }
@@ -445,27 +471,131 @@ impl<'a> EvmSimulator<'a> {
     // Helper method to load V3 pool specific storage
     pub async fn load_v3_pool_state(&self, pool_address: Address) -> Result<(), Error> {
         let mut evm = self.evm.lock().await;
-        
-        // V3 pools have more complex storage layout
-        // Load liquidity
+
+        // Basic pool state
         let liquidity_slot = U256::from(0);
         let liquidity = evm.context.evm.db.storage(pool_address, liquidity_slot)?;
-        evm.context.evm.db.insert_account_storage(pool_address, liquidity_slot, liquidity)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, liquidity_slot, liquidity)?;
 
-        // Load sqrt price
         let sqrt_price_slot = U256::from(1);
         let sqrt_price = evm.context.evm.db.storage(pool_address, sqrt_price_slot)?;
-        evm.context.evm.db.insert_account_storage(pool_address, sqrt_price_slot, sqrt_price)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, sqrt_price_slot, sqrt_price)?;
 
-        // Load tick
         let tick_slot = U256::from(2);
         let tick = evm.context.evm.db.storage(pool_address, tick_slot)?;
-        evm.context.evm.db.insert_account_storage(pool_address, tick_slot, tick)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, tick_slot, tick)?;
 
-        // You might want to load tick bitmap and positions too
-        
-        info!("V3 pool info : {}, {}, {}", pool_address, liquidity, sqrt_price);
+        // Fee and protocol fee settings
+        let fee_slot = U256::from(3);
+        let fee = evm.context.evm.db.storage(pool_address, fee_slot)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, fee_slot, fee)?;
+
+        let token0_slot = U256::from(4);
+        let token0 = evm.context.evm.db.storage(pool_address, token0_slot)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, token0_slot, token0)?;
+
+        let token1_slot = U256::from(5);
+        let token1 = evm.context.evm.db.storage(pool_address, token1_slot)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(pool_address, token1_slot, token1)?;
+
+        // Fee growth trackers
+        let fee_growth_global0_slot = U256::from(6);
+        let fee_growth_global0 = evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, fee_growth_global0_slot)?;
+        evm.context.evm.db.insert_account_storage(
+            pool_address,
+            fee_growth_global0_slot,
+            fee_growth_global0,
+        )?;
+
+        let fee_growth_global1_slot = U256::from(7);
+        let fee_growth_global1 = evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, fee_growth_global1_slot)?;
+        evm.context.evm.db.insert_account_storage(
+            pool_address,
+            fee_growth_global1_slot,
+            fee_growth_global1,
+        )?;
+
+        // Protocol fees
+        let protocol_fees0_slot = U256::from(8);
+        let protocol_fees0 = evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, protocol_fees0_slot)?;
+        evm.context.evm.db.insert_account_storage(
+            pool_address,
+            protocol_fees0_slot,
+            protocol_fees0,
+        )?;
+
+        let protocol_fees1_slot = U256::from(9);
+        let protocol_fees1 = evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, protocol_fees1_slot)?;
+        evm.context.evm.db.insert_account_storage(
+            pool_address,
+            protocol_fees1_slot,
+            protocol_fees1,
+        )?;
+
+        // Token balances (tracked in ERC20 contracts)
+        let token0_addr = Address::from_slice(&token0.to_be_bytes::<32>()[12..]);
+        let balance0_slot = get_balance_slot(pool_address);
+        let balance0 = evm.context.evm.db.storage(token0_addr, balance0_slot)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(token0_addr, balance0_slot, balance0)?;
+
+        let token1_addr = Address::from_slice(&token1.to_be_bytes::<32>()[12..]);
+        let balance1_slot = get_balance_slot(pool_address);
+        let balance1 = evm.context.evm.db.storage(token1_addr, balance1_slot)?;
+        evm.context
+            .evm
+            .db
+            .insert_account_storage(token1_addr, balance1_slot, balance1)?;
+
+        info!("V3 pool state loaded - Address: {}", pool_address);
+        info!("Liquidity: {}", liquidity);
+        info!("SqrtPriceX96: {}", sqrt_price);
+        info!("Current tick: {}", tick);
+        info!("Fee: {}", fee);
+
         Ok(())
     }
-
+}
+// Helper function to calculate balance slot for an address
+fn get_balance_slot(address: Address) -> U256 {
+    // This is a simplified version - you might need to adjust based on actual storage layout
+    let mut bytes = [0u8; 32];
+    bytes[12..32].copy_from_slice(address.as_slice());
+    U256::from_be_bytes(bytes)
 }
