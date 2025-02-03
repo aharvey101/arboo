@@ -30,7 +30,8 @@ contract UniswapV2FlashSwap {
         (uint256 amount0Out, uint256 amount1Out) = tokenIn < tokenOut
             ? (uint256(0), amountIn)
             : (amountIn, uint256(0));
-
+        console2.log("Amount 0 Out:", amount0Out);
+        console2.log("Amount 1 Out:", amount1Out);
         // Encode callback data
         bytes memory data = abi.encode(
             msg.sender, // original caller
@@ -40,8 +41,8 @@ contract UniswapV2FlashSwap {
             tokenOut, // token we're swapping to
             amountIn // amount we're borrowing
         );
-
-        IUniswapV2Pool(pool0).swap(amount0Out, amount1Out, msg.sender, data);
+        console2.log("Test");
+        IUniswapV2Pool(pool0).swap(amount0Out, amount1Out, address(this), data);
     }
 
     function _v3_swap(
@@ -76,7 +77,8 @@ contract UniswapV2FlashSwap {
         uint256 amount1,
         bytes calldata data
     ) external {
-        // Decode the passed data
+        console2.log("Amount to repay?", amount0);
+
         (
             address caller,
             address pool0,
@@ -90,15 +92,16 @@ contract UniswapV2FlashSwap {
             );
 
         // Verify caller
-        // if (msg.sender != pool0) revert NotSender();
-        // if (sender != address(this)) revert NotSender();
+        if (msg.sender != pool0) revert NotSender();
+        if (sender != address(this)) revert NotSender();
 
         // Calculate the amount we need to repay
-        uint256 amountToRepay = amountIn + ((amountIn * 3) * 997) + 1; // 0.3% fee + 1 wei for rounding
-        // console2.log("Amount to repay?", amountToRepay);
+        uint256 amountToRepay = amountIn + 1; // 0.3% fee + 1 wei for rounding
+        console2.log("Amount to repay?", amountToRepay);
         // Get the amount we received from the flash loan
+
         uint256 amountReceived = amount0 > 0 ? amount0 : amount1;
-        // console2.log("Amount recieved", amountReceived)
+        console2.log("Amount recieved", amountReceived);
         // Do the V3 swap with the borrowed tokens
         uint256 buyBackAmount = _v3_swap(
             tokenOut, // token we received from V2
@@ -106,12 +109,11 @@ contract UniswapV2FlashSwap {
             fee1, // V3 pool fee
             amountReceived
         );
-
+        console2.log("Buy Back Amount", buyBackAmount);
         // Check if profitable
         if (buyBackAmount <= amountToRepay) {
             revert NotProfitable(buyBackAmount, amountToRepay);
         }
-
 
         // Calculate profit
         uint256 profit = buyBackAmount - amountToRepay;
