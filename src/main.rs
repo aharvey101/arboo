@@ -12,8 +12,7 @@ use arbooo::common::{
     revm::{EvmSimulator, Tx},
 };
 use anyhow::Result;
-use arbooo::arbitrage::evm::threaded_evm;
-use arbooo::arbitrage::strategy::strategy;
+use arbooo::arbitrage::strategy::threaded_evm;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
@@ -46,7 +45,7 @@ async fn main() -> Result<()> {
     let provider = Arc::new(provider);
 
     if !Path::new("cache/.cached-pools.csv").try_exists()? {
-        pools::load_all_pools(ws_url, 10_000_000, 50_000)
+        pools::load_all_pools(ws_url, 100_000, 50_000)
             .await
             .unwrap();
     }
@@ -54,8 +53,7 @@ async fn main() -> Result<()> {
     let mut set = JoinSet::new();
 
     let (sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
-
-    set.spawn(strategy(provider.clone(), sender.clone()));
+    // set.spawn(strategy(provider.clone(), sender.clone()));
 
     // 1. Get all pools
 

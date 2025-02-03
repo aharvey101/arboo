@@ -1,3 +1,4 @@
+use ::log::info;
 use alloy::eips::BlockId;
 use alloy::primitives::Address;
 use alloy::primitives::FixedBytes;
@@ -15,13 +16,14 @@ use csv::StringRecord;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use alloy::primitives::U256;
+
 use std::{
     collections::HashMap,
     fs::{create_dir_all, OpenOptions},
     str::FromStr,
     sync::Arc,
 };
-use::log::info;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum DexVariant {
@@ -284,14 +286,7 @@ pub async fn load_uniswap_v2_pools(
             let timestamp = *timestamp_map.get(&block_number).unwrap();
             timestamp
         };
-        // if log.topics()[2].to_string() != weth_address() {
-        //     info!("Token 2 isn't weth but is: {}", log.topics()[2]);
-        //     continue;
-        // }
-        // if log.topics()[1].is_zero() {
-        //     info!("emtpy topic 1");
-        //     continue;
-        // }
+
         let topic0 = FixedBytes::from(log.topics()[1]);
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
         let token0 = Address::from(topic0);
@@ -301,8 +296,8 @@ pub async fn load_uniswap_v2_pools(
         );
         let log_data = log.inner.data.data.to_vec();
         let log_data = log_data.as_slice();
-
         let decoded: (Address, B256) = SolValue::abi_decode(log_data, false).unwrap();
+
         let pool_data = Pool {
             id: -1,
             address: decoded.0,
@@ -369,6 +364,12 @@ pub async fn load_uniswap_v3_pools(
         let fee = u32::from_str_radix(decoded.0.to_string().as_str().trim_start_matches("0x"), 16)
             .unwrap();
 
+        // lets check how much liquidity is in the pool, if its less than $1000 then lets ignore it
+
+        // if liquidity < 1_000_000_000_000_000_000 {
+        //     info!("Pool liquidity is less than $1000, ignoring pool");
+        //     continue;
+        // }
         let pool_data = Pool {
             id: -1,
             address: pool_address,
@@ -385,6 +386,57 @@ pub async fn load_uniswap_v3_pools(
     Ok(pools)
 }
 
-fn weth_address()-> String{
+fn weth_address() -> String {
     String::from("0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
 }
+alloy::sol! {
+    interface IV3Pool {
+        function liquidity() external view returns (uint128);
+        function slot0() external view returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        );
+    }
+}
+
+pub struct PoolLiquidity {
+    pub liquidity: U256,
+    pub sqrt_price_x96: U256,
+    pub tick: i32,
+}
+// pub async fn get_v3_pool_liquidity(
+//     provider: &Arc<RootProvider<PubSubFrontend>>,
+//     pool_address: Address
+// ) -> Result<PoolLiquidity, Box<dyn std::error::Error>> {
+//     // Create call to get liquidity
+//     let liquidity_call = IV3PoolCalls::liquidity();
+//     let liquidity_bytes = liquidity_call.encode();
+
+//     // Create call to get slot0 data
+//     let slot0_call = IV3PoolCalls::slot0();
+//     let slot0_bytes = slot0_call.encode();
+
+//     // Make the calls
+//     let liquidity_result = provider
+//         .call()
+//         .await?;
+
+//     let slot0_result = provider
+//         .call(pool_address, slot0_bytes.into(), None, BlockId::Latest)
+//         .await?;
+
+//     // Decode results
+//     let liquidity: U256 = IV3PoolCalls::liquidity_returns(&liquidity_result)?;
+//     let (sqrt_price_x96, tick, ..) = IV3PoolCalls::slot0_returns(&slot0_result)?;
+
+//     Ok(PoolLiquidity {
+//         liquidity,
+//         sqrt_price_x96: sqrt_price_x96.into(),
+//         tick: tick,
+//     })
+// }
