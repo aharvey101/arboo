@@ -4,7 +4,7 @@ use crate::common::{
     pairs::{Event, V2PoolCreated, V3PoolCreated},
     revm::{EvmSimulator, Tx},
 };
-use anyhow::Result;
+use anyhow::{anyhow,Result};
 use log::info;
 use revm::primitives::{address, Address, U256};
 use std::{
@@ -92,13 +92,13 @@ pub async fn threaded_evm(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimu
                         .await
                         .load_account(message.corresponding_pool_address)
                         .await;
-                    // simulator
-                    //     .lock()
-                    //     .await
-                    //     .load_v3_pool_state(message.corresponding_pool_address)
-                    //     .await
-                    //     .expect("Failed");
-                    ////////////////////////////////////////////////////////////////////////////////
+                    simulator
+                        .lock()
+                        .await
+                        .load_v3_pool_state(message.corresponding_pool_address)
+                        .await
+                        .expect("Failed");
+                    //////////////////////////////////////////////////////////////////////////////
 
                     let max_input = U256::from(1_000_000_000) * U256::from(10).pow(U256::from(18)); // 1000
                     let optimal_result = find_optimal_amount_v3_to_v2(
@@ -144,9 +144,9 @@ pub async fn threaded_evm(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimu
                     // Calculate optimal amount
                     let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18)); // 1000
                     let optimal_result = find_optimal_amount_v3_to_v2(
-                        message.log_pool_address,
-                        message.token0,
+                        message.corresponding_pool_address,
                         message.token1,
+                        message.token0,
                         simulator.clone(),
                         max_input,
                     )
@@ -211,7 +211,7 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             v3_pool,
             token_in,
             token_out,
-            optimal_amount,
+            left,
             simulator.clone(),
         )
         .await
@@ -241,7 +241,7 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             v3_pool,
             token_in,
             token_out,
-            optimal_amount,
+            right,
             simulator.clone(),
         )
         .await
@@ -259,11 +259,6 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             right = mid - U256::from(1);
         }
 
-        // if next_profit > current_profit {
-        //     left = mid + U256::from(1);
-        // } else {
-        //     right = mid - U256::from(1);
-        // }
     }
 
     Ok(ArbitrageResult {
