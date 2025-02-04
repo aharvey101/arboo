@@ -5,6 +5,7 @@ use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::Filter;
 use futures::StreamExt;
+use log::info;
 use revm::primitives::{address, keccak256};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::broadcast::Sender;
@@ -33,77 +34,60 @@ pub async fn get_logs(
 
     while let Some(res) = stream.next().await {
         let key = res.address();
-        let token0 = res.data().topics()[1];
-        let token0 = Address::from_slice(&token0.0[12..32]);
-        let token1 = Address::from_slice(&res.data().topics()[2].0[12..32]);
-
+        let token0 = Address::from_slice(&res.data().topics()[1][12..32]);
+        let token1 = Address::from_slice(&res.data().topics()[2][12..32]);
+        // info!("Topics : {:?}", res.data().topics());
+        // info!("Token 0: {:?}", token0);
+        // info!("Token 1 {:?}", token1);
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
-        if pairs.contains_key::<Address>(&key) {
-
-            match pairs.get(&key).unwrap() {
-                Event::PairCreated(pair) => {
-                    let value = pairs.values().find(|value| {
-                        let test = match value {
-                            Event::PoolCreated(v3_pair) => {
-                                if v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1
-                                    || v3_pair.token1 == token0 && v3_pair.token0 == token1
-                                {
-                                    return true;
-                                }
-                                false
-                            }
-                            _ => false,
-                        };
-                        test
-                    });
-                    let v3_address = match value {
-                        Some(Event::PoolCreated(pair)) => pair.pair_address,
-                        _ => continue,
-                    };
-                    match event_sender.send(LogEvent {
-                        pool_variant:2,
-                        corresponding_pool_address: v3_address,
-                        log_pool_address: key,
-                        token0,
-                        token1,
-                    }) {
-                        Ok(_) => {}
-                        Err(_) => {}
-                    }
-                    continue;
+        if let Some(event) = pairs.get(&key) {
+            match event {
+            Event::PairCreated(pair) => {
+                if let Some(Event::PoolCreated(v3_pair)) = pairs.values().find(|value| {
+                matches!(value, Event::PoolCreated(v3_pair) if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) || (v3_pair.token0 == token1 && v3_pair.token1 == token0))
+                }) {
+                   
+                   info!("token0 {:?}", token0 );
+                  
+                  info!("token1 {:?}", token1 );
+                    
+                info!("V2 pair??, {:?}", LogEvent{
+                    pool_variant: 2,
+                    corresponding_pool_address: v3_pair.pair_address,
+                    log_pool_address: key,
+                    token0,
+                    token1
+                });
+                let _ = event_sender.send(LogEvent {
+                    pool_variant: 2,
+                    corresponding_pool_address: v3_pair.pair_address,
+                    log_pool_address: key,
+                    token0,
+                    token1,
+                });
                 }
-                Event::PoolCreated(pair) => {
-                    let value = pairs.values().find(|value| {
-                        let test = match value {
-                            Event::PairCreated(v2_pair) => {
-                                if v2_pair.token0 == pair.token0 && v2_pair.token1 == pair.token1
-                                    || v2_pair.token1 == token0 && v2_pair.token0 == token1
-                                {
-                                    return true;
-                                }
-                                false
-                            }
-                            _ => false,
-                        };
-                        test
-                    });
+            }
+            Event::PoolCreated(pair) => {
+                if let Some(Event::PairCreated(v2_pair)) = pairs.values().find(|value| {
+                matches!(value, Event::PairCreated(v2_pair) if (v2_pair.token0 == pair.token0 && v2_pair.token1 == pair.token1) || (v2_pair.token0 == token1 && v2_pair.token1 == token0))
+                }) {
 
-                    let v2_address = match value {
-                        Some(Event::PoolCreated(pair)) => pair.pair_address,
-                        _ => continue,
-                    };
-                    match event_sender.send(LogEvent {
-                        pool_variant: 3,
-                        corresponding_pool_address: v2_address,
-                        log_pool_address: key,
-                        token0,
-                        token1,
-                    }) {
-                        Ok(_) => {}
-                        Err(_) => {}
-                    }
-                    continue;
+                info!("V3 pair??, {:?}", LogEvent{
+                    pool_variant: 3,
+                    corresponding_pool_address: v2_pair.pair_address,
+                    log_pool_address: key,
+                    token0,
+                    token1
+                });
+                let _ = event_sender.send(LogEvent {
+                    pool_variant: 3,
+                    corresponding_pool_address: v2_pair.pair_address,
+                    log_pool_address: key,
+                    token0,
+                    token1,
+                });
                 }
+            }
             }
         }
     }

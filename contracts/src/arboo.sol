@@ -7,6 +7,10 @@ address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 address constant DAIETHPOOL = 0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11;
 
 error UnderflowError(uint256 buyBackAmount, uint256 amountIn);
+error AmountLessThanZero();
+error NotSender(address sender);
+error BuyBackAmountLessThanAmountIn(uint256 buyBackAmount, uint256 amountIn);
+error ProfitIsZero();
 
 contract UniswapV3FlashSwap {
     ISwapRouter02 constant router = ISwapRouter02(SWAP_ROUTER_02);
@@ -23,9 +27,6 @@ contract UniswapV3FlashSwap {
     // 3. Send DAI to pool0
     // profit = DAI received from pool1 - DAI repaid to pool0
 
-    function hello_world() public pure returns (string memory) {
-        return "Hello World";
-    }
 
     function flashSwap_V3_to_V2(
         address pool0,
@@ -81,7 +82,7 @@ contract UniswapV3FlashSwap {
             block.timestamp
         );
         if (amounts[1] < 0) {
-            revert("amount1 after v2_swap less than 0");
+            revert AmountLessThanZero();
         }
         return amounts[1];
     }
@@ -122,7 +123,9 @@ contract UniswapV3FlashSwap {
                 data,
                 (address, address, uint24, address, address, uint256, bool)
             );
-        require(msg.sender == address(pool0), "not sender");
+        if (msg.sender != address(pool0)) {
+            revert NotSender(msg.sender);
+        }
 
         uint256 amountOut = zeroForOne ? uint256(-amount1) : uint256(-amount0);
 
@@ -135,9 +138,13 @@ contract UniswapV3FlashSwap {
             amountOutMin: 1
         });
 
-        require(buyBackAmount > amountIn, "buyBackAmount < amountIn");
+        if (buyBackAmount <= amountIn) {
+            revert BuyBackAmountLessThanAmountIn(buyBackAmount, amountIn);
+        }
         uint256 profit = buyBackAmount - amountIn;
-        require(profit > 0, "profit = 0");
+        if (profit == 0) {
+            revert ProfitIsZero();
+        }
 
         // Repay pool0
         IERC20(tokenIn).transfer(pool0, amountIn);

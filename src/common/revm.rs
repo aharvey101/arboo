@@ -458,13 +458,6 @@ impl<'a> EvmSimulator<'a> {
             token1_balance,
         )?;
 
-        //lets log out the balances?
-
-        info!(
-            "Token Balances for V2 Pool: {}, {}, {}",
-            pool_address, token0_balance, token1_balance
-        );
-
         Ok(())
     }
 
@@ -598,4 +591,26 @@ fn get_balance_slot(address: Address) -> U256 {
     let mut bytes = [0u8; 32];
     bytes[12..32].copy_from_slice(address.as_slice());
     U256::from_be_bytes(bytes)
+}
+
+fn evm_decoder(error_data: Bytes)-> Result<String> {
+
+// The next 32 bytes is the offset to where the string data starts
+// The next 32 bytes after that is the length of the string
+// Then comes the actual string data
+let string_hex = &error_data[64..];  // Skip the first two 32-byte chunks
+
+// Convert hex to string
+let decoded_string = String::from_utf8(
+    hex::decode(string_hex)
+        .expect("Decoding failed")
+        .into_iter()
+        .filter(|&x| x != 0)  // Remove null terminators
+        .collect::<Vec<u8>>(),
+)
+.expect("Invalid UTF-8");
+
+println!("Decoded error message: {}", decoded_string);
+Ok(decoded_string)
+// Output: "UniswapV2Router: INVALID_PATH"
 }
