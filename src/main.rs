@@ -12,7 +12,7 @@ use arbooo::common::{
     revm::{EvmSimulator, Tx},
 };
 use anyhow::Result;
-use arbooo::arbitrage::strategy::threaded_evm;
+use arbooo::arbitrage::strategy::strategy;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
@@ -34,7 +34,6 @@ use std::sync::Arc;
 async fn main() -> Result<()> {
     dotenv()?;
     logger::setup_logger();
-    println!("Logger setup but this is a println");
     info!("Logger setup");
     let ws_url = var::<&str>("WS_URL").unwrap();
     let http_url = var::<&str>("HTTP_URL").unwrap();
@@ -127,7 +126,7 @@ async fn main() -> Result<()> {
     // create evm thread:
     info!("Spawning evm");
     // set.spawn(threaded_evm(sender, simulator.clone()));
-    threaded_evm(sender, simulator.clone()).await;
+    strategy(sender, simulator.clone()).await;
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
     }

@@ -46,25 +46,16 @@ pub async fn get_logs(
                 if let Some(Event::PoolCreated(v3_pair)) = pairs.values().find(|value| {
                 matches!(value, Event::PoolCreated(v3_pair) if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) || (v3_pair.token0 == token1 && v3_pair.token1 == token0))
                 }) {
-                   
-                   info!("token0 {:?}", token0 );
-                  
-                  info!("token1 {:?}", token1 );
-                    
-                info!("V2 pair??, {:?}", LogEvent{
-                    pool_variant: 2,
-                    corresponding_pool_address: v3_pair.pair_address,
-                    log_pool_address: key,
-                    token0,
-                    token1
-                });
-                let _ = event_sender.send(LogEvent {
+                    // NOTE: this shouldn't be so, not sure why it's doing this
+                    if token0 == token1 {continue}
+    
+                    event_sender.send(LogEvent {
                     pool_variant: 2,
                     corresponding_pool_address: v3_pair.pair_address,
                     log_pool_address: key,
                     token0,
                     token1,
-                });
+                }).expect("Failed to send event");
                 }
             }
             Event::PoolCreated(pair) => {
