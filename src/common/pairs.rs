@@ -104,7 +104,6 @@ async fn get_pair_data(
     provider: Arc<RootProvider<PubSubFrontend>>,
     pairs: HashMap<Address, Event>,
 ) -> Result<()> {
-    todo!();
     for pair in pairs {
         // info!("pair: {pair:?}");
         let storage = provider

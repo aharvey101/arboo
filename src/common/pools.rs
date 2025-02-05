@@ -366,10 +366,6 @@ pub async fn load_uniswap_v3_pools(
 
         // lets check how much liquidity is in the pool, if its less than $1000 then lets ignore it
 
-        // if liquidity < 1_000_000_000_000_000_000 {
-        //     info!("Pool liquidity is less than $1000, ignoring pool");
-        //     continue;
-        // }
         let pool_data = Pool {
             id: -1,
             address: pool_address,
@@ -409,34 +405,3 @@ pub struct PoolLiquidity {
     pub sqrt_price_x96: U256,
     pub tick: i32,
 }
-// pub async fn get_v3_pool_liquidity(
-//     provider: &Arc<RootProvider<PubSubFrontend>>,
-//     pool_address: Address
-// ) -> Result<PoolLiquidity, Box<dyn std::error::Error>> {
-//     // Create call to get liquidity
-//     let liquidity_call = IV3PoolCalls::liquidity();
-//     let liquidity_bytes = liquidity_call.encode();
-
-//     // Create call to get slot0 data
-//     let slot0_call = IV3PoolCalls::slot0();
-//     let slot0_bytes = slot0_call.encode();
-
-//     // Make the calls
-//     let liquidity_result = provider
-//         .call()
-//         .await?;
-
-//     let slot0_result = provider
-//         .call(pool_address, slot0_bytes.into(), None, BlockId::Latest)
-//         .await?;
-
-//     // Decode results
-//     let liquidity: U256 = IV3PoolCalls::liquidity_returns(&liquidity_result)?;
-//     let (sqrt_price_x96, tick, ..) = IV3PoolCalls::slot0_returns(&slot0_result)?;
-
-//     Ok(PoolLiquidity {
-//         liquidity,
-//         sqrt_price_x96: sqrt_price_x96.into(),
-//         tick: tick,
-//     })
-// }

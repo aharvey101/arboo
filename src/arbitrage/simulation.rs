@@ -22,7 +22,6 @@ pub async fn simulation(
     amount: U256,
     simulator: Arc<Mutex<EvmSimulator<'_>>>,
 ) -> Result<U256> {
-
     //      - Simulation:
     //       - Simply we are going to, get required info (latest block, pool needed?, adjacent pool?)
     //       - deploy our contract
@@ -30,6 +29,7 @@ pub async fn simulation(
     //       - Execute the transaction
     //       - Log the results
     //       - check if eth balance has increased
+    simulator.lock().await.deploy(arboo_bytecode()).await;
 
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
     let provider: RootProvider<PubSubFrontend, AnyNetwork> =
@@ -55,6 +55,112 @@ pub async fn simulation(
         .set_eth_balance(my_wallet.address(), initial_eth_balance)
         .await;
 
+    alloy::sol! {
+        function swapEthForWeth(
+            address to,
+            uint256 deadline
+        ) external payable;
+    };
+    let function_call = swapEthForWethCall {
+        to: my_wallet.address(),
+        deadline: U256::from(9999999999_u64),
+    };
+
+    let function_call_data = function_call.abi_encode();
+
+    // NOTE: to test the simulation I am swapping here to depress the price on the v2 pool
+
+    let new_tx = Tx {
+        caller: my_wallet.address(),
+        transact_to: get_address(AddressType::Weth),
+        data: function_call_data.into(),
+        value: U256::from(10) * U256::from(10).pow(U256::from(18)),
+        gas_limit: latest_gas_limit as u64,
+        gas_price: latest_gas_price,
+    };
+
+    let result = simulator.lock().await.call(new_tx)?;
+
+    info!("result from swapping, {:?}", result);
+    check_weth_balance(
+        my_wallet.address(),
+        &mut *simulator.lock().await,
+        &latest_gas_limit,
+        &latest_gas_price,
+        None,
+    )
+    .await
+    .unwrap();
+    // Load WETH contract state
+    // simulator.lock().await.load_account(token_a).await;
+    // simulator.lock().await.load_account(token_b).await;
+    // simulator
+    //     .lock()
+    //     .await
+    //     .load_account(get_address(AddressType::Weth))
+    //     .await;
+    // simulator
+    //     .lock()
+    //     .await
+    //     .load_v3_pool_state(target_pool)
+    //     .await
+    //     .unwrap();
+    let code_address = simulator.lock().await.owner;
+    info!(
+        "res from get account A {:?}",
+        simulator
+            .lock()
+            .await
+            .get_account(token_a)
+            .await
+            .expect("Failed to get account")
+    );
+    info!(
+        "res from get account B {:?}",
+        simulator
+            .lock()
+            .await
+            .get_account(token_b)
+            .await
+            .expect("Failed to get account")
+    );
+    info!(
+        "res from get account WETH{:?}",
+        simulator
+            .lock()
+            .await
+            .get_account(get_address(AddressType::Weth))
+            .await
+            .expect("Failed to get account")
+    );
+    info!(
+        "res from get account TARGET_POOL{:?}",
+        simulator
+            .lock()
+            .await
+            .get_account(target_pool)
+            .await
+            .expect("Failed to get account")
+    );
+
+    info!(
+        "res from get account TARGET_POOL{:?}",
+        simulator
+            .lock()
+            .await
+            .get_account(code_address)
+            .await
+            .expect("Failed to get account")
+    );
+
+    // info!("res from another func {:?}",simulator.lock().await.get_contract(target_pool).await.expect("error"));
+
+    let reserves = get_pair_reserves(target_pool, simulator.clone(), my_wallet.address())
+        .await
+        .expect("failed to get reserves");
+
+    info!("reserves {:?}", reserves);
+
     check_weth_balance(
         my_wallet.address(),
         &mut *simulator.lock().await,
@@ -69,8 +175,8 @@ pub async fn simulation(
         simulator.lock().await,
         &latest_gas_price,
         &latest_gas_limit,
-        token_a,
         token_b,
+        token_a,
     )
     .await
     .expect("error");
@@ -97,6 +203,8 @@ pub async fn simulation(
         tokenOut: token_b,
         amountIn: amount,
     };
+
+    info!("function_call {:?}", function_call);
 
     let function_call_data = function_call.abi_encode();
 
@@ -176,18 +284,8 @@ async fn sim_swap_v2_router<'a>(
         .expect("Failed to deposit ETH");
 
     let res = evm_decoder(res.output);
-    info!("res {:?}", res);
 
-    // Before V2 swap
-    // log_all_balances(
-    //     &mut evm_simulator,
-    //     wallet_address,
-    //     token_a,
-    //     token_b,
-    //     latest_gas_limit,
-    //     latest_gas_price,
-    // )
-    // .await?;
+    info!("res {:?}", res);
 
     alloy::sol! {
         function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline)
@@ -218,7 +316,6 @@ async fn sim_swap_v2_router<'a>(
         }
         Err(err) => info!("Error: {:?}", err),
     };
-    info!("Made it through sim setup swap");
     Ok(())
 }
 
@@ -256,8 +353,6 @@ async fn simulation_swap<'a>(
     let deposit_call = depositCall {};
     let deposit_call_data = deposit_call.abi_encode();
 
-    info!("deposit_call ");
-
     let deposit_tx = Tx {
         caller: wallet_address,
         transact_to: get_address(AddressType::Weth),
@@ -274,7 +369,6 @@ async fn simulation_swap<'a>(
     info!("res {:?}", res);
 
     // Do approvals
-    info!("Before token approval");
     router_token_approve(
         &mut evm_simulator,
         latest_gas_price,
@@ -477,7 +571,6 @@ pub fn arboo_bytecode() -> Bytecode {
     return Bytecode::new_raw(bytes.into());
 }
 
-
 fn withdraw_weth(
     latest_gas_limit: u64,
     latest_gas_price: alloy_primitives::Uint<256, 4>,
@@ -665,6 +758,36 @@ fn evm_decoder(error_data: Bytes) -> Result<String> {
     println!("Decoded error message: {}", decoded_string);
     Ok(decoded_string)
     // Output: "UniswapV2Router: INVALID_PATH"
+}
+
+async fn get_pair_reserves(
+    pair_address: Address,
+    evm_simulator: Arc<Mutex<EvmSimulator<'_>>>,
+    caller: Address,
+) -> Result<(U256, U256)> {
+    alloy::sol! {
+        function getReserves() external view returns (uint112,uint112,uint32);
+    };
+    let calldata = getReservesCall {}.abi_encode();
+
+    let tx = Tx {
+        caller,
+        transact_to: pair_address,
+        data: calldata.into(),
+        value: U256::ZERO,
+        gas_price: U256::ZERO,
+        gas_limit: 5000000,
+    };
+
+    let result = evm_simulator
+        .lock()
+        .await
+        .call(tx)
+        .expect("Error getting pair reserves");
+
+    info!("result {:?}", result);
+    // Ok((out.0, out.1))
+    Ok((U256::ZERO, U256::ZERO))
 }
 
 fn log(log_data: String) {
