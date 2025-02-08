@@ -1,22 +1,22 @@
-use ::log::info;
-use alloy::eips::BlockId;
-use alloy::primitives::Address;
-use alloy::primitives::FixedBytes;
-use alloy::primitives::B256;
-use alloy::providers::Provider;
-use alloy::providers::ProviderBuilder;
-use alloy::providers::RootProvider;
-use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::client::WsConnect;
-use alloy::rpc::types::eth::Filter;
-use alloy::rpc::types::BlockTransactionsKind;
-use alloy_sol_types::SolValue;
-use anyhow::Result;
-use csv::StringRecord;
-use indicatif::{ProgressBar, ProgressStyle};
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use alloy::primitives::U256;
+use {
+    ::log::info,
+    alloy::{
+        eips::BlockId,
+        primitives::{Address, FixedBytes, B256, U256},
+        providers::{Provider, ProviderBuilder, RootProvider},
+        pubsub::PubSubFrontend,
+        rpc::{
+            client::WsConnect,
+            types::{eth::Filter, BlockTransactionsKind},
+        },
+    },
+    alloy_sol_types::SolValue,
+    anyhow::Result,
+    csv::StringRecord,
+    indicatif::{ProgressBar, ProgressStyle},
+    serde::{Deserialize, Serialize},
+    std::path::Path,
+};
 
 use std::{
     collections::HashMap,
@@ -298,6 +298,14 @@ pub async fn load_uniswap_v2_pools(
         let log_data = log_data.as_slice();
         let decoded: (Address, B256) = SolValue::abi_decode(log_data, false).unwrap();
 
+        // if !is_v2_pool(decoded.0, provider.clone())
+        //     .await
+        //     .unwrap_or(false)
+        // {
+        //     continue;
+        // }
+
+
         let pool_data = Pool {
             id: -1,
             address: decoded.0,
@@ -366,6 +374,14 @@ pub async fn load_uniswap_v3_pools(
 
         // lets check how much liquidity is in the pool, if its less than $1000 then lets ignore it
 
+        // let is_v3 = is_v3_pool(pool_address, &provider)
+        //     .await
+        //     .unwrap_or(false);
+        // if !is_v3 {
+        //     continue;
+        // }
+
+        // info!("is v3: {:?}", is_v3);
         let pool_data = Pool {
             id: -1,
             address: pool_address,
@@ -404,4 +420,42 @@ pub struct PoolLiquidity {
     pub liquidity: U256,
     pub sqrt_price_x96: U256,
     pub tick: i32,
+}
+
+// Check if the contract that emitted the log is a Uniswap V2 pool
+async fn is_v2_pool(address: Address, provider: Arc<RootProvider<PubSubFrontend>>) -> Result<bool> {
+
+    // Get the contract bytecode
+    let code = provider
+        .get_code_at(address)
+        .await
+        .unwrap_or(Default::default())
+        .to_string();
+
+
+    // You can compare against known V2 pool creation code hash
+    // This is the init code hash for Uniswap V2 pairs
+    let v2_init_code_hash = "96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f";
+
+    // Or check specific bytecode patterns unique to V2 pools
+    let is_v2 = code.contains(v2_init_code_hash);
+
+    Ok(is_v2)
+}
+
+async fn is_v3_pool(
+    address: Address,
+    provider: &Arc<RootProvider<PubSubFrontend>>,
+) -> Result<bool> {
+
+
+    let code = provider
+        .get_code_at(address)
+        .await
+        .unwrap()
+        .to_string();
+
+    let v3_init_code_hash = "f5e0d0f3e";
+    let is_v3 = code.contains(v3_init_code_hash);
+    Ok(is_v3)
 }

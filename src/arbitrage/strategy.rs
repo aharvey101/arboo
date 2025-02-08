@@ -4,9 +4,21 @@ use crate::common::{
     pairs::{Event, V2PoolCreated, V3PoolCreated},
     revm::{EvmSimulator, Tx},
 };
+use alloy::eips::BlockId;
+use alloy::network::AnyNetwork;
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::pubsub::PubSubFrontend;
+use alloy::rpc::client::WsConnect;
+use alloy_primitives::aliases::U24;
+use alloy_primitives::U160;
+use alloy_sol_types::{SolCall, SolValue};
 use anyhow::{anyhow, Result};
 use log::info;
 use revm::primitives::{address, Address, U256};
+use sha3::digest::consts::U2;
+use std::env::current_exe;
+use std::io::Read;
+use std::ops::Add;
 use std::{
     collections::HashMap,
     fs::File,
@@ -28,96 +40,27 @@ pub async fn strategy(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimulato
     // info!("Pools Loaded")
 
     let mut event_reciever = sender.subscribe();
-
     loop {
         match event_reciever.recv().await {
             // this has to recieve the event
             Ok(message) => {
                 info!("The Message: {:?}", message);
-                if message.pool_variant == 2 {
-                    // THis will be removed
-                    ////////////////////////////////////////////////////////////////////////////////
-                    simulator.lock().await.load_account(message.token0).await;
-                    simulator.lock().await.load_account(message.token1).await;
-                    simulator
-                        .lock()
-                        .await
-                        .load_account(message.log_pool_address)
-                        .await;
-                    // simulator
-                    //     .lock()
-                    //     .await
-                    //     .load_v2_pool_state(message.log_pool_address)
-                    //     .await
-                    //     .unwrap();
-                    simulator
-                        .lock()
-                        .await
-                        .load_account(message.corresponding_pool_address)
-                        .await;
-                    // simulator
-                    //     .lock()
-                    //     .await
-                    //     .load_v3_pool_state(message.corresponding_pool_address)
-                    //     .await
-                    //     .expect("Failed");
-                    //////////////////////////////////////////////////////////////////////////////
-
-                    let max_input = U256::from(1_000_000_000) * U256::from(10).pow(U256::from(18)); // 1000
-                    let optimal_result = find_optimal_amount_v3_to_v2(
-                        message.log_pool_address,
-                        message.token1,
-                        message.token0,
-                        simulator.clone(),
-                        max_input,
-                    )
-                    .await
-                    .expect("Failed");
-                    info!("optimal_result {:?}", optimal_result);
-                }
-
-                if message.pool_variant == 3 {
-                    // THis will be removed
-                    ////////////////////////////////////////////////////////////////////////////////
-                    simulator.lock().await.load_account(message.token0).await;
-                    simulator.lock().await.load_account(message.token1).await;
-                    simulator
-                        .lock()
-                        .await
-                        .load_account(message.corresponding_pool_address)
-                        .await;
-                    // simulator
-                    //     .lock()
-                    //     .await
-                    //     .load_v2_pool_state(message.corresponding_pool_address)
-                    //     .await
-                    //     .unwrap();
-                    simulator
-                        .lock()
-                        .await
-                        .load_account(message.log_pool_address)
-                        .await;
-                    // simulator
-                    //     .lock()
-                    //     .await
-                    //     .load_v3_pool_state(message.log_pool_address)
-                    //     .await
-                    //     .expect("Failed");
-                    ////////////////////////////////////////////////////////////////////////////////
-
-                    // Calculate optimal amount
-                    let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18)); // 1000
-                    let optimal_result = find_optimal_amount_v3_to_v2(
-                        message.corresponding_pool_address,
-                        message.token0,
-                        message.token1,
-                        simulator.clone(),
-                        max_input,
-                    )
-                    .await
-                    .expect("Failed");
-                    info!("optimal_result {:?}", optimal_result);
-                }
+                let is_v2_to_v3 = message.pool_variant == 2;
+                // Calculate optimal amount
+                let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
+                                                                                         // let max_input = U256::MAX;
+                let optimal_result = find_optimal_amount_v3_to_v2(
+                    message.corresponding_pool_address,
+                    message.log_pool_address,
+                    message.token0,
+                    message.token1,
+                    simulator.clone(),
+                    max_input,
+                    is_v2_to_v3,
+                )
+                .await
+                .expect("Failed");
+                info!("optimal_result {:?}", optimal_result);
             }
             Err(err) => {
                 info!("OOP")
@@ -125,6 +68,7 @@ pub async fn strategy(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimulato
         }
     }
 }
+
 async fn load_pools<'a>(simulator: Arc<Mutex<EvmSimulator<'a>>>) {
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
     let path = Path::new("cache/.cached-pools.csv");
@@ -192,10 +136,12 @@ pub struct ArbitrageResult {
 
 pub async fn find_optimal_amount_v3_to_v2<'a>(
     v3_pool: Address,
+    v2_pool: Address,
     token_in: Address,
     token_out: Address,
     simulator: Arc<TokioMutex<EvmSimulator<'a>>>,
     max_input: U256,
+    is_v2_to_v3: bool,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
     let mut optimal_amount = U256::ZERO;
@@ -204,54 +150,70 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
     let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
     let mut right = max_input;
 
-    let v3_out = simulation::simulation(v3_pool, token_in, token_out, left, simulator.clone())
+    while left <= right {
+        let mid = (left + right) / U256::from(2);
+
+        let v3_amount_out = match get_amounts_out(
+            simulator.clone(),
+            left,
+            token_in,
+            token_out,
+            get_address(AddressType::V2Router),
+            is_v2_to_v3,
+        )
         .await
-        .expect("failed to simulate");
-    info!("Out: v3_out {:?}",v3_out );
-    // while left <= right {
-    //     let mid = (left + right) / U256::from(2);
+        {
+            Ok(amount) => amount,
+            Err(e) => break
+        };
 
-    //     let v3_out = simulation::simulation(v3_pool, token_in, token_out, left, simulator.clone())
-    //         .await
-    //         .expect("failed to simulate");
+        // Calculate potential profit based on output amount
+        // Here you might want to adjust the profit calculation based on your specific needs
 
-    //     // Calculate potential profit based on output amount
-    //     // Here you might want to adjust the profit calculation based on your specific needs
-    //     let current_profit = if v3_out > mid {
-    //         v3_out - mid
-    //     } else {
-    //         U256::ZERO
-    //     };
+        let current_profit = v3_amount_out;
+        // Update best profit if we found better results
+        if current_profit > best_profit {
+            best_profit = current_profit;
+            optimal_amount = mid;
+            info!(
+                "New optimal amount found: {} with expected output: {}, profit: {}",
+                optimal_amount, v3_amount_out, best_profit
+            );
+        }
 
-    //     // Update best profit if we found better results
-    //     if current_profit > best_profit {
-    //         best_profit = current_profit;
-    //         optimal_amount = mid;
-    //         info!(
-    //             "New optimal amount found: {} with expected output: {}, profit: {}",
-    //             optimal_amount, v3_out, best_profit
-    //         );
-    //     }
+        // Binary search adjustment
+        let mid_plus_delta = mid + U256::from(100).pow(U256::from(18)); // 1 token increment
 
-    //     // Binary search adjustment
-    //     let mid_plus_delta = mid + U256::from(10).pow(U256::from(17)); // 0.1 token increment
-    //     let next_v3_out =
-    //         simulation::simulation(v3_pool, token_in, token_out, right, simulator.clone())
-    //             .await
-    //             .expect("Failed to simulate");
+        let v3_amount_out = match get_amounts_out(
+            simulator.clone(),
+            right,
+            get_address(AddressType::Weth),
+            get_address(AddressType::Uni),
+            get_address(AddressType::V2Router),
+            is_v2_to_v3,
+        )
+        .await
+        {
+            Ok(amount) => amount,
+            Err(e) => break
+        };
 
-    //     let next_profit = if next_v3_out > mid_plus_delta {
-    //         next_v3_out - mid_plus_delta
-    //     } else {
-    //         U256::ZERO
-    //     };
+        let next_profit = v3_amount_out;
+        // let next_profit = if v3_amount_out > mid_plus_delta {
+        //     v3_amount_out - mid_plus_delta
+        // } else {
+        //     U256::ZERO
+        // };
 
-    //     if next_profit > current_profit {
-    //         left = mid + U256::from(1);
-    //     } else {
-    //         right = mid - U256::from(1);
-    //     }
-    // }
+        if next_profit > current_profit {
+            left = mid + U256::from(1);
+
+            info!("next mid after increased profit? {:?}", mid);
+        } else {
+            right = mid - U256::from(1);
+            info!("next right profit not increased? {:?}", right);
+        }
+    }
 
     Ok(ArbitrageResult {
         optimal_amount,
@@ -259,34 +221,157 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
     })
 }
 
-// let target_pool = pools_map
-//     .iter()
-//     .find(|(_, event)| match event {
-//         Event::PairCreated(V2PoolCreated { token0, token1, .. })
-//         | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
-//             (token0 == &get_address(AddressType::Uni)
-//                 && token1 == &get_address(AddressType::Weth))
-//                 || (token0 == &get_address(AddressType::Weth)
-//                     && token1 == &get_address(AddressType::Uni))
-//         }
-//         _ => false,
-//     })
-//     .map(|(address, _)| address)
-//     .expect("UNI-ETH pool not found");
+async fn get_amounts_out(
+    simulator: Arc<Mutex<EvmSimulator<'_>>>,
+    amount: U256,
+    token_a: Address,
+    token_b: Address,
+    v2_router: Address,
+    is_v2_to_v3: bool,
+) -> Result<U256> {
+    // This tests if there is a price discrepancy between v2 and v3
 
-// let test_pools: HashMap<Address, Event> = pools_map
-//     .iter()
-//     .filter(|(_, event)| match event {
-//         Event::PairCreated(V2PoolCreated { token0, token1, .. })
-//         | Event::PoolCreated(V3PoolCreated { token0, token1, .. }) => {
-//             (token0 == &get_address(AddressType::Uni)
-//                 && token1 == &get_address(AddressType::Weth))
-//                 || (token0 == &get_address(AddressType::Weth)
-//                     && token1 == &get_address(AddressType::Uni))
-//         }
-//         _ => false,
-//     })
-//     .map(|(address, event)| (*address, event.clone()))
-//     .collect();
+    let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
+    let provider: RootProvider<PubSubFrontend, AnyNetwork> = ProviderBuilder::new()
+        .network()
+        .on_ws(ws_client)
+        .await
+        .expect("Error getting ws client");
+    let provider = Arc::new(provider);
 
-// info!("pools {:?}", test_pools);
+    let latest_block_number = provider
+        .get_block_number()
+        .await
+        .expect("error getting block number");
+    let block_id = BlockId::from_str(latest_block_number.to_string().as_str()).unwrap();
+    let latest_block = provider
+        .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
+        .await
+        .unwrap()
+        .expect("Expected block");
+
+    let latest_gas_limit = latest_block.header.gas_limit;
+    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+    let mut sim = simulator.lock().await;
+    let sim_owner = sim.owner;
+
+    // sim.load_v3_pool_state(get_address(AddressType::UniV3Pool))
+    //     .await
+    //     .unwrap();
+
+    sim.set_eth_balance(
+        sim_owner,
+        U256::from(1000) * U256::from(10).pow(U256::from(18)),
+    )
+    .await;
+    let mut profit = U256::ZERO;
+    alloy::sol! {
+        #[derive(Debug)]
+        function getAmountsOut(
+            uint amountIn,
+            address[] calldata path
+        ) external view returns (uint[] memory amounts);
+    };
+
+    let tx_call: getAmountsOutCall = getAmountsOutCall {
+        amountIn: amount,
+        path: vec![token_a, token_b].into(),
+    };
+    let data = tx_call.abi_encode();
+
+    let tx = Tx {
+        caller: sim.owner,
+        transact_to: v2_router,
+        data: data.into(),
+        value: U256::ZERO,
+        gas_price: latest_gas_price.clone(),
+        gas_limit: latest_gas_limit.clone(),
+    };
+
+    let res = sim
+        .call(tx)
+        .inspect_err(|e| info!("Failed to call v2 swap, {:?}", e))?;
+
+    let v2_amount_out = decode_uniswap_v2_quote(&res.output).expect("failed to decode output");
+
+    info!("v2_amount_out {:?}", v2_amount_out);
+
+    if v2_amount_out == U256::ZERO {
+        profit = U256::ZERO;
+    }
+    alloy::sol! {
+        #[derive(Debug)]
+        function quoteExactInput(
+            bytes memory path,
+            uint256 amountIn
+        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
+    }
+
+    let mut path = Vec::new();
+    path.extend_from_slice(token_a.as_slice());
+    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
+    path.extend_from_slice(token_b.as_slice());
+    let path = alloy::primitives::Bytes::from(path);
+
+    let tx_data = quoteExactInputCall {
+        path: path,
+        amountIn: amount,
+    }
+    .abi_encode();
+
+    let tx = Tx {
+        caller: sim.owner,
+        transact_to: get_address(AddressType::Quoter),
+        data: tx_data.into(),
+        value: U256::ZERO,
+        gas_price: latest_gas_price.clone(),
+        gas_limit: latest_gas_limit.clone(),
+    };
+
+    let res = sim.call(tx)?;
+
+    let v3_amount_out = decode_quote_output_v3(res.output).expect("failed to decode output");
+
+    info!("v3_amount_out {:?}", v3_amount_out);
+
+    if v3_amount_out == U256::ZERO {
+        profit = U256::ZERO;
+    }
+    if is_v2_to_v3 && v3_amount_out > v2_amount_out {
+        profit = v3_amount_out - v2_amount_out;
+    } else if !is_v2_to_v3 && v2_amount_out > v3_amount_out {
+        profit = v2_amount_out - v3_amount_out;
+    }
+
+    Ok(profit)
+}
+
+fn decode_uniswap_v2_quote(data: &revm::primitives::Bytes) -> Result<U256, String> {
+    let decoded_data =
+        hex::decode(data.to_string().trim_start_matches("0x")).expect("failed to decode data");
+
+    // First 32 bytes is the offset to the array data
+    let offset = U256::from_be_slice(&decoded_data[0..32]);
+    assert_eq!(offset, U256::from(32), "Unexpected offset");
+
+    // Next 32 bytes contain the array length
+    let array_length = U256::from_be_slice(&decoded_data[32..64]);
+    assert_eq!(array_length, U256::from(2), "Expected array length 2");
+
+    // Next 32 bytes contain the input amount
+    let amount_in = U256::from_be_slice(&decoded_data[64..96]);
+    // assert_eq!(amount_in, U256::from(10).pow(U256::from(18)), "Expected input amount 1");
+
+    let amount_out = U256::from_be_slice(&decoded_data[96..128]);
+    let amount_out = amount_out;
+
+    Ok(amount_out)
+}
+
+fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
+    let output = hex::decode(output.to_string().trim_start_matches("0x"))?;
+
+    let number = U256::from_be_slice(&output[0..32]);
+
+    Ok(number)
+}

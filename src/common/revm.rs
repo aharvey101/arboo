@@ -468,6 +468,9 @@ impl<'a> EvmSimulator<'a> {
         // Basic pool state
         let liquidity_slot = U256::from(0);
         let liquidity = evm.context.evm.db.storage(pool_address, liquidity_slot)?;
+
+        info!("liquidity {:?}", liquidity);
+
         evm.context
             .evm
             .db
@@ -490,6 +493,7 @@ impl<'a> EvmSimulator<'a> {
         // Fee and protocol fee settings
         let fee_slot = U256::from(3);
         let fee = evm.context.evm.db.storage(pool_address, fee_slot)?;
+
         evm.context
             .evm
             .db
@@ -562,6 +566,9 @@ impl<'a> EvmSimulator<'a> {
         // Token balances (tracked in ERC20 contracts)
         let token0_addr = Address::from_slice(&token0.to_be_bytes::<32>()[12..]);
         let balance0_slot = get_balance_slot(pool_address);
+
+        info!("balance0_slot {:?}", balance0_slot);
+
         let balance0 = evm.context.evm.db.storage(token0_addr, balance0_slot)?;
         evm.context
             .evm
@@ -570,6 +577,9 @@ impl<'a> EvmSimulator<'a> {
 
         let token1_addr = Address::from_slice(&token1.to_be_bytes::<32>()[12..]);
         let balance1_slot = get_balance_slot(pool_address);
+
+        info!("balance1_slot {:?}", balance1_slot);
+
         let balance1 = evm.context.evm.db.storage(token1_addr, balance1_slot)?;
         evm.context
             .evm
@@ -593,24 +603,23 @@ fn get_balance_slot(address: Address) -> U256 {
     U256::from_be_bytes(bytes)
 }
 
-fn evm_decoder(error_data: Bytes)-> Result<String> {
+fn evm_decoder(error_data: Bytes) -> Result<String> {
+    // The next 32 bytes is the offset to where the string data starts
+    // The next 32 bytes after that is the length of the string
+    // Then comes the actual string data
+    let string_hex = &error_data[64..]; // Skip the first two 32-byte chunks
 
-// The next 32 bytes is the offset to where the string data starts
-// The next 32 bytes after that is the length of the string
-// Then comes the actual string data
-let string_hex = &error_data[64..];  // Skip the first two 32-byte chunks
+    // Convert hex to string
+    let decoded_string = String::from_utf8(
+        hex::decode(string_hex)
+            .expect("Decoding failed")
+            .into_iter()
+            .filter(|&x| x != 0) // Remove null terminators
+            .collect::<Vec<u8>>(),
+    )
+    .expect("Invalid UTF-8");
 
-// Convert hex to string
-let decoded_string = String::from_utf8(
-    hex::decode(string_hex)
-        .expect("Decoding failed")
-        .into_iter()
-        .filter(|&x| x != 0)  // Remove null terminators
-        .collect::<Vec<u8>>(),
-)
-.expect("Invalid UTF-8");
-
-println!("Decoded error message: {}", decoded_string);
-Ok(decoded_string)
-// Output: "UniswapV2Router: INVALID_PATH"
+    println!("Decoded error message: {}", decoded_string);
+    Ok(decoded_string)
+    // Output: "UniswapV2Router: INVALID_PATH"
 }
