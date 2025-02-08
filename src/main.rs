@@ -36,15 +36,13 @@ async fn main() -> Result<()> {
     logger::setup_logger();
     info!("Logger setup");
     let ws_url = var::<&str>("WS_URL").unwrap();
-    let http_url = var::<&str>("HTTP_URL").unwrap();
-    let http_url = http_url.as_str();
     let ws_client = WsConnect::new(ws_url.clone());
 
     let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
     let provider = Arc::new(provider);
 
     if !Path::new("cache/.cached-pools.csv").try_exists()? {
-        pools::load_all_pools(ws_url, 100_000, 50_000)
+        pools::load_all_pools(ws_url, 20_000_000, 50_000)
             .await
             .unwrap();
     }
@@ -136,6 +134,7 @@ async fn main() -> Result<()> {
 
 
 // MVP What is left to do:
-// Get the evm onto it's own thread
-// get the logs to send to the evm and have it recieve those events 
-// Figure out a strategy for finding out how much to arb, ie; what amount is profitable
+// [x] Get the evm onto it's own thread (maybe no need)
+// [x] get the logs to send to the evm and have it recieve those events 
+// [x] Figure out a strategy for finding out how much to arb, ie; what amount is profitable
+// [ ] Better filter the pools so that we actually have v2 and v3 pools
