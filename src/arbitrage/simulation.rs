@@ -79,9 +79,8 @@ pub async fn simulation(
         gas_price: latest_gas_price,
     };
 
-    let result = simulator.lock().await.call(new_tx)?;
+    simulator.lock().await.call(new_tx)?;
 
-    info!("result from swapping, {:?}", result);
     check_weth_balance(
         my_wallet.address(),
         &mut *simulator.lock().await,
@@ -91,69 +90,6 @@ pub async fn simulation(
     )
     .await
     .unwrap();
-    // Load WETH contract state
-    // simulator.lock().await.load_account(token_a).await;
-    // simulator.lock().await.load_account(token_b).await;
-    // simulator
-    //     .lock()
-    //     .await
-    //     .load_account(get_address(AddressType::Weth))
-    //     .await;
-    // simulator
-    //     .lock()
-    //     .await
-    //     .load_v3_pool_state(target_pool)
-    //     .await
-    //     .unwrap();
-    let code_address = simulator.lock().await.owner;
-    info!(
-        "res from get account A {:?}",
-        simulator
-            .lock()
-            .await
-            .get_account(token_a)
-            .await
-            .expect("Failed to get account")
-    );
-    info!(
-        "res from get account B {:?}",
-        simulator
-            .lock()
-            .await
-            .get_account(token_b)
-            .await
-            .expect("Failed to get account")
-    );
-    info!(
-        "res from get account WETH{:?}",
-        simulator
-            .lock()
-            .await
-            .get_account(get_address(AddressType::Weth))
-            .await
-            .expect("Failed to get account")
-    );
-    info!(
-        "res from get account TARGET_POOL{:?}",
-        simulator
-            .lock()
-            .await
-            .get_account(target_pool)
-            .await
-            .expect("Failed to get account")
-    );
-
-    info!(
-        "res from get account TARGET_POOL{:?}",
-        simulator
-            .lock()
-            .await
-            .get_account(code_address)
-            .await
-            .expect("Failed to get account")
-    );
-
-    // info!("res from another func {:?}",simulator.lock().await.get_contract(target_pool).await.expect("error"));
 
     let reserves = get_pair_reserves(target_pool, simulator.clone(), my_wallet.address())
         .await
@@ -203,8 +139,6 @@ pub async fn simulation(
         tokenOut: token_b,
         amountIn: amount,
     };
-
-    info!("function_call {:?}", function_call);
 
     let function_call_data = function_call.abi_encode();
 
@@ -267,8 +201,6 @@ async fn sim_swap_v2_router<'a>(
 
     let deposit_call = depositCall {};
     let deposit_call_data = deposit_call.abi_encode();
-
-    info!("deposit_call ");
 
     let deposit_tx = Tx {
         caller: wallet_address,
@@ -684,7 +616,7 @@ async fn log_all_balances(
 }
 
 fn evm_decoder(error_data: Bytes) -> Result<String> {
-    if error_data.len() < 1 {
+    if error_data.len() < 64 {
         return Err(anyhow!("No Error Message"));
     }
     // The next 32 bytes is the offset to where the string data starts
@@ -732,11 +664,46 @@ async fn get_pair_reserves(
         .call(tx)
         .expect("Error getting pair reserves");
 
-    info!("result {:?}", result);
-    // Ok((out.0, out.1))
-    Ok((U256::ZERO, U256::ZERO))
+    if result.output.len() != 96 {
+        return Err(anyhow!("Invalid output length"));
+    }
+
+    let first_32 = &result.output[0..32];
+    let second_32 = &result.output[32..64];
+    let third_32 = &result.output[64..96];
+
+    let reserve0 = U256::from_be_slice(first_32);
+    let reserve1 = U256::from_be_slice(second_32);
+
+    info!("reserve0 {:?}", reserve0);
+
+    Ok((reserve0, reserve1))
+
 }
 
 fn log(log_data: String) {
     info!("{}", log_data);
+}
+
+#[derive(Debug)]
+pub enum ParserType {
+    UTF8,
+    U256,
+}
+
+#[derive(Debug)]
+pub struct ParserInput<'a> {
+    parser_type: ParserType,
+    data: &'a [u8],
+}
+
+pub fn parse_data(inputs: Vec<ParserInput>) -> Vec<String> {
+    inputs
+        .iter()
+        .map(|input| match input.parser_type {
+            ParserType::UTF8 => String::from_utf8(input.data.to_vec())
+                .unwrap_or_else(|_| "Invalid UTF-8".to_string()),
+            ParserType::U256 => U256::from_be_slice(input.data).to_string(),
+        })
+        .collect()
 }
