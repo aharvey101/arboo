@@ -1,4 +1,4 @@
-use crate::arbitrage::simulation::{get_address, simulation, AddressType};
+use crate::arbitrage::simulation::{get_address, AddressType};
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
@@ -6,16 +6,16 @@ use crate::common::{
     revm::{EvmSimulator, Tx},
 };
 use alloy::eips::BlockId;
-use alloy::network::{AnyNetwork, Ethereum, EthereumWallet};
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::network::Ethereum;
+use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::client::WsConnect;
+use alloy::rpc::types::BlockTransactionsKind;
 use alloy_primitives::aliases::U24;
-use alloy_primitives::U160;
-use alloy_sol_types::{SolCall, SolValue};
-use anyhow::{anyhow, Result};
-use log::info;
-use revm::primitives::{address, Address, U256};
+use alloy_sol_types::SolCall;
+use anyhow::Result;
+use dotenv::var;
+use log::{debug, info};
+use revm::primitives::{Address, U256};
 use std::{
     collections::HashMap,
     fs::File,
@@ -24,7 +24,6 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use dotenv::var;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast::Sender, Mutex as TokioMutex};
 
@@ -32,17 +31,31 @@ pub async fn strategy(
     sender: Sender<LogEvent>,
     simulator: Arc<Mutex<EvmSimulator<'_>>>,
     provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
-) {
-
+) -> Result<()> {
     let mut event_reciever = sender.subscribe();
     loop {
         match event_reciever.recv().await {
             // this has to recieve the event
             Ok(message) => {
+                // debug!("Received event {:?}", message);
+
                 let is_v2_to_v3 = message.pool_variant == 2;
                 // Calculate optimal amount
                 let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
 
+                let latest_block = provider
+                    .get_block_number()
+                    .await
+                    .expect("error getting block number");
+                let latest_block = provider
+                    .get_block(BlockId::from(latest_block), BlockTransactionsKind::Full)
+                    .await
+                    .unwrap()
+                    .expect("Expected block");
+                let gas_limit = latest_block.header.gas_limit;
+                info!("latest block: {:?}", latest_block.header.base_fee_per_gas);
+                let block_base_fee = latest_block.header.base_fee_per_gas.unwrap();
+                info!("block base fee: {:?}", block_base_fee);
                 let optimal_result = find_optimal_amount_v3_to_v2(
                     message.token0,
                     message.token1,
@@ -68,76 +81,52 @@ pub async fn strategy(
                 //     simulation(target_pool, message.token0, message.token1, optimal_result.optimal_amount, simulator.clone()).await.unwrap();
                 // }
                 info!("Arbitrage opportunity found");
-                info!("Creating and sending TX for optimal amount {} to pool {}", optimal_result.optimal_amount, target_pool);
-                let transaction = create_input_data(target_pool, message.fee, message.token0, message.token1, optimal_result.optimal_amount).await.unwrap();
+                info!(
+                    "Creating and sending TX for optimal amount {} to pool {}",
+                    optimal_result.optimal_amount, target_pool
+                );
+
+                let transaction = create_input_data(
+                    target_pool,
+                    message.fee,
+                    message.token0,
+                    message.token1,
+                    optimal_result.optimal_amount,
+                )
+                .await
+                .unwrap();
+
+                info!("transaction: {:?}", transaction);
+
                 let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
                 let contract_address = Address::from_str(&contract_address).unwrap();
-                let max_fee_per_gas = Some(100000000000);
-                let gas_price = Some(100000000000);
-                send_transaction(contract_address, max_fee_per_gas, gas_price, transaction).await.unwrap();
+                // let nonce = provider.get(my_wallet_address).await.expect("Failed to get account").nonce;
+                info!("latest gas price: {}", contract_address); 
+                // max fee per gas has gotta be the amount put into the transaction plus the gas limit
+                let optimal_as_bytes: [u8; 256] = optimal_result.optimal_amount.to_be_bytes();
+                info!("optimal amount bytes: {:?}", optimal_as_bytes.as_ref());
+                let optimal_amount =
+                    u64::from_be_bytes(optimal_result.optimal_amount.to_be_bytes());
+                info!("optimal amount: {}", optimal_amount);
+                let bribe = optimal_amount * 999 / 1000;
+                info!("bribe: {}", bribe);
+                let max_fee_per_gas = u128::from(gas_limit + bribe);
+
+                info!("max fee per gas: {}", max_fee_per_gas);
+
+                send_transaction(
+                    contract_address,
+                    Some(block_base_fee as u128),
+                    Some(gas_limit),
+                    Some(max_fee_per_gas),
+                    transaction,
+                    94u64,
+                )
+                .await?;
             }
             Err(err) => {
                 info!("OOP")
             }
-        }
-    }
-}
-
-async fn load_pools<'a>(simulator: Arc<Mutex<EvmSimulator<'a>>>) {
-    let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new("cache/.cached-pools.csv");
-    let file = File::open(&path).expect("Error getting File");
-    let reader = io::BufReader::new(file);
-
-    for line in reader.lines().skip(1) {
-        // Skip the header line
-        let line = line.expect("Expected Line");
-        let fields: Vec<&str> = line.split(',').collect();
-        match fields[2] {
-            "2" => {
-                let pair_address = Address::from_str(fields[1]).expect("error");
-                pools_map.insert(
-                    pair_address,
-                    Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).expect("error"),
-                        token0: Address::from_str(fields[3]).expect("error"),
-                        token1: Address::from_str(fields[4]).expect("error"),
-                        fee: fields[5].parse::<u32>().expect("error"),
-                        block_number: fields[6].parse::<u64>().expect("error"),
-                    }),
-                );
-            }
-            "3" => {
-                let pair_address = Address::from_str(fields[1]).expect("error");
-                pools_map.insert(
-                    pair_address,
-                    Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).expect("error"),
-                        token0: Address::from_str(fields[3]).expect("error"),
-                        token1: Address::from_str(fields[4]).expect("error"),
-                        fee: fields[5].parse::<u32>().expect("error"),
-                        tick_spacing: 0i32,
-                    }),
-                );
-            }
-            &_ => continue,
-        };
-    }
-    let mut sim = simulator.lock().await;
-    for event in pools_map.iter() {
-        info!("Loading pool, {:?}, number:", event.0);
-        sim.load_account(*event.0).await;
-        sim.load_pool_state(*event.0)
-            .await
-            .expect("Failed to load basic state");
-        if let (_, Event::PairCreated(V2PoolCreated { .. })) = event {
-            sim.load_v2_pool_state(*event.0)
-                .await
-                .expect("Failed to load v2 pool state");
-        } else {
-            sim.load_v3_pool_state(*event.0)
-                .await
-                .expect("Failed to load v3 state");
         }
     }
 }
@@ -180,7 +169,6 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             Ok(amount) => amount,
             Err(_) => break,
         };
-
         // Calculate potential profit based on output amount
         // Here you might want to adjust the profit calculation based on your specific needs
 
@@ -239,6 +227,7 @@ async fn get_amounts_out(
     provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
 ) -> Result<U256> {
     // This tests if there is a price discrepancy between v2 and v3
+    // NOTE: Optimizations to be had by passing these in instead of getting them every time
     let latest_block_number = provider
         .get_block_number()
         .await
@@ -254,10 +243,6 @@ async fn get_amounts_out(
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
     let mut sim = simulator.lock().await;
     let sim_owner = sim.owner;
-
-    // sim.load_v3_pool_state(get_address(AddressType::UniV3Pool))
-    //     .await
-    //     .unwrap();
 
     sim.set_eth_balance(
         sim_owner,
@@ -474,3 +459,62 @@ fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
 //         assert_eq!(result.expected_profit, U256::ZERO);
 //     }
 // }
+
+async fn load_pools<'a>(simulator: Arc<Mutex<EvmSimulator<'a>>>) {
+    let mut pools_map: HashMap<Address, Event> = HashMap::new();
+    let path = Path::new("cache/.cached-pools.csv");
+    let file = File::open(&path).expect("Error getting File");
+    let reader = io::BufReader::new(file);
+
+    for line in reader.lines().skip(1) {
+        // Skip the header line
+        let line = line.expect("Expected Line");
+        let fields: Vec<&str> = line.split(',').collect();
+        match fields[2] {
+            "2" => {
+                let pair_address = Address::from_str(fields[1]).expect("error");
+                pools_map.insert(
+                    pair_address,
+                    Event::PairCreated(V2PoolCreated {
+                        pair_address: Address::from_str(fields[1]).expect("error"),
+                        token0: Address::from_str(fields[3]).expect("error"),
+                        token1: Address::from_str(fields[4]).expect("error"),
+                        fee: fields[5].parse::<u32>().expect("error"),
+                        block_number: fields[6].parse::<u64>().expect("error"),
+                    }),
+                );
+            }
+            "3" => {
+                let pair_address = Address::from_str(fields[1]).expect("error");
+                pools_map.insert(
+                    pair_address,
+                    Event::PoolCreated(V3PoolCreated {
+                        pair_address: Address::from_str(fields[1]).expect("error"),
+                        token0: Address::from_str(fields[3]).expect("error"),
+                        token1: Address::from_str(fields[4]).expect("error"),
+                        fee: fields[5].parse::<u32>().expect("error"),
+                        tick_spacing: 0i32,
+                    }),
+                );
+            }
+            &_ => continue,
+        };
+    }
+    let mut sim = simulator.lock().await;
+    for event in pools_map.iter() {
+        info!("Loading pool, {:?}, number:", event.0);
+        sim.load_account(*event.0).await;
+        sim.load_pool_state(*event.0)
+            .await
+            .expect("Failed to load basic state");
+        if let (_, Event::PairCreated(V2PoolCreated { .. })) = event {
+            sim.load_v2_pool_state(*event.0)
+                .await
+                .expect("Failed to load v2 pool state");
+        } else {
+            sim.load_v3_pool_state(*event.0)
+                .await
+                .expect("Failed to load v3 state");
+        }
+    }
+}

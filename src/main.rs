@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
 
     info!("Spawning evm");
 
-    strategy(sender, simulator.clone(), provider.clone()).await;
+    strategy(sender, simulator.clone(), provider.clone()).await.unwrap();
     
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
