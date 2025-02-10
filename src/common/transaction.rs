@@ -1,10 +1,11 @@
 use alloy::{
-    network::EthereumWallet,
+    network::{EthereumWallet, NetworkWallet, TransactionBuilder},
     primitives::{Address, TxKind, U256},
     providers::{Provider, ProviderBuilder},
     rpc::types::{TransactionInput, TransactionRequest},
     signers::local::PrivateKeySigner,
 };
+use log::info;
 use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
 use anyhow::Result;
@@ -14,38 +15,49 @@ use std::str::FromStr;
 
 pub async fn send_transaction(
     contract_address: Address,
-    max_fee_per_gas: Option<u128>,
     gas_price: Option<u128>,
+    gas_limit: Option<u64>,
+    max_fee_per_gas: Option<u128>,
     input: TransactionInput,
-)-> Result<()> {
-
-    let private_key = var("PRIVATE_KEY").unwrap();
+    nonce: u64,
+) -> Result<()> {
     let http_url = var::<&str>("HTTP_URL").unwrap();
     let http_url = http_url.as_str();
-
+    
+    let private_key = var("PRIVATE_KEY").unwrap();
     let signer = PrivateKeySigner::from_str(&private_key).unwrap();
-    let wallet = EthereumWallet::from(signer);
+    let wallet = EthereumWallet::from(signer.clone());
     let http_url = Url::from_str(http_url).unwrap();
     let provider = ProviderBuilder::new()
         .with_recommended_fillers()
-        .wallet(wallet)
+        .wallet(wallet.clone())
         .on_http(http_url);
 
-    let tx = TransactionRequest {
-        to: Some(TxKind::Call(contract_address)),
-        value: None,
-        max_fee_per_gas,
-        gas_price,
-        input,
-        ..Default::default()
-    };
+    let input_as_bytes = input.input.as_ref().unwrap().0.clone();
 
-    let pending_tx = provider.send_transaction(tx).await.unwrap();
 
-    println!("Pending Tx: {:?}", pending_tx);
+    let tx = TransactionRequest::default()
+        .with_from(signer.clone().address())
+        .with_input(input_as_bytes)
+        .with_to(contract_address)
+        .with_nonce(nonce)
+        .with_max_fee_per_gas(max_fee_per_gas.unwrap())
+        .with_max_priority_fee_per_gas(gas_price.unwrap())
+        .with_gas_limit(gas_limit.unwrap());
 
-    let tx =pending_tx.with_required_confirmations(1).watch().await?;
-    
+    let is_1559 = tx.complete_1559().unwrap();
+
+    info!("Transaction: {:?}", is_1559);
+    // Sign the transaction. 
+    let envelope = tx.build(&wallet).await?;
+
+    // Send the raw transaction. The transaction is sent to the Flashbots relay and, if valid, will
+    // be included in a block by a Flashbots builder. Note that the transaction request, as defined,
+    // is invalid and will not be included in the blockchain.
+    let pending = provider.send_tx_envelope(envelope).await?.register().await?;
+
+    info!("Sent transaction: {}", pending.tx_hash());
+
 
     Ok(())
 }

@@ -24,6 +24,7 @@ pub fn setup_logger(){
         .chain(std::io::stdout())
         .level(log::LevelFilter::Error)
         .level_for("arbooo", LevelFilter::Info)
+        .level_for("arbooo", LevelFilter::Debug)
         .apply().expect("Shouldn't have failed to setup the logger");
 
 }
