@@ -43,3 +43,4 @@ lazy_static = "1.4.0"
 hex = "0.4.3"
 fern = { version = "0.7.1", features = ["colored"] }
 chrono = "0.4.39"
+mockall = "0.13.1"

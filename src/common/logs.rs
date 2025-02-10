@@ -4,6 +4,7 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::Filter;
+use alloy_primitives::aliases::U24;
 use futures::StreamExt;
 use log::info;
 use revm::primitives::{address, keccak256};
@@ -63,6 +64,7 @@ pub async fn get_logs(
                     log_pool_address: key,
                     token0:v3_pair.token0,
                     token1: v3_pair.token1,
+                    fee: U24::from(v3_pair.fee),
                 }).expect("Failed to send event");
                 }
             }
@@ -77,6 +79,7 @@ pub async fn get_logs(
                     log_pool_address: key,
                     token0: v2_pair.token0,
                     token1: v2_pair.token1,
+                    fee: U24::from(v2_pair.fee),
                 });
                 }
             }
@@ -92,4 +95,5 @@ pub struct LogEvent {
     pub log_pool_address: Address,
     pub token0: Address,
     pub token1: Address,
+    pub fee: U24
 }

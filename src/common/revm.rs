@@ -1,6 +1,6 @@
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
-use alloy::network::AnyNetwork;
+use alloy::network::{AnyNetwork, Ethereum};
 use alloy::primitives::{Address, U64};
 use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
@@ -76,7 +76,7 @@ pub struct EvmSimulator<'a> {
             'a,
             EvmContext<CacheDB<InMemoryDB>>,
             CacheDB<
-                AlloyDB<PubSubFrontend, AnyNetwork, Arc<RootProvider<PubSubFrontend, AnyNetwork>>>,
+                AlloyDB<PubSubFrontend, Ethereum, Arc<RootProvider<PubSubFrontend, Ethereum>>>,
             >,
         >,
     >,
@@ -84,7 +84,7 @@ pub struct EvmSimulator<'a> {
 }
 impl<'a> EvmSimulator<'a> {
     pub fn new(
-        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+        provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
         owner: Option<Address>,
         block_number: U64,
     ) -> Self {
@@ -94,7 +94,7 @@ impl<'a> EvmSimulator<'a> {
     pub fn new_with_db(
         owner: Option<Address>,
         block_number: U64,
-        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
+        provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
     ) -> Self {
         let owner = match owner {
             Some(owner) => owner,

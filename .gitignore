@@ -16,4 +16,3 @@ Cargo.lock
 # Env
 .env
 .evm_cache
-cache

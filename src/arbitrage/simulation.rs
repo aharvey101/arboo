@@ -10,7 +10,6 @@ use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolValue};
 use anyhow::{anyhow, Result};
 use revm::primitives::{address, Address, Bytecode, U256};
-use std::ops::Add;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard};
@@ -22,13 +21,7 @@ pub async fn simulation(
     amount: U256,
     simulator: Arc<Mutex<EvmSimulator<'_>>>,
 ) -> Result<U256> {
-    //      - Simulation:
-    //       - Simply we are going to, get required info (latest block, pool needed?, adjacent pool?)
-    //       - deploy our contract
-    //       - Create a transaction to send to our contract
-    //       - Execute the transaction
-    //       - Log the results
-    //       - check if eth balance has increased
+
     simulator.lock().await.deploy(arboo_bytecode()).await;
 
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
@@ -107,15 +100,15 @@ pub async fn simulation(
     .await
     .expect("error checking weth balance");
 
-    sim_swap_v2_router(
-        simulator.lock().await,
-        &latest_gas_price,
-        &latest_gas_limit,
-        token_b,
-        token_a,
-    )
-    .await
-    .expect("error");
+    // sim_swap_v2_router(
+    //     simulator.lock().await,
+    //     &latest_gas_price,
+    //     &latest_gas_limit,
+    //     token_b,
+    //     token_a,
+    // )
+    // .await
+    // .expect("error");
 
     let fee1 = alloy_primitives::aliases::U24::from(500);
 
@@ -140,6 +133,8 @@ pub async fn simulation(
         amountIn: amount,
     };
 
+    info!("function_call {:?}", function_call);
+
     let function_call_data = function_call.abi_encode();
 
     // Note: create the transaction
@@ -155,9 +150,13 @@ pub async fn simulation(
     // Call said transaction
     match simulator.lock().await.call(new_tx) {
         Ok(res) => {
-            evm_decoder(res.output).unwrap();
+            info!("res  from sim call{:?}", res);
+            // evm_decoder(res.output).unwrap();
         }
-        Err(err) => return Ok(U256::ZERO),
+        Err(err) => {
+            info!("Error: {:?}", err);
+            return Ok(U256::ZERO)
+        },
     }
 
     let balance = check_weth_balance(
@@ -215,7 +214,7 @@ async fn sim_swap_v2_router<'a>(
         .call(deposit_tx)
         .expect("Failed to deposit ETH");
 
-    let res = evm_decoder(res.output);
+    // let res = evm_decoder(res.output);
 
     info!("res {:?}", res);
 
@@ -227,7 +226,7 @@ async fn sim_swap_v2_router<'a>(
     }
     let input_params = swapExactETHForTokensCall {
         amountOutMin: U256::from(1),
-        path: vec![get_address(AddressType::Weth), token_a].into(),
+        path: vec![get_address(AddressType::Weth), token_b].into(),
         to: wallet_address,
         deadline: U256::MAX,
     }
@@ -244,7 +243,7 @@ async fn sim_swap_v2_router<'a>(
 
     match evm_simulator.call(new_tx) {
         Ok(res) => {
-            evm_decoder(res.output).expect("Error decoding");
+            info!("res from swapExactEthForTokens call {:?}", res);
         }
         Err(err) => info!("Error: {:?}", err),
     };
@@ -478,7 +477,7 @@ pub enum AddressType {
     V3Pool,
     Factory,
     Quoter,
-    UniV3Pool
+    UniV3Pool,
 }
 
 pub fn get_address(address_type: AddressType) -> Address {
@@ -499,7 +498,7 @@ pub fn get_address(address_type: AddressType) -> Address {
         AddressType::V3Pool => address!("1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801"),
         AddressType::V2Pool => address!("d3d2E2692501A5c9Ca623199D38826e513033a17"),
         AddressType::Factory => address!("1F98431c8aD98523631AE4a59f267346ea31F984"),
-        AddressType::Quoter=> address!("61fFE014bA17989E743c5F6cB21bF9697530B21e")
+        AddressType::Quoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
     }
 }
 pub fn arboo_bytecode() -> Bytecode {
@@ -543,7 +542,6 @@ async fn check_weth_balance(
 
     Ok(balance)
 }
-
 
 async fn check_contract_state(
     evm_simulator: &mut EvmSimulator<'_>,
@@ -678,7 +676,6 @@ async fn get_pair_reserves(
     info!("reserve0 {:?}", reserve0);
 
     Ok((reserve0, reserve1))
-
 }
 
 fn log(log_data: String) {

@@ -2,14 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {
-    UniswapV3FlashSwap,
-    IUniswapV2Router02,
-    IUniswapV3Pool,
-    ISwapRouter02,
-    IERC20,
-    IWETH
-} from "../src/arboo.sol";
+import {UniswapV3FlashSwap, IUniswapV2Router02, IUniswapV3Pool, ISwapRouter02, IERC20, IWETH} from "../src/arboo.sol";
 
 address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
@@ -24,16 +17,17 @@ contract UniswapV3FlashTest is Test {
     IERC20 private constant dai = IERC20(DAI);
     IWETH private constant weth = IWETH(WETH);
     ISwapRouter02 private constant router = ISwapRouter02(SWAP_ROUTER_02);
-    IUniswapV2Router02 constant v2_router = IUniswapV2Router02(UNISWAP_V2_ROUTER);
+    IUniswapV2Router02 constant v2_router =
+        IUniswapV2Router02(UNISWAP_V2_ROUTER);
     IUniswapV3Pool private constant pool0 = IUniswapV3Pool(DAI_WETH_POOL_3000);
     IUniswapV3Pool private constant pool1 = IUniswapV3Pool(DAI_WETH_POOL_500);
     UniswapV3FlashSwap private flashSwap;
-
+    address private owner;
     uint256 private constant DAI_AMOUNT_IN = 10 * 1e18;
 
     function setUp() public {
         flashSwap = new UniswapV3FlashSwap();
-
+        address owner = address(this);
         // Create an arbitrage opportunity on v3 pool - make WETH cheaper on pool0
         weth.deposit{value: 5000 * 1e18}();
         weth.approve(address(router), 5000 * 1e18);
@@ -46,8 +40,7 @@ contract UniswapV3FlashTest is Test {
                 amountIn: 4999 * 1e18,
                 amountOutMinimum: 1500000,
                 sqrtPriceLimitX96: 0
-                })
-
+            })
         );
 
         // create an arbitrage opportunity on v2 pool
@@ -62,8 +55,7 @@ contract UniswapV3FlashTest is Test {
         path[0] = DAI;
         path[1] = WETH;
 
-        /*uint[] memory amountOut = v2_router.getAmountsOut(500 * 1e18, path);*/
-
+        // uint[] memory amountOut = v2_router.getAmountsOut(500 * 1e18, path);
     }
 
     function test_flashSwap_V3_to_V2() public {
@@ -81,5 +73,29 @@ contract UniswapV3FlashTest is Test {
         console2.log("Profit %e", profit);
     }
 
+    function test_withdraw() public {
+        // Deposit some WETH into the contract
+        weth.deposit{value: 1 ether}();
+        weth.transfer(address(flashSwap), 1 ether);
 
+        // Check initial balance
+        uint256 initialBalance = address(this).balance;
+
+        // Withdraw as owner
+        flashSwap.withdraw();
+
+        // Check final balance
+        uint256 finalBalance = address(this).balance;
+        assertEq(
+            finalBalance,
+            initialBalance + 1 ether,
+            "Balance should increase by 1 ether"
+        );
+        console2.log("Final balance %e", finalBalance);
+        // Try to withdraw as non-owner
+        address nonOwner = address(0x123);
+        vm.prank(nonOwner);
+        vm.expectRevert("Only owner can withdraw");
+        flashSwap.withdraw();
+    }
 }

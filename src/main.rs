@@ -1,6 +1,6 @@
 use alloy::providers::{Provider, RootProvider, ProviderBuilder};
 use alloy::{
-    network::AnyNetwork,
+    network::Ethereum,
     primitives::U64,
     pubsub::PubSubFrontend,
     rpc::client::WsConnect,
@@ -27,7 +27,7 @@ use std::path::Path;
 use std::str::FromStr;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::task::JoinSet;
-use tokio::sync::{Mutex as TokioMutex};
+use tokio::sync::Mutex as TokioMutex;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -50,7 +50,6 @@ async fn main() -> Result<()> {
     let mut set = JoinSet::new();
 
     let (sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
-    // set.spawn(strategy(provider.clone(), sender.clone()));
 
     // 1. Get all pools
 
@@ -99,11 +98,13 @@ async fn main() -> Result<()> {
 
 
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
-    let provider: RootProvider<PubSubFrontend, AnyNetwork> = ProviderBuilder::new()
+
+    let provider: RootProvider<PubSubFrontend, Ethereum>= ProviderBuilder::new()
         .network()
         .on_ws(ws_client)
         .await
         .expect("Provider failed to build");
+
     let provider = Arc::new(provider);
 
     let latest_block_number = provider
@@ -121,10 +122,11 @@ async fn main() -> Result<()> {
     );
 
     let simulator: Arc<TokioMutex<EvmSimulator<'_>>> = Arc::new(TokioMutex::new(simulator));
-    // create evm thread:
+
     info!("Spawning evm");
-    // set.spawn(threaded_evm(sender, simulator.clone()));
-    strategy(sender, simulator.clone()).await;
+
+    strategy(sender, simulator.clone(), provider.clone()).await;
+    
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
     }
@@ -134,7 +136,8 @@ async fn main() -> Result<()> {
 
 
 // MVP What is left to do:
-// [x] Get the evm onto it's own thread (maybe no need)
+// [ ] Get the evm onto it's own thread (maybe no need)
 // [x] get the logs to send to the evm and have it recieve those events 
 // [x] Figure out a strategy for finding out how much to arb, ie; what amount is profitable
-// [ ] Better filter the pools so that we actually have v2 and v3 pools
+// [x] Figure out how to send transactions
+// [ ] Fix up all the decoding so that we can understand the errors
