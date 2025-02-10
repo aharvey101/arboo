@@ -13,6 +13,7 @@ error BuyBackAmountLessThanAmountIn(uint256 buyBackAmount, uint256 amountIn);
 error ProfitIsZero();
 
 contract UniswapV3FlashSwap {
+    address public owner;
     ISwapRouter02 constant router = ISwapRouter02(SWAP_ROUTER_02);
     IUniswapV2Router02 constant v2_router =
         IUniswapV2Router02(UNISWAP_V2_ROUTER);
@@ -20,13 +21,23 @@ contract UniswapV3FlashSwap {
     uint160 private constant MAX_SQRT_RATIO =
         1461446703485210103287273052203988822378723970342;
 
-    // DAI / WETH 0.3% swap fee (2000 DAI / WETH)
-    // DAI / WETH 0.05% swap fee (2100 DAI / WETH)
-    // 1. Flash swap on pool0 (receive WETH)
-    // 2. Swap on pool1 (WETH -> DAI)
-    // 3. Send DAI to pool0
-    // profit = DAI received from pool1 - DAI repaid to pool0
+    constructor() {
+        owner = msg.sender;
+    }
 
+    function withdraw() external {
+
+        if (msg.sender != owner) {
+            revert("Only owner can withdraw");
+        }
+
+        uint256 balance = IWETH(WETH).balanceOf(address(this));
+        if (balance > 0) {
+            IWETH(WETH).withdraw(balance);
+            payable(msg.sender).transfer(balance);
+        }
+
+    }
 
     function flashSwap_V3_to_V2(
         address pool0,

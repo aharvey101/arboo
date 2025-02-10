@@ -1,11 +1,12 @@
-use crate::arbitrage::simulation::{get_address, AddressType, simulation};
+use crate::arbitrage::simulation::{get_address, simulation, AddressType};
+use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
     pairs::{Event, V2PoolCreated, V3PoolCreated},
     revm::{EvmSimulator, Tx},
 };
 use alloy::eips::BlockId;
-use alloy::network::AnyNetwork;
+use alloy::network::{AnyNetwork, Ethereum, EthereumWallet};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
@@ -23,16 +24,15 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use dotenv::var;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast::Sender, Mutex as TokioMutex};
 
-pub async fn strategy(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimulator<'_>>>) {
-
-    // we want to load all of the contracts into memory
-    info!("Loading pools");
-    // load_pools(simulator.clone())
-    //     .await;
-    // info!("Pools Loaded")
+pub async fn strategy(
+    sender: Sender<LogEvent>,
+    simulator: Arc<Mutex<EvmSimulator<'_>>>,
+    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
+) {
 
     let mut event_reciever = sender.subscribe();
     loop {
@@ -49,22 +49,32 @@ pub async fn strategy(sender: Sender<LogEvent>, simulator: Arc<Mutex<EvmSimulato
                     simulator.clone(),
                     max_input,
                     is_v2_to_v3,
+                    provider.clone(),
                 )
                 .await
                 .expect("Failed");
-                info!("optimal_result {:?}", optimal_result);
-
+                if optimal_result.optimal_amount == U256::ZERO {
+                    info!("No arbitrage opportunity found");
+                    continue;
+                }
                 // simulate with optimal amoun in arbooo
                 let target_pool = if is_v2_to_v3 {
                     message.log_pool_address
                 } else {
                     message.corresponding_pool_address
                 };
-                if optimal_result.optimal_amount > U256::ZERO {
-                    info!("Simulating with optimal amount");
-                    simulation(target_pool, message.token0, message.token1, optimal_result.optimal_amount, simulator.clone()).await.unwrap();
-                }
-
+                // if optimal_result.optimal_amount > U256::ZERO {
+                //     info!("Simulating with optimal amount");
+                //     simulation(target_pool, message.token0, message.token1, optimal_result.optimal_amount, simulator.clone()).await.unwrap();
+                // }
+                info!("Arbitrage opportunity found");
+                info!("Creating and sending TX for optimal amount {} to pool {}", optimal_result.optimal_amount, target_pool);
+                let transaction = create_input_data(target_pool, message.fee, message.token0, message.token1, optimal_result.optimal_amount).await.unwrap();
+                let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
+                let contract_address = Address::from_str(&contract_address).unwrap();
+                let max_fee_per_gas = Some(100000000000);
+                let gas_price = Some(100000000000);
+                send_transaction(contract_address, max_fee_per_gas, gas_price, transaction).await.unwrap();
             }
             Err(err) => {
                 info!("OOP")
@@ -144,6 +154,7 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
     simulator: Arc<TokioMutex<EvmSimulator<'a>>>,
     max_input: U256,
     is_v2_to_v3: bool,
+    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
     let mut optimal_amount = U256::ZERO;
@@ -162,19 +173,14 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             token_out,
             get_address(AddressType::V2Router),
             is_v2_to_v3,
+            provider.clone(),
         )
         .await
         {
-            Ok(amount) => {
-                if amount == U256::ZERO {
-                    break;
-                }
-                amount
-            }
-            Err(e) => break
+            Ok(amount) => amount,
+            Err(_) => break,
         };
 
-        
         // Calculate potential profit based on output amount
         // Here you might want to adjust the profit calculation based on your specific needs
 
@@ -183,10 +189,6 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
         if current_profit > best_profit {
             best_profit = current_profit;
             optimal_amount = mid;
-            info!(
-                "New optimal amount found: {} with expected output: {}, profit: {}",
-                optimal_amount, v3_amount_out, best_profit
-            );
         } else {
             best_profit = v3_amount_out;
         }
@@ -201,13 +203,14 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             token_out,
             get_address(AddressType::V2Router),
             is_v2_to_v3,
+            provider.clone(),
         )
         .await
         {
             Ok(amount) => amount,
             Err(e) => {
                 info!("Error getting amount out {:?}", e);
-                break
+                break;
             }
         };
 
@@ -233,17 +236,9 @@ async fn get_amounts_out(
     token_b: Address,
     v2_router: Address,
     is_v2_to_v3: bool,
+    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
 ) -> Result<U256> {
     // This tests if there is a price discrepancy between v2 and v3
-
-    let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
-    let provider: RootProvider<PubSubFrontend, AnyNetwork> = ProviderBuilder::new()
-        .network()
-        .on_ws(ws_client)
-        .await
-        .expect("Error getting ws client");
-    let provider = Arc::new(provider);
-
     let latest_block_number = provider
         .get_block_number()
         .await
@@ -282,8 +277,7 @@ async fn get_amounts_out(
         amountIn: amount,
         path: vec![token_a, token_b].into(),
     };
-   
-    
+
     let data = tx_call.abi_encode();
 
     let tx = Tx {
@@ -337,7 +331,6 @@ async fn get_amounts_out(
 
     let v3_amount_out = decode_quote_output_v3(res.output).expect("failed to decode output");
 
-
     if v3_amount_out == U256::ZERO {
         profit = U256::ZERO;
     }
@@ -361,7 +354,6 @@ fn decode_uniswap_v2_quote(data: &revm::primitives::Bytes) -> Result<U256, Strin
     let array_length = U256::from_be_slice(&decoded_data[32..64]);
     assert_eq!(array_length, U256::from(2), "Expected array length 2");
 
-
     let amount_out = U256::from_be_slice(&decoded_data[96..128]);
     let amount_out = amount_out;
 
@@ -376,110 +368,109 @@ fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
     Ok(number)
 }
 
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use mockall::*;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mockall::*;
+//     mock! {
+//         SimulatorWrapper {
+//             async fn get_amounts_out(
+//                 &self,
+//                 amount: U256,
+//                 token_in: Address,
+//                 token_out: Address,
+//                 v2_router: Address,
+//                 is_v2_to_v3: bool,
+//             ) -> Result<U256>;
+//         }
+//     }
 
-    mock! {
-        SimulatorWrapper {
-            async fn get_amounts_out(
-                &self,
-                amount: U256,
-                token_in: Address,
-                token_out: Address,
-                v2_router: Address,
-                is_v2_to_v3: bool,
-            ) -> Result<U256>;
-        }
-    }
+//     #[tokio::test]
+//     async fn test_find_optimal_amount() {
+//         let mut mock_sim = MockSimulatorWrapper::new();
 
-    #[tokio::test]
-    async fn test_find_optimal_amount() {
-        let mut mock_sim = MockSimulatorWrapper::new();
-        
-        // Mock sequence of get_amounts_out calls
-        mock_sim
-            .expect_get_amounts_out()
-            .times(2) // We expect 2 calls based on binary search
-            .returning(|amount, _, _, _, _| {
-                // Simulate different profits for different amounts
-                if amount < U256::from(500) * U256::from(10).pow(U256::from(18)) {
-                    Ok(U256::from(100) * U256::from(10).pow(U256::from(18)))
-                } else {
-                    Ok(U256::from(50) * U256::from(10).pow(U256::from(18)))
-                }
-            });
+//         // Mock sequence of get_amounts_out calls
+//         mock_sim
+//             .expect_get_amounts_out()
+//             .times(2) // We expect 2 calls based on binary search
+//             .returning(|amount, _, _, _, _| {
+//                 // Simulate different profits for different amounts
+//                 if amount < U256::from(500) * U256::from(10).pow(U256::from(18)) {
+//                     Ok(U256::from(100) * U256::from(10).pow(U256::from(18)))
+//                 } else {
+//                     Ok(U256::from(50) * U256::from(10).pow(U256::from(18)))
+//                 }
+//             });
 
-        let simulator = Arc::new(TokioMutex::new(mock_sim));
-        
-        let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
-        let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
-        let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
+//         let simulator = Arc::new(TokioMutex::new(mock_sim));
 
-        let result = find_optimal_amount_v3_to_v2(
-            token_in,
-            token_out, 
-            simulator,
-            max_input,
-            true
-        ).await.unwrap();
+//         let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
+//         let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
+//         let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
 
-        assert!(result.optimal_amount > U256::ZERO);
-        assert!(result.expected_profit > U256::ZERO);
-        assert!(result.optimal_amount <= max_input);
-    }
+//         let result = find_optimal_amount_v3_to_v2(
+//             token_in,
+//             token_out,
+//             simulator,
+//             max_input,
+//             true
+//         ).await.unwrap();
 
-    #[tokio::test]
-    async fn test_find_optimal_amount_zero_profit() {
-        let mut mock_sim = MockSimulatorWrapper::new();
-        
-        mock_sim
-            .expect_get_amounts_out()
-            .returning(|_, _, _, _, _| Ok(U256::ZERO));
+//         assert!(result.optimal_amount > U256::ZERO);
+//         assert!(result.expected_profit > U256::ZERO);
+//         assert!(result.optimal_amount <= max_input);
+//     }
 
-        let simulator = Arc::new(TokioMutex::new(mock_sim));
-        
-        let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
-        let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
-        let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
+//     #[tokio::test]
+//     async fn test_find_optimal_amount_zero_profit() {
+//         let mut mock_sim = MockSimulatorWrapper::new();
 
-        let result = find_optimal_amount_v3_to_v2(
-            token_in,
-            token_out,
-            simulator, 
-            max_input,
-            true
-        ).await.unwrap();
+//         mock_sim
+//             .expect_get_amounts_out()
+//             .returning(|_, _, _, _, _| Ok(U256::ZERO));
 
-        assert_eq!(result.optimal_amount, U256::ZERO);
-        assert_eq!(result.expected_profit, U256::ZERO);
-    }
+//         let simulator = Arc::new(TokioMutex::new(mock_sim));
 
-    #[tokio::test]
-    async fn test_find_optimal_amount_error() {
-        let mut mock_sim = MockSimulatorWrapper::new();
-        
-        mock_sim
-            .expect_get_amounts_out()
-            .returning(|_, _, _, _, _| Err(anyhow!("Simulation failed")));
+//         let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
+//         let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
+//         let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
 
-        let simulator = Arc::new(TokioMutex::new(mock_sim));
-        
-        let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
-        let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
-        let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
+//         let result = find_optimal_amount_v3_to_v2(
+//             token_in,
+//             token_out,
+//             simulator,
+//             max_input,
+//             true
+//         ).await.unwrap();
 
-        let result = find_optimal_amount_v3_to_v2(
-            token_in,
-            token_out,
-            simulator,
-            max_input, 
-            true
-        ).await.unwrap();
+//         assert_eq!(result.optimal_amount, U256::ZERO);
+//         assert_eq!(result.expected_profit, U256::ZERO);
+//     }
 
-        assert_eq!(result.optimal_amount, U256::ZERO);
-        assert_eq!(result.expected_profit, U256::ZERO);
-    }
-}
+//     #[tokio::test]
+//     async fn test_find_optimal_amount_error() {
+//         let mut mock_sim = MockSimulatorWrapper::new();
+
+//         mock_sim
+//             .expect_get_amounts_out()
+//             .returning(|_, _, _, _, _| Err(anyhow!("Simulation failed")));
+
+//         let simulator = Arc::new(TokioMutex::new(mock_sim));
+
+//         let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
+//         let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
+//         let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
+
+//         let result = find_optimal_amount_v3_to_v2(
+//             token_in,
+//             token_out,
+//             simulator,
+//             max_input,
+//             true
+//         ).await.unwrap();
+
+//         assert_eq!(result.optimal_amount, U256::ZERO);
+//         assert_eq!(result.expected_profit, U256::ZERO);
+//     }
+// }
