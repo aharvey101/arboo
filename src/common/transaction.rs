@@ -17,13 +17,14 @@ pub async fn send_transaction(
     contract_address: Address,
     gas_price: Option<u128>,
     gas_limit: Option<u64>,
-    max_fee_per_gas: Option<u128>,
+    base_fee: Option<u128>,
+    bribe: Option<u128>,
     input: TransactionInput,
     nonce: u64,
 ) -> Result<()> {
     let http_url = var::<&str>("HTTP_URL").unwrap();
     let http_url = http_url.as_str();
-    
+
     let private_key = var("PRIVATE_KEY").unwrap();
     let signer = PrivateKeySigner::from_str(&private_key).unwrap();
     let wallet = EthereumWallet::from(signer.clone());
@@ -35,26 +36,53 @@ pub async fn send_transaction(
 
     let input_as_bytes = input.input.as_ref().unwrap().0.clone();
 
-
+    info!(
+        "Sending transaction with parameters:\n\
+        contract_address: {}\n\
+        gas_price: {:?}\n\
+        gas_limit: {:?}\n\
+        base_fee: {:?}\n\
+        bribe: {:?}\n\
+        nonce: {}",
+        contract_address,
+        gas_price,
+        gas_limit,
+        base_fee,
+        6000000000000000u128,
+        nonce
+    );
+   // gas limit should be the amount of gas that was simulated for hte transaction to have taken up 
+   //  
     let tx = TransactionRequest::default()
         .with_from(signer.clone().address())
         .with_input(input_as_bytes)
         .with_to(contract_address)
         .with_nonce(nonce)
-        .with_max_fee_per_gas(max_fee_per_gas.unwrap())
-        .with_max_priority_fee_per_gas(gas_price.unwrap())
+        .with_max_fee_per_gas(base_fee.unwrap())
+        .with_max_priority_fee_per_gas(bribe.unwrap())
         .with_gas_limit(gas_limit.unwrap());
 
-    let is_1559 = tx.complete_1559().unwrap();
-
-    info!("Transaction: {:?}", is_1559);
     // Sign the transaction. 
     let envelope = tx.build(&wallet).await?;
+
+    info!("Signed transaction: {}", envelope.tx_hash());
 
     // Send the raw transaction. The transaction is sent to the Flashbots relay and, if valid, will
     // be included in a block by a Flashbots builder. Note that the transaction request, as defined,
     // is invalid and will not be included in the blockchain.
-    let pending = provider.send_tx_envelope(envelope).await?.register().await?;
+    let pending = match provider.send_tx_envelope(envelope).await {
+        Ok(tx) => match tx.register().await {
+            Ok(p) => p,
+            Err(e) => {
+                info!("Failed to register transaction: {}", e);
+                return Err(e.into());
+            }
+        },
+        Err(e) => {
+            info!("Failed to send transaction: {}", e);
+            return Err(e.into());
+        }
+    };
 
     info!("Sent transaction: {}", pending.tx_hash());
 

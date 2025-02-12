@@ -75,9 +75,7 @@ pub struct EvmSimulator<'a> {
         Evm<
             'a,
             EvmContext<CacheDB<InMemoryDB>>,
-            CacheDB<
-                AlloyDB<PubSubFrontend, Ethereum, Arc<RootProvider<PubSubFrontend, Ethereum>>>,
-            >,
+            CacheDB<AlloyDB<PubSubFrontend, Ethereum, Arc<RootProvider<PubSubFrontend, Ethereum>>>>,
         >,
     >,
     pub block_number: U64,
@@ -469,7 +467,7 @@ impl<'a> EvmSimulator<'a> {
         let liquidity_slot = U256::from(0);
         let liquidity = evm.context.evm.db.storage(pool_address, liquidity_slot)?;
 
-        info!("liquidity {:?}", liquidity);
+        //info!("liquidity {:?}", liquidity);
 
         evm.context
             .evm
@@ -514,29 +512,29 @@ impl<'a> EvmSimulator<'a> {
             .insert_account_storage(pool_address, token1_slot, token1)?;
 
         // Fee growth trackers
-        let fee_growth_global0_slot = U256::from(6);
-        let fee_growth_global0 = evm
-            .context
-            .evm
-            .db
-            .storage(pool_address, fee_growth_global0_slot)?;
-        evm.context.evm.db.insert_account_storage(
-            pool_address,
-            fee_growth_global0_slot,
-            fee_growth_global0,
-        )?;
-
-        let fee_growth_global1_slot = U256::from(7);
-        let fee_growth_global1 = evm
-            .context
-            .evm
-            .db
-            .storage(pool_address, fee_growth_global1_slot)?;
-        evm.context.evm.db.insert_account_storage(
-            pool_address,
-            fee_growth_global1_slot,
-            fee_growth_global1,
-        )?;
+        //        let fee_growth_global0_slot = U256::from(6);
+        //        let fee_growth_global0 = evm
+        //            .context
+        //            .evm
+        //            .db
+        //            .storage(pool_address, fee_growth_global0_slot)?;
+        //        evm.context.evm.db.insert_account_storage(
+        //            pool_address,
+        //            fee_growth_global0_slot,
+        //            fee_growth_global0,
+        //        )?;
+        //
+        //        let fee_growth_global1_slot = U256::from(7);
+        //        let fee_growth_global1 = evm
+        //            .context
+        //            .evm
+        //            .db
+        //            .storage(pool_address, fee_growth_global1_slot)?;
+        //        evm.context.evm.db.insert_account_storage(
+        //            pool_address,
+        //            fee_growth_global1_slot,
+        //            fee_growth_global1,
+        //        )?;
 
         // Protocol fees
         let protocol_fees0_slot = U256::from(8);
@@ -567,8 +565,6 @@ impl<'a> EvmSimulator<'a> {
         let token0_addr = Address::from_slice(&token0.to_be_bytes::<32>()[12..]);
         let balance0_slot = get_balance_slot(pool_address);
 
-        info!("balance0_slot {:?}", balance0_slot);
-
         let balance0 = evm.context.evm.db.storage(token0_addr, balance0_slot)?;
         evm.context
             .evm
@@ -578,19 +574,11 @@ impl<'a> EvmSimulator<'a> {
         let token1_addr = Address::from_slice(&token1.to_be_bytes::<32>()[12..]);
         let balance1_slot = get_balance_slot(pool_address);
 
-        info!("balance1_slot {:?}", balance1_slot);
-
         let balance1 = evm.context.evm.db.storage(token1_addr, balance1_slot)?;
         evm.context
             .evm
             .db
             .insert_account_storage(token1_addr, balance1_slot, balance1)?;
-
-        info!("V3 pool state loaded - Address: {}", pool_address);
-        info!("Liquidity: {}", liquidity);
-        info!("SqrtPriceX96: {}", sqrt_price);
-        info!("Current tick: {}", tick);
-        info!("Fee: {}", fee);
 
         Ok(())
     }

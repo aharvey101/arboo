@@ -3,17 +3,15 @@ use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Filter, Log};
 use anyhow::Result;
+use log::info;
 use revm::primitives::{B256, U256};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
-use log::info;
-
 
 pub async fn get_pairs(
     client: Arc<RootProvider<PubSubFrontend>>,
 ) -> Result<HashMap<Address, Event>> {
-    // we need to get all the pairs that have a uniswapv2 and uniswap v3 contract
     // NOTE: fee's are still broken
     let latest_block = client.get_block_number().await.unwrap();
     let from_block = latest_block - 100_000;
