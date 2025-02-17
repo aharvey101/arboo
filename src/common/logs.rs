@@ -20,7 +20,7 @@ pub async fn get_logs(
     // One way of doing this maybe is just having a bunch of filters? not sure
     // we might have to filter the event after it's come in to detect if the
     // address is one that has two uniswap pools
-
+    info!("Spawining Log subscribe_logs");
     let v2_swap_signature =
         keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
     let v3_swap_signature =
@@ -32,21 +32,12 @@ pub async fn get_logs(
     let sub = client.subscribe_logs(&filter).await.unwrap();
 
     let mut stream = sub.into_stream();
-
+    
     while let Some(res) = stream.next().await {
+        //info!("Log Block Number: {:?}", res.block_number);
         let key = res.address();
-        // let token0 = Address::from_slice(&res.data().topics()[1][12..32]);
-        // let token1 = Address::from_slice(&res.data().topics()[2][12..32]);
-        // info!("Topics : {:?}", res.data().topics());
-        // info!("Token 0: {:?}", token0);
-        // info!("Token 1 {:?}", token1);
-
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
         if let Some(event) = pairs.get(&key) {
-
-            //So the issue is that we were using the addresses that were intercting with the pool, but we need to use the addresses that are in the pool
-            // To do this we need to either use the 
-
 
             match event {
             Event::PairCreated(pair) => {
@@ -54,10 +45,10 @@ pub async fn get_logs(
                 matches!(value, Event::PoolCreated(v3_pair) if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) || (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0))
                 }) {
 
-
                     // NOTE: this shouldn't be so, not sure why it's doing this
                     if v3_pair.token0 == v3_pair.token1 {continue}
-    
+                    
+                    //info!("Log Found for v2 pool event {:?}", v3_pair.pair_address);
                     event_sender.send(LogEvent {
                     pool_variant: 2,
                     corresponding_pool_address: v3_pair.pair_address,

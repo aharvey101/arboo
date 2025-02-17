@@ -63,12 +63,15 @@ pub async fn strategy(
                     .get_transaction_count(signer.address())
                     .await
                     .expect("error getting nonce");
+
                 load_specific_pools(
                     simulator.clone(),
                     message.log_pool_address,
                     message.corresponding_pool_address,
                 )
                 .await?;
+
+                let time = std::time::Instant::now();
 
                 let optimal_result = find_optimal_amount_v3_to_v2(
                     message.token0,
@@ -81,7 +84,8 @@ pub async fn strategy(
                 )
                 .await
                 .expect("Failed");
-                if optimal_result.possible_profit < U256::from(4_000_000) {
+
+                if optimal_result.possible_profit < U256::from(1) {
                     info!("No arbitrage opportunity found");
                     continue;
                 }
@@ -91,7 +95,10 @@ pub async fn strategy(
                 } else {
                     message.corresponding_pool_address
                 };
-
+                info!(
+                    "Tike taken to calculate optimal amount: {:?}",
+                    time.elapsed()
+                );
                 info!("Arbitrage opportunity found");
                 info!(
                     "Creating and sending TX for optimal amount {} to pool {}",
@@ -110,27 +117,20 @@ pub async fn strategy(
 
                 let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
                 let contract_address = Address::from_str(&contract_address).unwrap();
-                //NOTE: broken
-                let possible_profit = optimal_result
-                    .possible_profit
-                    .to_string()
-                    .parse::<u128>()
-                    .unwrap_or(0);
 
-                let bribe = possible_profit * 999 / 1000;
-                let max_fee_per_gas = u128::from(gas_limit) + bribe;
+                let bribe = 2_000_000_000u128;
+                let max_fee_per_gas = u128::from(gas_limit);
                 info!("Max fee per gas: {:?}", max_fee_per_gas);
 
-                send_transaction(
+                tokio::spawn(send_transaction(
                     contract_address,
                     Some(block_base_fee as u128),
-                    Some(gas_limit),
+                    Some(800_000),
                     Some(max_fee_per_gas),
                     Some(bribe),
                     transaction,
                     nonce,
-                )
-                .await?;
+                ));
             }
             Err(err) => {
                 info!("OOP")
