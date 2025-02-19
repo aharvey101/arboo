@@ -38,9 +38,9 @@ pub async fn strategy(
         match event_reciever.recv().await {
             // this has to recieve the event
             Ok(message) => {
-                // debug!("Received event {:?}", message);
+                //debug!("Received event {:?}", message);
 
-                let is_v2_to_v3 = message.pool_variant == 2;
+                let is_v2_to_v3 = message.pool_variant == 3;
                 // Calculate optimal amount
                 let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
 
@@ -63,6 +63,7 @@ pub async fn strategy(
                     .get_transaction_count(signer.address())
                     .await
                     .expect("error getting nonce");
+
                 load_specific_pools(
                     simulator.clone(),
                     message.log_pool_address,
@@ -70,18 +71,23 @@ pub async fn strategy(
                 )
                 .await?;
 
-                let optimal_result = find_optimal_amount_v3_to_v2(
+                let time = std::time::Instant::now();
+
+                let optimal_result = match find_optimal_amount_v3_to_v2(
                     message.token0,
                     message.token1,
                     simulator.clone(),
                     max_input,
                     is_v2_to_v3,
-                    provider.clone(),
                     latest_block,
                 )
                 .await
-                .expect("Failed");
-                if optimal_result.possible_profit < U256::from(4_000_000) {
+                {
+                    Ok(res) => res,
+                    Err(_) => continue,
+                };
+
+                if optimal_result.possible_profit < U256::from(1) {
                     info!("No arbitrage opportunity found");
                     continue;
                 }
@@ -91,7 +97,10 @@ pub async fn strategy(
                 } else {
                     message.corresponding_pool_address
                 };
-
+                info!(
+                    "Tike taken to calculate optimal amount: {:?}",
+                    time.elapsed()
+                );
                 info!("Arbitrage opportunity found");
                 info!(
                     "Creating and sending TX for optimal amount {} to pool {}",
@@ -110,27 +119,20 @@ pub async fn strategy(
 
                 let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
                 let contract_address = Address::from_str(&contract_address).unwrap();
-                //NOTE: broken
-                let possible_profit = optimal_result
-                    .possible_profit
-                    .to_string()
-                    .parse::<u128>()
-                    .unwrap_or(0);
 
-                let bribe = possible_profit * 999 / 1000;
-                let max_fee_per_gas = u128::from(gas_limit) + bribe;
+                let bribe = 1_000_000_000u128;
+                let max_fee_per_gas = u128::from(gas_limit);
                 info!("Max fee per gas: {:?}", max_fee_per_gas);
 
-                send_transaction(
+                tokio::spawn(send_transaction(
                     contract_address,
                     Some(block_base_fee as u128),
-                    Some(gas_limit),
+                    Some(8_000_000),
                     Some(max_fee_per_gas),
                     Some(bribe),
                     transaction,
                     nonce,
-                )
-                .await?;
+                ));
             }
             Err(err) => {
                 info!("OOP")
@@ -151,27 +153,24 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
     simulator: Arc<TokioMutex<EvmSimulator<'a>>>,
     max_input: U256,
     is_v2_to_v3: bool,
-    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
     latest_block: Block,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
     let mut optimal_amount = U256::ZERO;
-
-    // Binary search parameters
-    let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
+    let mut left = U256::from(10).pow(U256::from(18)); // 1 token
     let mut right = max_input;
 
     while left <= right {
         let mid = (left + right) / U256::from(2);
 
+        // Only query once per iteration with mid
         let v3_amount_out = match get_amounts_out(
             simulator.clone(),
-            left,
+            mid,
             token_in,
             token_out,
             get_address(AddressType::V2Router),
             is_v2_to_v3,
-            provider.clone(),
             latest_block.clone(),
         )
         .await
@@ -179,49 +178,21 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             Ok(amount) => amount,
             Err(_) => break,
         };
-        // Calculate potential profit based on output amount
-        // Here you might want to adjust the profit calculation based on your specific needs
 
+        // Calculate profit based on mid amount
         let current_profit = v3_amount_out;
-        // Update best profit if we found better results
+
+        // Update best profit if better
         if current_profit > best_profit {
             best_profit = current_profit;
             optimal_amount = mid;
-        } else {
-            best_profit = v3_amount_out;
-        }
-
-        // Binary search adjustment
-        let mid_plus_delta = mid + U256::from(100).pow(U256::from(18)); // 1 token increment
-
-        let v3_amount_out = match get_amounts_out(
-            simulator.clone(),
-            right,
-            token_in,
-            token_out,
-            get_address(AddressType::V2Router),
-            is_v2_to_v3,
-            provider.clone(),
-            latest_block.clone(),
-        )
-        .await
-        {
-            Ok(amount) => amount,
-            Err(e) => {
-                info!("Error getting amount out {:?}", e);
-                break;
-            }
-        };
-
-        let next_profit = v3_amount_out;
-
-        if next_profit > current_profit {
+            // If profit is increasing, search upper half
             left = mid + U256::from(1);
         } else {
+            // If profit is decreasing, search lower half
             right = mid - U256::from(1);
         }
     }
-
     if best_profit == U256::ZERO {
         return Ok(ArbitrageResult {
             optimal_amount: U256::ZERO,
@@ -249,7 +220,7 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
     let path = alloy::primitives::Bytes::from(path);
 
     let tx_data = quoteExactInputCall {
-        path: path,
+        path,
         amountIn: best_profit,
     }
     .abi_encode();
@@ -259,14 +230,16 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
         transact_to: get_address(AddressType::Quoter),
         data: tx_data.into(),
         value: U256::ZERO,
-        gas_price: latest_gas_price.clone(),
-        gas_limit: latest_gas_limit.clone(),
+        gas_price: latest_gas_price,
+        gas_limit: latest_gas_limit,
     };
 
     let res = sim.call(tx)?;
 
-    let possible_profit = decode_quote_output_v3(res.output).expect("failed to decode output");
+    info!("res from eth quote call {:?}", res);
 
+    let possible_profit = decode_quote_output_v3(res.output).expect("failed to decode output");
+    info!("possible_profit {possible_profit}");
     Ok(ArbitrageResult {
         optimal_amount,
         possible_profit,
@@ -280,13 +253,11 @@ async fn get_amounts_out(
     token_b: Address,
     v2_router: Address,
     is_v2_to_v3: bool,
-    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
     latest_block: Block,
 ) -> Result<U256> {
     // This tests if there is a price discrepancy between v2 and v3
 
     // NOTE: Optimizations to be had by passing these in instead of getting them every time
-
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
     let mut sim = simulator.lock().await;
@@ -297,7 +268,9 @@ async fn get_amounts_out(
         U256::from(1000) * U256::from(10).pow(U256::from(18)),
     )
     .await;
+
     let mut profit = U256::ZERO;
+
     alloy::sol! {
         #[derive(Debug)]
         function getAmountsOut(
@@ -308,7 +281,7 @@ async fn get_amounts_out(
 
     let tx_call: getAmountsOutCall = getAmountsOutCall {
         amountIn: amount,
-        path: vec![token_a, token_b].into(),
+        path: vec![token_a, token_b],
     };
 
     let data = tx_call.abi_encode();
@@ -318,8 +291,8 @@ async fn get_amounts_out(
         transact_to: v2_router,
         data: data.into(),
         value: U256::ZERO,
-        gas_price: latest_gas_price.clone(),
-        gas_limit: latest_gas_limit.clone(),
+        gas_price: latest_gas_price,
+        gas_limit: latest_gas_limit,
     };
 
     let res = sim
@@ -343,21 +316,23 @@ async fn get_amounts_out(
     path.extend_from_slice(token_a.as_slice());
     path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
     path.extend_from_slice(token_b.as_slice());
+
     let path = alloy::primitives::Bytes::from(path);
 
     let tx_data = quoteExactInputCall {
         path,
         amountIn: amount,
-    }
-    .abi_encode();
+    };
+
+    let tx_data = tx_data.abi_encode();
 
     let tx = Tx {
         caller: sim.owner,
         transact_to: get_address(AddressType::Quoter),
         data: tx_data.into(),
         value: U256::ZERO,
-        gas_price: latest_gas_price.clone(),
-        gas_limit: latest_gas_limit.clone(),
+        gas_price: latest_gas_price,
+        gas_limit: latest_gas_limit,
     };
 
     let res = sim.call(tx)?;

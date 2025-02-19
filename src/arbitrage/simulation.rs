@@ -21,7 +21,6 @@ pub async fn simulation(
     amount: U256,
     simulator: Arc<Mutex<EvmSimulator<'_>>>,
 ) -> Result<U256> {
-
     simulator.lock().await.deploy(arboo_bytecode()).await;
 
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
@@ -155,8 +154,8 @@ pub async fn simulation(
         }
         Err(err) => {
             info!("Error: {:?}", err);
-            return Ok(U256::ZERO)
-        },
+            return Ok(U256::ZERO);
+        }
     }
 
     let balance = check_weth_balance(

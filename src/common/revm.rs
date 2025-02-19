@@ -467,7 +467,7 @@ impl<'a> EvmSimulator<'a> {
         let liquidity_slot = U256::from(0);
         let liquidity = evm.context.evm.db.storage(pool_address, liquidity_slot)?;
 
-        //info!("liquidity {:?}", liquidity);
+        // info!("liquidity {:?}", liquidity);
 
         evm.context
             .evm

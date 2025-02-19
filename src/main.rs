@@ -1,21 +1,18 @@
-use alloy::providers::{Provider, RootProvider, ProviderBuilder};
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::{
-    network::Ethereum,
-    primitives::U64,
-    pubsub::PubSubFrontend,
-    rpc::client::WsConnect,
+    network::Ethereum, primitives::U64, pubsub::PubSubFrontend, rpc::client::WsConnect,
     signers::local::PrivateKeySigner,
-};
-use arbooo::common::{
-    logs::LogEvent,
-    pairs::{Event, V2PoolCreated, V3PoolCreated},
-    revm::{EvmSimulator, Tx},
 };
 use anyhow::Result;
 use arbooo::arbitrage::strategy::strategy;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
+use arbooo::common::{
+    logs::LogEvent,
+    pairs::{Event, V2PoolCreated, V3PoolCreated},
+    revm::{EvmSimulator, Tx},
+};
 use dotenv::dotenv;
 use dotenv::var;
 use log::info;
@@ -25,10 +22,10 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::str::FromStr;
-use tokio::sync::broadcast::{self, Sender};
-use tokio::task::JoinSet;
-use tokio::sync::Mutex as TokioMutex;
 use std::sync::Arc;
+use tokio::sync::broadcast::{self, Sender};
+use tokio::sync::Mutex as TokioMutex;
+use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -96,10 +93,9 @@ async fn main() -> Result<()> {
     // 2. Listen for logs on pools
     set.spawn(logs::get_logs(provider.clone(), pools_map, sender.clone()));
 
-
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
 
-    let provider: RootProvider<PubSubFrontend, Ethereum>= ProviderBuilder::new()
+    let provider: RootProvider<PubSubFrontend, Ethereum> = ProviderBuilder::new()
         .network()
         .on_ws(ws_client)
         .await
@@ -125,8 +121,10 @@ async fn main() -> Result<()> {
 
     info!("Spawning evm");
 
-    strategy(sender, simulator.clone(), provider.clone()).await.unwrap();
-    
+    strategy(sender, simulator.clone(), provider.clone())
+        .await
+        .unwrap();
+
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
     }
@@ -134,10 +132,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-
 // MVP What is left to do:
 // [ ] Get the evm onto it's own thread (maybe no need)
-// [x] get the logs to send to the evm and have it recieve those events 
+// [x] get the logs to send to the evm and have it recieve those events
 // [x] Figure out a strategy for finding out how much to arb, ie; what amount is profitable
 // [x] Figure out how to send transactions
 // [ ] Fix up all the decoding so that we can understand the errors
