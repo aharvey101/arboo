@@ -47,18 +47,22 @@ pub async fn send_transaction(
         base_fee: {:?}\n\
         bribe: {:?}\n\
         nonce: {}",
-        contract_address, gas_price, gas_limit, base_fee, 6000000000000000u128, nonce
+        contract_address,
+        gas_price,
+        gas_limit,
+        base_fee,
+        bribe.unwrap(),
+        nonce
     );
-    // gas limit should be the amount of gas that was simulated for hte transaction to have taken up
-    //
+    //NOTE:  gas limit should be the amount of gas that was simulated for hte transaction to have taken up
+
     let tx = TransactionRequest::default()
         .with_chain_id(provider.get_chain_id().await.unwrap_or_default())
         .with_value(U256::ZERO)
         .with_input(input_as_bytes)
         .with_to(contract_address)
         .with_nonce(nonce)
-        // NOTE: we don't know how to caluclate this properly yet
-        .with_max_fee_per_gas(2_000_000_000u128)
+        .with_max_fee_per_gas(bribe.unwrap())
         // NOTE: This too
         .with_max_priority_fee_per_gas(bribe.unwrap())
         .with_gas_limit(gas_limit.unwrap());
