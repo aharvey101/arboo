@@ -1,8 +1,7 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use log::LevelFilter;
 
-pub fn setup_logger(){
-
+pub fn setup_logger() {
     let colors = ColoredLevelConfig {
         trace: Color::Cyan,
         debug: Color::Magenta,
@@ -25,6 +24,6 @@ pub fn setup_logger(){
         .level(log::LevelFilter::Error)
         .level_for("arbooo", LevelFilter::Info)
         .level_for("arbooo", LevelFilter::Debug)
-        .apply().expect("Shouldn't have failed to setup the logger");
-
+        .apply()
+        .expect("Shouldn't have failed to setup the logger");
 }

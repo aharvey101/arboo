@@ -305,7 +305,6 @@ pub async fn load_uniswap_v2_pools(
         //     continue;
         // }
 
-
         let pool_data = Pool {
             id: -1,
             address: decoded.0,
@@ -424,14 +423,12 @@ pub struct PoolLiquidity {
 
 // Check if the contract that emitted the log is a Uniswap V2 pool
 async fn is_v2_pool(address: Address, provider: Arc<RootProvider<PubSubFrontend>>) -> Result<bool> {
-
     // Get the contract bytecode
     let code = provider
         .get_code_at(address)
         .await
         .unwrap_or(Default::default())
         .to_string();
-
 
     // You can compare against known V2 pool creation code hash
     // This is the init code hash for Uniswap V2 pairs
@@ -447,13 +444,7 @@ async fn is_v3_pool(
     address: Address,
     provider: &Arc<RootProvider<PubSubFrontend>>,
 ) -> Result<bool> {
-
-
-    let code = provider
-        .get_code_at(address)
-        .await
-        .unwrap()
-        .to_string();
+    let code = provider.get_code_at(address).await.unwrap().to_string();
 
     let v3_init_code_hash = "f5e0d0f3e";
     let is_v3 = code.contains(v3_init_code_hash);
