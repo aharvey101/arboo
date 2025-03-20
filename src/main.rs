@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
     let provider = Arc::new(provider);
 
     if !Path::new("cache/.cached-pools.csv").try_exists()? {
+        info!("Cache doesn't exist, crawling blocks for pools");
         pools::load_all_pools(ws_url, 20_000_000, 50_000)
             .await
             .unwrap();
