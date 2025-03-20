@@ -122,15 +122,14 @@ pub async fn load_all_pools(
     chunk: u64,
 ) -> Result<(Vec<Pool>, i64)> {
     create_dir_all("cache").expect("Error creating directory");
-
+    info!("Creating cache file");
     let cache_file = "cache/.cached-pools.csv";
     let file_path = Path::new(cache_file);
     let file_exists = file_path.exists();
     let file = OpenOptions::new()
-        .write(true)
         .append(true)
         .create(true)
-        .open(&cache_file)
+        .open(cache_file)
         .unwrap();
     let mut writer = csv::Writer::from_writer(file);
 
@@ -152,7 +151,7 @@ pub async fn load_all_pools(
         }
     } else {
         info!("Writing");
-        writer.write_record(&[
+        writer.write_record([
             "id",
             "address",
             "version",
@@ -212,13 +211,13 @@ pub async fn load_all_pools(
         let mut requests = Vec::new();
         requests.push(tokio::task::spawn(load_uniswap_v2_pools(
             provider.clone(),
-            range.0.clone(),
-            range.1.clone(),
+            range.0,
+            range.1,
         )));
         requests.push(tokio::task::spawn(load_uniswap_v3_pools(
             provider.clone(),
-            range.0.clone(),
-            range.1.clone(),
+            range.0,
+            range.1,
         )));
 
         let results = futures::future::join_all(requests).await;
