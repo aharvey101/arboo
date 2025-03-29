@@ -1,14 +1,29 @@
+use crate::{
+    arbitrage::simulation::{one_ether, one_hundred_ether, one_thousand_eth},
+    common::revm::EvmSimulator,
+};
+use alloy::network::Ethereum;
+use alloy_sol_types::SolCall;
+use futures::StreamExt;
+use num_bigint::BigInt;
+use std::{
+    collections::HashMap,
+    fs::{create_dir_all, OpenOptions},
+    str::FromStr,
+    sync::Arc,
+};
 use {
     ::log::info,
     alloy::{
         eips::BlockId,
-        primitives::{Address, FixedBytes, B256, U256},
+        primitives::{Address, FixedBytes, B256, U256, U64},
         providers::{Provider, ProviderBuilder, RootProvider},
         pubsub::PubSubFrontend,
         rpc::{
             client::WsConnect,
             types::{eth::Filter, BlockTransactionsKind},
         },
+        signers::local::PrivateKeySigner,
     },
     alloy_sol_types::SolValue,
     anyhow::Result,
@@ -17,13 +32,15 @@ use {
     serde::{Deserialize, Serialize},
     std::path::Path,
 };
+pub const UNISWAP_V2_FACTORY: Address = Address::new([
+    0x89, 0x09, 0xDC, 0x15, 0xE4, 0x01, 0x73, 0xFF, 0x46, 0x99, 0x34, 0x3B, 0x6E, 0xB8, 0x13, 0x2C,
+    0x65, 0xE1, 0x8E, 0xC6,
+]); // 0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6
 
-use std::{
-    collections::HashMap,
-    fs::{create_dir_all, OpenOptions},
-    str::FromStr,
-    sync::Arc,
-};
+pub const UNISWAP_V3_FACTORY: Address = Address::new([
+    0x33, 0x12, 0x8A, 0x8F, 0xC1, 0x78, 0x69, 0x89, 0x7D, 0xCE, 0x68, 0xED, 0x02, 0x6D, 0x69, 0x46,
+    0x21, 0xF6, 0xFD, 0xFD,
+]); //0x33128a8fC17869897dcE68Ed026d694621f6FDfD
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum DexVariant {
@@ -48,7 +65,6 @@ pub struct Pool {
     pub token1: Address,
     pub fee: u32, // uniswap v3 specific
     pub block_number: u64,
-    pub timestamp: u64,
 }
 
 impl From<StringRecord> for Pool {
@@ -65,13 +81,12 @@ impl From<StringRecord> for Pool {
             token1: Address::from_str(record.get(4).unwrap()).unwrap(),
             fee: record.get(5).unwrap().parse().unwrap(),
             block_number: record.get(6).unwrap().parse().unwrap(),
-            timestamp: record.get(7).unwrap().parse().unwrap(),
         }
     }
 }
 
 impl Pool {
-    pub fn cache_row(&self) -> (i64, String, i32, String, String, u32, u64, u64) {
+    pub fn cache_row(&self) -> (i64, String, i32, String, String, u32, u64) {
         (
             self.id,
             format!("{:?}", self.address),
@@ -80,7 +95,6 @@ impl Pool {
             format!("{:?}", self.token1),
             self.fee,
             self.block_number,
-            self.timestamp,
         )
     }
 
@@ -143,9 +157,8 @@ pub async fn load_all_pools(
         for row in reader.records() {
             let row = row.unwrap();
             let pool = Pool::from(row);
-            match pool.version {
-                DexVariant::UniswapV2 => v2_pool_cnt += 1,
-                _ => {}
+            if let DexVariant::UniswapV2 = pool.version {
+                v2_pool_cnt += 1
             }
             pools.push(pool);
         }
@@ -159,7 +172,6 @@ pub async fn load_all_pools(
             "token1",
             "fee",
             "block_number",
-            "timestamp",
         ])?;
     }
     info!("Pools loaded: {:?}", pools.len());
@@ -168,19 +180,21 @@ pub async fn load_all_pools(
     let ws = ProviderBuilder::new().on_ws(ws_client).await?;
     let provider = Arc::new(ws);
 
-    let mut id = if pools.len() > 0 {
-        pools.last().as_ref().unwrap().id as i64
+    let mut id = if !pools.is_empty() {
+        pools.last().as_ref().unwrap().id
     } else {
         -1
     };
-    let last_id = id as i64;
+    let last_id = id;
 
     let from_block = if id != -1 {
         pools.last().as_ref().unwrap().block_number + 1
     } else {
         from_block
     };
+
     let to_block = provider.get_block_number().await.unwrap();
+
     let mut blocks_processed = 0;
 
     let mut block_range = Vec::new();
@@ -221,21 +235,53 @@ pub async fn load_all_pools(
         )));
 
         let results = futures::future::join_all(requests).await;
-        for result in results {
-            match result {
-                Ok(response) => match response {
-                    Ok(pools_response) => {
-                        pools.extend(pools_response);
-                    }
-                    _ => {}
-                },
-                _ => {}
+        results.into_iter().for_each(|result| {
+            if let Ok(response) = result {
+                if let Ok(pools_response) = response {
+                    pools.extend(pools_response);
+                }
             }
-        }
+        });
+        // now that we have all the pools, what we need to do is make sure they have atleast 5 eth of liquidity
+        // to do this we need to setup an evm, get the storage for the contract,
+        // Then query the balance of the contract for the token0 and token1
+        // if either of them are less than 5 eth, we will skip the pool
+        // if they are more than 5 eth, we will add the pool to the list
 
         pb.inc(1);
     }
 
+    info!("amount of pools before liquidity test: {:?}", pools.len());
+
+    let (evm, caller_address) = create_evm(provider.clone()).await;
+    let evm = Arc::new(tokio::sync::Mutex::new(evm));
+    let required_liquidity = BigInt::from_signed_bytes_be(&one_thousand_eth().to_be_bytes_vec());
+
+    let mut filtered_pools: Vec<Pool> = vec![];
+    let pb = ProgressBar::new(pools.len() as u64);
+
+    pb.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-"),
+    );
+    for (_, pool) in pools.clone().iter_mut().enumerate() {
+
+        let has_liquidity = liquidity_test(evm.clone(), &pool.address, required_liquidity.clone(), caller_address)
+            .await
+            .unwrap_or_else(|e| false);
+        if !has_liquidity {
+            pb.inc(1);
+            continue;
+        }
+        filtered_pools.push(pool.clone());
+        pb.inc(1);
+    }
+
+    let mut pools = filtered_pools;
+    info!("amount of pools after liquidity test: {:?}", pools.len());
     let mut added = 0;
     pools.sort_by_key(|p| p.block_number);
     for pool in pools.iter_mut() {
@@ -243,7 +289,7 @@ pub async fn load_all_pools(
             id += 1;
             pool.id = id;
         }
-        if (pool.id as i64) > last_id {
+        if pool.id > last_id {
             writer.serialize(pool.cache_row())?;
             added += 1;
         }
@@ -260,31 +306,17 @@ pub async fn load_uniswap_v2_pools(
     to_block: u64,
 ) -> Result<Vec<Pool>> {
     let mut pools = Vec::new();
-    let mut timestamp_map = HashMap::new();
 
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
+        .address(UNISWAP_V2_FACTORY)
         .event("PairCreated(address,address,address,uint256)");
 
     let logs = provider.get_logs(&event_filter).await?;
 
     for log in logs {
         let block_number = log.block_number.unwrap_or_default();
-
-        let timestamp = if !timestamp_map.contains_key(&block_number) {
-            let block = provider
-                .get_block(BlockId::from(block_number), BlockTransactionsKind::Full)
-                .await
-                .unwrap()
-                .unwrap();
-            let timestamp = block.header.timestamp;
-            timestamp_map.insert(block_number, timestamp);
-            timestamp
-        } else {
-            let timestamp = *timestamp_map.get(&block_number).unwrap();
-            timestamp
-        };
 
         let topic0 = FixedBytes::from(log.topics()[1]);
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
@@ -297,13 +329,6 @@ pub async fn load_uniswap_v2_pools(
         let log_data = log_data.as_slice();
         let decoded: (Address, B256) = SolValue::abi_decode(log_data, false).unwrap();
 
-        // if !is_v2_pool(decoded.0, provider.clone())
-        //     .await
-        //     .unwrap_or(false)
-        // {
-        //     continue;
-        // }
-
         let pool_data = Pool {
             id: -1,
             address: decoded.0,
@@ -312,7 +337,6 @@ pub async fn load_uniswap_v2_pools(
             token1,
             fee: 300,
             block_number,
-            timestamp,
         };
         pools.push(pool_data);
     }
@@ -326,11 +350,11 @@ pub async fn load_uniswap_v3_pools(
     to_block: u64,
 ) -> Result<Vec<Pool>> {
     let mut pools = Vec::new();
-    let mut timestamp_map = HashMap::new();
 
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
+        .address(UNISWAP_V3_FACTORY)
         .event("PoolCreated(address,address,uint24,int24,address)");
 
     let logs = provider.get_logs(&event_filter).await?;
@@ -341,23 +365,11 @@ pub async fn load_uniswap_v3_pools(
         }
         let block_number = log.block_number.unwrap_or_default();
 
-        let timestamp = if !timestamp_map.contains_key(&block_number) {
-            let block = provider
-                .get_block(BlockId::from(block_number), BlockTransactionsKind::Full)
-                .await?
-                .unwrap();
-            let timestamp = block.header.timestamp;
-            timestamp_map.insert(block_number, timestamp);
-            timestamp
-        } else {
-            *timestamp_map.get(&block_number).unwrap()
-        };
-
-        let topic0 = FixedBytes::from(log.topics()[1]);
+        let topic0 = log.topics()[1];
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
         let token0 = Address::from(topic0);
 
-        let topic1 = FixedBytes::from(log.topics()[2]);
+        let topic1 = log.topics()[2];
         let topic1 = FixedBytes::<20>::try_from(&topic1[12..32]).unwrap();
         let token1 = Address::from(topic1);
 
@@ -370,15 +382,6 @@ pub async fn load_uniswap_v3_pools(
         let fee = u32::from_str_radix(decoded.0.to_string().as_str().trim_start_matches("0x"), 16)
             .unwrap();
 
-        // lets check how much liquidity is in the pool, if its less than $1000 then lets ignore it
-
-        // let is_v3 = is_v3_pool(pool_address, &provider)
-        //     .await
-        //     .unwrap_or(false);
-        // if !is_v3 {
-        //     continue;
-        // }
-
         // info!("is v3: {:?}", is_v3);
         let pool_data = Pool {
             id: -1,
@@ -388,7 +391,6 @@ pub async fn load_uniswap_v3_pools(
             token1,
             fee,
             block_number,
-            timestamp,
         };
         pools.push(pool_data);
     }
@@ -439,13 +441,97 @@ async fn is_v2_pool(address: Address, provider: Arc<RootProvider<PubSubFrontend>
     Ok(is_v2)
 }
 
+// The is_v3_pool function uses an incorrect/incomplete hash for checking V3 pools
+// Should use full bytecode verification or a more reliable method
 async fn is_v3_pool(
     address: Address,
     provider: &Arc<RootProvider<PubSubFrontend>>,
 ) -> Result<bool> {
     let code = provider.get_code_at(address).await.unwrap().to_string();
 
-    let v3_init_code_hash = "f5e0d0f3e";
+    // Use full bytecode verification instead of partial hash
+    let v3_init_code_hash = "e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54";
     let is_v3 = code.contains(v3_init_code_hash);
     Ok(is_v3)
+}
+
+// functon that takes in a reference to the evm and reference to a pool address, and an amount of required liquidity
+// returns a boolean of if the contract has the required liquidity or not
+async fn liquidity_test(
+    evm: Arc<tokio::sync::Mutex<EvmSimulator<'static>>>,
+    pool_address: &Address,
+    required_liquidity: BigInt,
+    caller_address: Address,
+) -> Result<bool, anyhow::Error> {
+    // construct sol call for liquidity:
+    evm.lock()
+        .await
+        .set_eth_balance(
+            caller_address,
+            U256::from(1000) * U256::from(10).pow(U256::from(18)),
+        )
+        .await;
+    alloy::sol! {
+       function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    }
+
+    let params = getReservesCall {}.abi_encode();
+
+    // do call to evm?
+
+    let tx = crate::common::revm::Tx {
+        caller: caller_address,
+        transact_to: *pool_address,
+        value: U256::ZERO,
+        gas_price: U256::from(20_000),
+        gas_limit: 120_000_000u64,
+        data: params.into(),
+    };
+
+    let res = evm.lock().await.call(tx)?;
+
+    let output = decode_reserves_call(&res.output).unwrap_or_else(|e| vec![U256::ZERO, U256::ZERO]);
+
+    let output1 = BigInt::from_signed_bytes_be(&output[0].to_be_bytes_vec());
+
+    let output2 = BigInt::from_signed_bytes_be(&output[1].to_be_bytes_vec());
+
+    let liquidity = BigInt::from(output1 * output2);
+    let liquidity = liquidity.sqrt();
+
+    if liquidity >= BigInt::from(required_liquidity) {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+// function that creates an evm
+async fn create_evm(
+    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
+) -> (EvmSimulator<'static>, Address) {
+    let latest_block_number = provider.get_block_number().await.unwrap();
+
+    let contract_wallet = PrivateKeySigner::random();
+    let contract_wallet_address = contract_wallet.address();
+
+    let evm = EvmSimulator::new(
+        provider.clone(),
+        Some(contract_wallet_address),
+        U64::from(latest_block_number),
+    );
+    (evm, contract_wallet_address)
+}
+
+fn decode_reserves_call(data: &revm::primitives::Bytes) -> Result<Vec<U256>, String> {
+    let decoded_data = hex::decode(data.to_string().trim_start_matches("0x"))
+        .map_err(|e| format!("Failed to decode data: {}", e))?;
+    if decoded_data.len() != 96 {
+        return Err("Invalid data length".to_string());
+    }
+    // Next 32 bytes contain reserves 0
+    let reserves_one = U256::from_be_slice(&decoded_data[0..32]);
+    // Next 32 btes contain reserves 1
+    let reserves_two = U256::from_be_slice(&decoded_data[32..64]);
+
+    Ok(vec![reserves_one, reserves_two])
 }

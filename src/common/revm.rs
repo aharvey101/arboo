@@ -20,6 +20,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, MutexGuard as TokioMutexGuard};
 
+use crate::arbitrage::simulation::AddressType;
+
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
     pub tx_hash: B256,
@@ -174,8 +176,13 @@ impl<'a> EvmSimulator<'a> {
             evm.context.evm.env.tx.gas_price = tx.gas_price;
             evm.context.evm.env.tx.gas_limit = tx.gas_limit;
 
-            let result: revm::primitives::ExecutionResult;
+            let quoter= Address::from_str("3d4e44Eb1374240CE5F1B871ab261CD16335B76a").unwrap();
 
+            if tx.transact_to == quoter {
+                info!("Running the quoter transaction");
+            }
+            let result: revm::primitives::ExecutionResult;
+            let instant = std::time::Instant::now();
             if commit {
                 result = match evm.transact_commit() {
                     Ok(result) => result,
@@ -187,7 +194,11 @@ impl<'a> EvmSimulator<'a> {
                     .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
                 result = ref_tx.result;
             }
-
+            let time_passed = instant.elapsed();
+            if tx.transact_to == quoter {
+                info!("Transaction response for v3 quoter : {:?}", result);
+                info!("Time Elapsed: {:?}", time_passed);
+            }
             let output = match result {
                 ExecutionResult::Success {
                     gas_used,
