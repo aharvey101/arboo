@@ -461,42 +461,20 @@ pub fn me() -> Address {
 
 pub enum AddressType {
     Weth,
-    Usdc,
-    OfficialQuoter,
-    CustomQuoter,
-    Pool3000Pepe,
-    Uni,
-    Pepe,
-    Pool500,
-    Pool3000,
     V3Router,
     V2Router,
-    Random,
-    V2Pool,
-    V3Pool,
-    Factory,
+    V2Factory,
+    V3Factory,
     Quoter,
-    UniV3Pool,
 }
 
 pub fn get_address(address_type: AddressType) -> Address {
     match address_type {
-        AddressType::Weth => address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-        AddressType::Usdc => address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
-        AddressType::OfficialQuoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
-        AddressType::CustomQuoter => address!("A5C381211A406b48A073E954e6949B0D49506bc0"),
-        AddressType::Pool3000Pepe => address!("11950d141EcB863F01007AdD7D1A342041227b58"),
-        AddressType::Uni => address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
-        AddressType::Pepe => address!("6982508145454Ce325dDbE47a25d4ec3d2311933"),
-        AddressType::UniV3Pool => address!("1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801"),
-        AddressType::Pool500 => address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"),
-        AddressType::Pool3000 => address!("8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"),
-        AddressType::V3Router => address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
+        AddressType::Weth => address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        AddressType::V3Router => address!("66a9893cc07d91d95644aedd05d03f95e1dba8af"),
         AddressType::V2Router => address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
-        AddressType::Random => address!("60d023f1b06edcEAcC4799a73865D1baaBBd355f"),
-        AddressType::V3Pool => address!("1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801"),
-        AddressType::V2Pool => address!("d3d2E2692501A5c9Ca623199D38826e513033a17"),
-        AddressType::Factory => address!("1F98431c8aD98523631AE4a59f267346ea31F984"),
+        AddressType::V3Factory => address!("1F98431c8aD98523631AE4a59f267346ea31F984"),
+        AddressType::V2Factory => address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
         AddressType::Quoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
     }
 }
