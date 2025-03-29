@@ -470,7 +470,7 @@ pub enum AddressType {
 
 pub fn get_address(address_type: AddressType) -> Address {
     match address_type {
-        AddressType::Weth => address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+        AddressType::Weth => address!("4200000000000000000000000000000000000006"),
         AddressType::V3Router => address!("6ff5693b99212da76ad316178a184ab56d299b43"),
         AddressType::V2Router => address!("4752ba5dbc23f44d87826276bf6fd6b1c372ad24"),
         AddressType::V3Pool => address!("33128a8fC17869897dcE68Ed026d694621f6FDfD"),
