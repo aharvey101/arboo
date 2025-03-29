@@ -236,8 +236,6 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
 
     let res = sim.call(tx)?;
 
-    info!("res from eth quote call {:?}", res);
-
     let possible_profit = decode_quote_output_v3(res.output).expect("failed to decode output");
     info!("possible_profit {possible_profit}");
     Ok(ArbitrageResult {

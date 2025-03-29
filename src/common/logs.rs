@@ -31,23 +31,23 @@ pub async fn get_logs(
         .event_signature(vec![v3_swap_signature, v2_swap_signature])
         .from_block(BlockNumberOrTag::Latest);
     let sub = client.subscribe_logs(&filter).await.unwrap();
-
     let mut stream = sub.into_stream();
 
     while let Some(res) = stream.next().await {
-        //info!("Log Block Number: {:?}", res.block_number);
         let key = res.address();
+
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
         if let Some(event) = pairs.get(&key) {
-            // info!("Event: {:?}", event);
+
             match event {
             Event::PairCreated(pair) => {
                 if let Some(Event::PoolCreated(v3_pair)) = pairs.values().find(|value| {
                 matches!(value, Event::PoolCreated(v3_pair) if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) || (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0))
                 }) {
 
+                    info!("Log Block Number: {:?}", res.block_number);
                     if v3_pair.token0 == v3_pair.token1 {continue}
-
+                    
                     event_sender.send(LogEvent {
                     pool_variant: 2,
                     corresponding_pool_address: v3_pair.pair_address,
