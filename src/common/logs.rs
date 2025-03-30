@@ -35,7 +35,7 @@ pub async fn get_logs(
 
     while let Some(res) = stream.next().await {
         let key = res.address();
-
+        info!("Log Pool Address: {:?}", key);   
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
         if let Some(event) = pairs.get(&key) {
 
