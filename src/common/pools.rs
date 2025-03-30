@@ -267,25 +267,25 @@ pub async fn load_all_pools(
         .unwrap()
         .progress_chars("##-"),
     );
-    for (_, pool) in pools.clone().iter_mut().enumerate() {
-        let has_liquidity = liquidity_test(
-            evm.clone(),
-            &pool.address,
-            required_liquidity.clone(),
-            caller_address,
-        )
-        .await
-        .unwrap_or_else(|e| false);
-        if !has_liquidity {
-            pb.inc(1);
-            continue;
-        }
-        filtered_pools.push(pool.clone());
-        pb.inc(1);
-    }
-
-    let mut pools = filtered_pools;
-    info!("amount of pools after liquidity test: {:?}", pools.len());
+//    for (_, pool) in pools.clone().iter_mut().enumerate() {
+//        let has_liquidity = liquidity_test(
+//            evm.clone(),
+//            &pool.address,
+//            required_liquidity.clone(),
+//            caller_address,
+//        )
+//        .await
+//        .unwrap_or_else(|e| false);
+//        if !has_liquidity {
+//            pb.inc(1);
+//            continue;
+//        }
+//        filtered_pools.push(pool.clone());
+//        pb.inc(1);
+//    }
+//
+    //let mut pools = filtered_pools;
+    //info!("amount of pools after liquidity test: {:?}", pools.len());
     let mut added = 0;
     pools.sort_by_key(|p| p.block_number);
     for pool in pools.iter_mut() {
