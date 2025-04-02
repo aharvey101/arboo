@@ -253,11 +253,11 @@ pub async fn load_all_pools(
 
     info!("amount of pools before liquidity test: {:?}", pools.len());
 
-    let (evm, caller_address) = create_evm(provider.clone()).await;
-    let evm = Arc::new(tokio::sync::Mutex::new(evm));
-    let required_liquidity = BigInt::from_signed_bytes_be(&one_ether().to_be_bytes_vec());
+    //    let (evm, caller_address) = create_evm(provider.clone()).await;
+    //let evm = Arc::new(tokio::sync::Mutex::new(evm));
+    //let required_liquidity = BigInt::from_signed_bytes_be(&one_ether().to_be_bytes_vec());
 
-    let mut filtered_pools: Vec<Pool> = vec![];
+    //#let mut filtered_pools: Vec<Pool> = vec![];
     let pb = ProgressBar::new(pools.len() as u64);
 
     pb.set_style(
@@ -267,23 +267,23 @@ pub async fn load_all_pools(
         .unwrap()
         .progress_chars("##-"),
     );
-//    for (_, pool) in pools.clone().iter_mut().enumerate() {
-//        let has_liquidity = liquidity_test(
-//            evm.clone(),
-//            &pool.address,
-//            required_liquidity.clone(),
-//            caller_address,
-//        )
-//        .await
-//        .unwrap_or_else(|e| false);
-//        if !has_liquidity {
-//            pb.inc(1);
-//            continue;
-//        }
-//        filtered_pools.push(pool.clone());
-//        pb.inc(1);
-//    }
-//
+    //    for (_, pool) in pools.clone().iter_mut().enumerate() {
+    //        let has_liquidity = liquidity_test(
+    //            evm.clone(),
+    //            &pool.address,
+    //            required_liquidity.clone(),
+    //            caller_address,
+    //        )
+    //        .await
+    //        .unwrap_or_else(|e| false);
+    //        if !has_liquidity {
+    //            pb.inc(1);
+    //            continue;
+    //        }
+    //        filtered_pools.push(pool.clone());
+    //        pb.inc(1);
+    //    }
+    //
     //let mut pools = filtered_pools;
     //info!("amount of pools after liquidity test: {:?}", pools.len());
     let mut added = 0;
@@ -314,7 +314,7 @@ pub async fn load_uniswap_v2_pools(
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
-        .address(UNISWAP_V2_FACTORY)
+//        .address(UNISWAP_V2_FACTORY)
         .event("PairCreated(address,address,address,uint256)");
 
     let logs = provider.get_logs(&event_filter).await?;
@@ -358,7 +358,7 @@ pub async fn load_uniswap_v3_pools(
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
-        .address(UNISWAP_V3_FACTORY)
+//        .address(UNISWAP_V3_FACTORY)
         .event("PoolCreated(address,address,uint24,int24,address)");
 
     let logs = provider.get_logs(&event_filter).await?;
