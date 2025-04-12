@@ -1,3 +1,4 @@
+use super::revmInspector::{self, RevmInspector};
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
 use alloy::network::{AnyNetwork, Ethereum};
@@ -10,7 +11,9 @@ use anyhow::{anyhow, Error, Result};
 use log::info;
 use revm::db::{AlloyDB, CacheDB};
 use revm::handler::register::EvmHandler;
+use revm::inspectors::{GasInspector, NoOpInspector};
 use revm::primitives::{Bytes, HandlerCfg, Log, SpecId};
+use revm::{inspector_handle_register, ContextWithHandlerCfg};
 use revm::{
     primitives::{AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256},
     Context, Database, Evm, EvmContext, InMemoryDB,
@@ -74,7 +77,7 @@ pub struct EvmSimulator<'a> {
     pub evm: TokioMutex<
         Evm<
             'a,
-            EvmContext<CacheDB<InMemoryDB>>,
+            RevmInspector,
             CacheDB<AlloyDB<PubSubFrontend, Ethereum, Arc<RootProvider<PubSubFrontend, Ethereum>>>>,
         >,
     >,
@@ -99,24 +102,14 @@ impl<'a> EvmSimulator<'a> {
             None => PrivateKeySigner::random().address(),
         };
 
-        let alloy_db = AlloyDB::new(provider, BlockId::from(block_number)).unwrap();
+        let inspector = revmInspector::RevmInspector::new();
 
-        let empty_db = CacheDB::new(InMemoryDB::default());
-        let evm_external = EvmContext::new(empty_db);
+        let alloy_db = CacheDB::new(AlloyDB::new(provider, BlockId::from(block_number)).unwrap());
 
-        let evm_internal = EvmContext::new(CacheDB::new(alloy_db));
-
-        let context = Context::new(evm_internal, evm_external);
-
-        let handler_cfg = HandlerCfg {
-            spec_id: SpecId::LATEST,
-        };
-        let handler = EvmHandler::new(handler_cfg);
-
-        let evm = Evm::new(context, handler);
-
-        let evm = evm
-            .modify()
+        let evm = Evm::builder()
+            .with_db(alloy_db)
+            .with_external_context(inspector)
+            .append_handler_register(inspector_handle_register)
             .modify_env(|env| {
                 env.block.number = U256::from(block_number);
                 env.block.coinbase =

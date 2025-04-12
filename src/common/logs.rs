@@ -35,7 +35,7 @@ pub async fn get_logs(
 
     while let Some(res) = stream.next().await {
         let key = res.address();
-        info!("Log Pool Address: {:?}", key);   
+        //iinfo!("Log Pool Address: {:?}", key);   
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
         if let Some(event) = pairs.get(&key) {
 
@@ -45,7 +45,7 @@ pub async fn get_logs(
                 matches!(value, Event::PoolCreated(v3_pair) if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) || (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0))
                 }) {
 
-                    info!("Log Block Number: {:?}", res.block_number);
+                    //info!("Log Block Number: {:?}", res.block_number);
                     if v3_pair.token0 == v3_pair.token1 {continue}
                     
                     event_sender.send(LogEvent {
