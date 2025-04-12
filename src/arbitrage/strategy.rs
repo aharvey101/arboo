@@ -1,4 +1,6 @@
+use crate::arbitrage::simulation::{self, one_ether, simulation};
 use crate::arbitrage::simulation::{get_address, AddressType};
+use crate::common;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
@@ -12,6 +14,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::aliases::U24;
+use alloy_primitives::{Bytes, U160};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
@@ -39,17 +42,16 @@ pub async fn strategy(
             // this has to recieve the event
             Ok(message) => {
                 //debug!("Received event {:?}", message);
-
+                // we need to test the sim so we can just invoke it here and inside of it, set the
+                // reserves of the target pool to low?
                 let is_v2_to_v3 = message.pool_variant == 3;
+
                 // Calculate optimal amount
                 let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
 
+
                 let latest_block = provider
-                    .get_block_number()
-                    .await
-                    .expect("error getting block number");
-                let latest_block = provider
-                    .get_block(BlockId::from(latest_block), BlockTransactionsKind::Full)
+                    .get_block(BlockId::latest(), BlockTransactionsKind::Full)
                     .await
                     .unwrap()
                     .expect("Expected block");
@@ -78,7 +80,7 @@ pub async fn strategy(
                     message.token1,
                     simulator.clone(),
                     max_input,
-                    is_v2_to_v3,
+                    message.fee,
                     latest_block,
                 )
                 .await
@@ -107,32 +109,46 @@ pub async fn strategy(
                     optimal_result.optimal_amount, target_pool
                 );
 
-                let transaction = create_input_data(
+                simulation(
                     target_pool,
-                    message.fee,
                     message.token0,
                     message.token1,
                     optimal_result.optimal_amount,
+                    simulator.clone(),
                 )
                 .await
-                .unwrap();
+                .unwrap_or_default();
 
-                let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
-                let contract_address = Address::from_str(&contract_address).unwrap();
+                log::debug!("Time taken to run sim {:?}", time.elapsed());
+                info!("It worked?!");
 
-                let bribe = 1_000_000_000u128;
-                let max_fee_per_gas = u128::from(gas_limit);
-                info!("Max fee per gas: {:?}", max_fee_per_gas);
+                //                let transaction = create_input_data(
+                //                    target_pool,
+                //                    message.fee,
+                //                    message.token0,
+                //                    message.token1,
+                //                    optimal_result.optimal_amount,
+                //                )
+                //                .await
+                //                .unwrap();
+                //
+                //                let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
+                //                let contract_address = Address::from_str(&contract_address).unwrap();
+                //
+                //                let bribe = 1_000_000_000u128;
+                //                let max_fee_per_gas = u128::from(gas_limit);
 
-                tokio::spawn(send_transaction(
-                    contract_address,
-                    Some(block_base_fee as u128),
-                    Some(8_000_000),
-                    Some(max_fee_per_gas),
-                    Some(bribe),
-                    transaction,
-                    nonce,
-                ));
+                //info!("Max fee per gas: {:?}", max_fee_per_gas);
+
+                //                tokio::spawn(send_transaction(
+                //                    contract_address,
+                //                    Some(block_base_fee as u128),
+                //                    Some(8_000_000),
+                //                    Some(max_fee_per_gas),
+                //                    Some(bribe),
+                //                    transaction,
+                //                    nonce,
+                //                ));
             }
             Err(err) => {
                 info!("OOP")
@@ -147,12 +163,12 @@ pub struct ArbitrageResult {
     pub possible_profit: U256,
 }
 
-pub async fn find_optimal_amount_v3_to_v2<'a>(
+pub async fn find_optimal_amount_v3_to_v2(
     token_in: Address,
     token_out: Address,
-    simulator: Arc<TokioMutex<EvmSimulator<'a>>>,
+    simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
     max_input: U256,
-    is_v2_to_v3: bool,
+    fee: U24,
     latest_block: Block,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
@@ -164,13 +180,13 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
         let mid = (left + right) / U256::from(2);
 
         // Only query once per iteration with mid
-        let v3_amount_out = match get_amounts_out(
+        let v3_amount_out = match get_v3_to_v2_arbitrage_profit(
             simulator.clone(),
             mid,
             token_in,
             token_out,
+            fee,
             get_address(AddressType::V2Router),
-            is_v2_to_v3,
             latest_block.clone(),
         )
         .await
@@ -193,6 +209,7 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
             right = mid - U256::from(1);
         }
     }
+
     if best_profit == U256::ZERO {
         return Ok(ArbitrageResult {
             optimal_amount: U256::ZERO,
@@ -227,7 +244,7 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
 
     let tx = Tx {
         caller: sim.owner,
-        transact_to: get_address(AddressType::Quoter),
+        transact_to: get_address(AddressType::V2Quoter),
         data: tx_data.into(),
         value: U256::ZERO,
         gas_price: latest_gas_price,
@@ -244,31 +261,87 @@ pub async fn find_optimal_amount_v3_to_v2<'a>(
     })
 }
 
-async fn get_amounts_out(
+async fn get_v3_to_v2_arbitrage_profit(
     simulator: Arc<Mutex<EvmSimulator<'_>>>,
-    amount: U256,
+    amount_in: U256,
     token_a: Address,
     token_b: Address,
+    fee: U24,
     v2_router: Address,
-    is_v2_to_v3: bool,
     latest_block: Block,
 ) -> Result<U256> {
-    // This tests if there is a price discrepancy between v2 and v3
-
-    // NOTE: Optimizations to be had by passing these in instead of getting them every time
+    // Setup the simulation environment
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
     let mut sim = simulator.lock().await;
     let sim_owner = sim.owner;
 
+    // Set a large ETH balance for testing
     sim.set_eth_balance(
         sim_owner,
         U256::from(1000) * U256::from(10).pow(U256::from(18)),
     )
     .await;
 
-    let mut profit = U256::ZERO;
+    // Step 1: Calculate how many tokenB we get from borrowing tokenA on Uniswap V3
+    // We'll use the V3 Quoter contract to simulate this
+    alloy::sol! {
+        #[derive(Debug)]
+        function quoteExactInput(
+            bytes memory path,
+            uint256 amountIn
+        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
+    }
+    let v3_quoter_address = get_address(AddressType::V2Quoter);
 
+    // Construct the path for token swap (token_a -> token_b with fee)
+    let mut path = Vec::with_capacity(43);
+
+    path.extend_from_slice(token_a.as_slice());
+    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
+    path.extend_from_slice(token_b.as_slice());
+
+    let path = alloy::primitives::Bytes::from(path);
+
+    let tx_data = quoteExactInputCall {
+        path,
+        amountIn: amount_in,
+    };
+
+    let tx_data = tx_data.abi_encode();
+    let tx = Tx {
+        caller: sim_owner,
+        transact_to: v3_quoter_address,
+        data: tx_data.into(),
+        value: U256::ZERO,
+        gas_price: latest_gas_price,
+        gas_limit: latest_gas_limit,
+    };
+
+    let res = match sim.call(tx) {
+        Ok(res) => res,
+        Err(e) => {
+            info!("Failed addresses: {:?}, {:?}", token_a, token_b);
+            info!("Failed to call V3 quote: {:?}", e);
+            return Ok(U256::ZERO); // Return zero profit if V3 quote fails
+        }
+    };
+
+    // Extract the exact tokenB amount we'd receive from V3
+    let v3_amount_out = match decode_quote_exact_input_single_output(res.output) {
+        Ok(amount_out) => amount_out,
+        Err(e) => {
+            info!("Failed to decode V3 quote output: {:?}", e);
+            return Ok(U256::ZERO);
+        }
+    };
+
+    if v3_amount_out == U256::ZERO {
+        info!("V3 swap would result in zero tokens, no arbitrage possible");
+        return Ok(U256::ZERO);
+    }
+
+    // Step 2: Calculate how many tokenA we get back by swapping tokenB on Uniswap V2
     alloy::sol! {
         #[derive(Debug)]
         function getAmountsOut(
@@ -278,14 +351,13 @@ async fn get_amounts_out(
     };
 
     let tx_call: getAmountsOutCall = getAmountsOutCall {
-        amountIn: amount,
-        path: vec![token_a, token_b],
+        amountIn: v3_amount_out,
+        path: vec![token_b, token_a],
     };
 
     let data = tx_call.abi_encode();
-
     let tx = Tx {
-        caller: sim.owner,
+        caller: sim_owner,
         transact_to: v2_router,
         data: data.into(),
         value: U256::ZERO,
@@ -293,64 +365,93 @@ async fn get_amounts_out(
         gas_limit: latest_gas_limit,
     };
 
-    let res = sim
-        .call(tx)
-        .inspect_err(|e| info!("Failed to call v2 swap, {:?}", e))?;
-
-    let v2_amount_out = decode_uniswap_v2_quote(&res.output).expect("failed to decode output");
-
-    if v2_amount_out == U256::ZERO {
-        profit = U256::ZERO;
-    }
-    alloy::sol! {
-        #[derive(Debug)]
-        function quoteExactInput(
-            bytes memory path,
-            uint256 amountIn
-        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
-    }
-
-    let mut path = Vec::new();
-    path.extend_from_slice(token_a.as_slice());
-    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
-    path.extend_from_slice(token_b.as_slice());
-
-    let path = alloy::primitives::Bytes::from(path);
-
-    let tx_data = quoteExactInputCall {
-        path,
-        amountIn: amount,
+    let res = match sim.call(tx) {
+        Ok(res) => res,
+        Err(e) => {
+            info!("Failed to call V2 getAmountsOut: {:?}", e);
+            return Ok(U256::ZERO);
+        }
     };
 
-    let tx_data = tx_data.abi_encode();
-
-    let tx = Tx {
-        caller: sim.owner,
-        transact_to: get_address(AddressType::Quoter),
-        data: tx_data.into(),
-        value: U256::ZERO,
-        gas_price: latest_gas_price,
-        gas_limit: latest_gas_limit,
+    let v2_buy_back_amount = match decode_uniswap_v2_quote(&res.output) {
+        Ok(amount_out) => amount_out,
+        Err(e) => {
+            info!("Failed to decode V2 quote output: {}", e);
+            return Ok(U256::ZERO);
+        }
     };
 
-    let res = sim.call(tx)?;
-
-    let v3_amount_out = decode_quote_output_v3(res.output).expect("failed to decode output");
-
-    if v3_amount_out == U256::ZERO {
-        profit = U256::ZERO;
+    if v2_buy_back_amount == U256::ZERO {
+        info!("V2 swap would result in zero tokens, no arbitrage possible");
+        return Ok(U256::ZERO);
     }
-    if is_v2_to_v3 && v3_amount_out > v2_amount_out {
-        profit = v3_amount_out - v2_amount_out;
-    } else if !is_v2_to_v3 && v2_amount_out > v3_amount_out {
-        profit = v2_amount_out - v3_amount_out;
+
+    // Step 3: Check if profitable
+    if v2_buy_back_amount <= amount_in {
+        info!(
+            "Not profitable: buy back amount {} <= amount in {}",
+            v2_buy_back_amount, amount_in
+        );
+        return Ok(U256::ZERO);
     }
+
+    let profit = v2_buy_back_amount - amount_in;
+
+    // Step 4: If tokenA is not WETH, calculate how much WETH we'd get by swapping profit
+    let weth = Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+        .expect("WETH address should be valid");
+
+    if token_a != weth {
+        // Calculate WETH equivalent of profit
+        let tx_call: getAmountsOutCall = getAmountsOutCall {
+            amountIn: profit,
+            path: vec![token_a, weth],
+        };
+
+        let data = tx_call.abi_encode();
+        let tx = Tx {
+            caller: sim_owner,
+            transact_to: v2_router,
+            data: data.into(),
+            value: U256::ZERO,
+            gas_price: latest_gas_price,
+            gas_limit: latest_gas_limit,
+        };
+
+        let res = match sim.call(tx) {
+            Ok(res) => res,
+            Err(e) => {
+                info!("Failed to calculate WETH profit: {:?}", e);
+                return Ok(profit); // Return the token profit if WETH calc fails
+            }
+        };
+
+        let weth_profit = match decode_uniswap_v2_quote(&res.output) {
+            Ok(amount_out) => amount_out,
+            Err(e) => {
+                info!("Failed to decode WETH profit quote: {}", e);
+                return Ok(profit);
+            }
+        };
+        return Ok(weth_profit);
+    }
+
+    // If tokenA is already WETH, just return the profit
     Ok(profit)
 }
 
-fn decode_uniswap_v2_quote(data: &revm::primitives::Bytes) -> Result<U256, String> {
+// Helper function to decode V3 quoter output
+fn decode_quote_exact_input_single_output(output: Bytes) -> Result<U256> {
+    let output = hex::decode(output.to_string().trim_start_matches("0x"))?;
+    // Just return the first value (amountOut) which is all we need
+    let amount_out = U256::from_be_slice(&output[0..32]);
+    Ok(amount_out)
+}
+
+// Helper function to decode V2 getAmountsOut output
+fn decode_uniswap_v2_quote(output: &Bytes) -> Result<U256, String> {
     let decoded_data =
-        hex::decode(data.to_string().trim_start_matches("0x")).expect("failed to decode data");
+        hex::decode(output.to_string().trim_start_matches("0x")).expect("failed to decode data");
 
     // First 32 bytes is the offset to the array data
     let offset = U256::from_be_slice(&decoded_data[0..32]);
@@ -360,11 +461,10 @@ fn decode_uniswap_v2_quote(data: &revm::primitives::Bytes) -> Result<U256, Strin
     let array_length = U256::from_be_slice(&decoded_data[32..64]);
     assert_eq!(array_length, U256::from(2), "Expected array length 2");
 
+    // We want the second element (index 1) which is at position 96..128
     let amount_out = U256::from_be_slice(&decoded_data[96..128]);
-
     Ok(amount_out)
 }
-
 fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
     let output = hex::decode(output.to_string().trim_start_matches("0x"))?;
 
@@ -372,7 +472,7 @@ fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
 
     Ok(number)
 }
-
+//
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
