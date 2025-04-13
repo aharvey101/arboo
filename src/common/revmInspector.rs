@@ -268,26 +268,6 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
             }
         }
 
-        //  so we gotta figure out, where it fails,
-        //  probably in the second swap?
-        //  so lets log, if callInputs address is uniswapV2Router?
-        //
-        // if _inputs.bytecode_address == get_address(AddressType::V2Router) {
-        //     info!("outcome: {:?}", self.errors);
-        // }
-        //
-        // The idea here is we want to understand what is happening when we call these addresses
-        if _inputs.bytecode_address == get_address(AddressType::V3Router) {
-            info!("V3 Router call end outcome")
-        }
-        if _inputs.bytecode_address == get_address(AddressType::V2Router) {
-            info!("V3 Router call end outcome")
-        }
-        // if _inputs.bytecode_address == get_address(AddressType::V3Router) {
-        //     info!("V3 Router call end outcome")
-        // }
-
-        //info!("outcome: {:?}", outcome);
         outcome
     }
 

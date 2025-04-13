@@ -7,7 +7,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
     transports::{TransportErrorKind, TransportResult},
 };
-use alloy_primitives::aliases::U24;
+use alloy_primitives::{address, aliases::U24};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
@@ -57,15 +57,19 @@ pub async fn send_transaction(
     //NOTE:  gas limit should be the amount of gas that was simulated for hte transaction to have taken up
 
     let tx = TransactionRequest::default()
-        .with_chain_id(provider.get_chain_id().await.unwrap_or_default())
+        .with_from(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
+        .with_chain_id(1)
         .with_value(U256::ZERO)
         .with_input(input_as_bytes)
         .with_to(contract_address)
         .with_nonce(nonce)
-        .with_max_fee_per_gas(bribe.unwrap())
+        // NOTE: this should be gas price?
+        .with_max_fee_per_gas(base_fee.unwrap())
         // NOTE: This too
         .with_max_priority_fee_per_gas(bribe.unwrap())
         .with_gas_limit(gas_limit.unwrap());
+
+    info!("TX: {:?}", tx);
 
     let envelope = tx.build(&wallet).await?;
 

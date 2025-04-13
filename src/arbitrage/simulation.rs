@@ -23,8 +23,6 @@ pub async fn simulation(
     amount: U256,
     simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
 ) -> Result<U256> {
-    let instant = std::time::Instant::now();
-    log::debug!("Inside simulation");
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
     let provider: RootProvider<PubSubFrontend, Ethereum> =
         ProviderBuilder::new().network().on_ws(ws_client).await?;
@@ -89,8 +87,6 @@ pub async fn simulation(
     .await
     .unwrap();
 
-    info!("Balance of acc ? {:?}", balance);
-
     let weth_balance = check_weth_balance(
         my_wallet.address(),
         &mut *simulator.lock().await,
@@ -102,16 +98,6 @@ pub async fn simulation(
     .expect("error checking weth balance");
 
     info!("Weth Balance: {:?}", weth_balance);
-
-    // sim_swap_v2_router(
-    //     simulator.lock().await,
-    //     &latest_gas_price,
-    //     &latest_gas_limit,
-    //     token_b,
-    //     token_a,
-    // )
-    // .await
-    // .expect("error");
 
     let fee1 = alloy_primitives::aliases::U24::from(500);
 
@@ -253,7 +239,7 @@ async fn sim_swap_v2_router<'a>(
 
     // let res = evm_decoder(res.output);
 
-    info!("res {:?}", res);
+    //    info!("res {:?}", res);
 
     alloy::sol! {
         function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline)
@@ -331,7 +317,7 @@ async fn simulation_swap<'a>(
         .call(deposit_tx)
         .expect("Failed to deposit ETH");
 
-    info!("res {:?}", res);
+    //    info!("res {:?}", res);
 
     // Do approvals
     router_token_approve(
@@ -355,7 +341,7 @@ async fn simulation_swap<'a>(
     .await
     .expect("Error checking balance");
 
-    info!("weth_balance {:?}", weth_balance);
+    // info!("weth_balance {:?}", weth_balance);
 
     // Inside simulation_swap function
     alloy::sol! {
