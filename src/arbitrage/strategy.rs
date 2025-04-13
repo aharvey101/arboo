@@ -14,7 +14,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::aliases::U24;
-use alloy_primitives::{Bytes, U160};
+use alloy_primitives::{address, Bytes, U160};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
@@ -41,14 +41,11 @@ pub async fn strategy(
         match event_reciever.recv().await {
             // this has to recieve the event
             Ok(message) => {
-                //debug!("Received event {:?}", message);
-                // we need to test the sim so we can just invoke it here and inside of it, set the
                 // reserves of the target pool to low?
                 let is_v2_to_v3 = message.pool_variant == 3;
 
                 // Calculate optimal amount
                 let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
-
 
                 let latest_block = provider
                     .get_block(BlockId::latest(), BlockTransactionsKind::Full)
@@ -81,7 +78,7 @@ pub async fn strategy(
                     simulator.clone(),
                     max_input,
                     message.fee,
-                    latest_block,
+                    latest_block.clone(),
                 )
                 .await
                 {
@@ -89,8 +86,8 @@ pub async fn strategy(
                     Err(_) => continue,
                 };
 
-                if optimal_result.possible_profit < U256::from(1) {
-                    info!("No arbitrage opportunity found");
+                if optimal_result.possible_profit < U256::from(10_000_000) {
+                    // info!("No arbitrage opportunity found");
                     continue;
                 }
                 // simulate with optimal amoun in arbooo
@@ -120,38 +117,42 @@ pub async fn strategy(
                 .unwrap_or_default();
 
                 log::debug!("Time taken to run sim {:?}", time.elapsed());
-                info!("It worked?!");
 
-                //                let transaction = create_input_data(
-                //                    target_pool,
-                //                    message.fee,
-                //                    message.token0,
-                //                    message.token1,
-                //                    optimal_result.optimal_amount,
-                //                )
-                //                .await
-                //                .unwrap();
-                //
-                //                let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
-                //                let contract_address = Address::from_str(&contract_address).unwrap();
-                //
-                //                let bribe = 1_000_000_000u128;
-                //                let max_fee_per_gas = u128::from(gas_limit);
+                if provider.get_block_number().await.unwrap_or_default()
+                    > latest_block.header.number
+                {
+                    info!("Block has passed, opportunity has passed");
+                    continue;
+                }
+                let transaction = create_input_data(
+                    target_pool,
+                    message.fee,
+                    message.token0,
+                    message.token1,
+                    optimal_result.optimal_amount,
+                )
+                .await
+                .unwrap();
 
-                //info!("Max fee per gas: {:?}", max_fee_per_gas);
+                let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
+                let contract_address = Address::from_str(&contract_address).unwrap();
 
-                //                tokio::spawn(send_transaction(
-                //                    contract_address,
-                //                    Some(block_base_fee as u128),
-                //                    Some(8_000_000),
-                //                    Some(max_fee_per_gas),
-                //                    Some(bribe),
-                //                    transaction,
-                //                    nonce,
-                //                ));
+                let bribe = 800_000_000u128;
+
+                let max_fee_per_gas = u128::from(gas_limit);
+
+                tokio::spawn(send_transaction(
+                    contract_address,
+                    Some(block_base_fee as u128),
+                    Some(4_000_000),
+                    Some(bribe + 2_000_000),
+                    Some(bribe),
+                    transaction,
+                    nonce,
+                ));
             }
             Err(err) => {
-                info!("OOP")
+                info!("Error Recieving message: {err}")
             }
         }
     }
@@ -321,8 +322,7 @@ async fn get_v3_to_v2_arbitrage_profit(
     let res = match sim.call(tx) {
         Ok(res) => res,
         Err(e) => {
-            info!("Failed addresses: {:?}, {:?}", token_a, token_b);
-            info!("Failed to call V3 quote: {:?}", e);
+            // info!("Failed to call V3 quote: {:?}", e);
             return Ok(U256::ZERO); // Return zero profit if V3 quote fails
         }
     };
@@ -368,7 +368,7 @@ async fn get_v3_to_v2_arbitrage_profit(
     let res = match sim.call(tx) {
         Ok(res) => res,
         Err(e) => {
-            info!("Failed to call V2 getAmountsOut: {:?}", e);
+            //info!("Failed to call V2 getAmountsOut: {:?}", e);
             return Ok(U256::ZERO);
         }
     };
@@ -376,22 +376,22 @@ async fn get_v3_to_v2_arbitrage_profit(
     let v2_buy_back_amount = match decode_uniswap_v2_quote(&res.output) {
         Ok(amount_out) => amount_out,
         Err(e) => {
-            info!("Failed to decode V2 quote output: {}", e);
+            //info!("Failed to decode V2 quote output: {}", e);
             return Ok(U256::ZERO);
         }
     };
 
     if v2_buy_back_amount == U256::ZERO {
-        info!("V2 swap would result in zero tokens, no arbitrage possible");
+        //info!("V2 swap would result in zero tokens, no arbitrage possible");
         return Ok(U256::ZERO);
     }
 
     // Step 3: Check if profitable
     if v2_buy_back_amount <= amount_in {
-        info!(
-            "Not profitable: buy back amount {} <= amount in {}",
-            v2_buy_back_amount, amount_in
-        );
+        //info!(
+        //    "Not profitable: buy back amount {} <= amount in {}",
+        //    v2_buy_back_amount, amount_in
+        //);
         return Ok(U256::ZERO);
     }
 
