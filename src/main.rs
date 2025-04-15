@@ -135,8 +135,10 @@ async fn main() -> Result<()> {
 }
 
 // MVP What is left to do:
-// [ ] Get the evm onto it's own thread (maybe no need)
 // [x] get the logs to send to the evm and have it recieve those events
 // [x] Figure out a strategy for finding out how much to arb, ie; what amount is profitable
 // [x] Figure out how to send transactions
 // [ ] Fix up all the decoding so that we can understand the errors
+// [x] Create an Inspector
+// [ ] Make it take profitable Arbitrages :shrug:
+// [ ]
