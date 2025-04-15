@@ -1,6 +1,5 @@
-use crate::arbitrage::simulation::{self, one_ether, simulation};
+use crate::arbitrage::simulation::simulation;
 use crate::arbitrage::simulation::{get_address, AddressType};
-use crate::common;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
@@ -12,13 +11,12 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
-use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::aliases::U24;
-use alloy_primitives::{address, Bytes, U160};
+use alloy_primitives::{address, Bytes};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
-use log::{debug, info};
+use log::info;
 use revm::primitives::{Address, U256};
 use std::{
     collections::HashMap,
@@ -52,11 +50,7 @@ pub async fn strategy(
                     .await
                     .unwrap()
                     .expect("Expected block");
-                let gas_limit = latest_block.header.gas_limit;
                 let block_base_fee = latest_block.header.base_fee_per_gas.unwrap();
-
-                let private_key = var("PRIVATE_KEY").unwrap();
-                let signer = PrivateKeySigner::from_str(&private_key).unwrap();
 
                 let nonce = provider
                     .get_transaction_count(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
@@ -77,7 +71,6 @@ pub async fn strategy(
                     message.token1,
                     simulator.clone(),
                     max_input,
-                    message.fee,
                     latest_block.clone(),
                 )
                 .await
@@ -165,7 +158,6 @@ pub async fn find_optimal_amount_v3_to_v2(
     token_out: Address,
     simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
     max_input: U256,
-    fee: U24,
     latest_block: Block,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
@@ -182,7 +174,6 @@ pub async fn find_optimal_amount_v3_to_v2(
             mid,
             token_in,
             token_out,
-            fee,
             get_address(AddressType::V2Router),
             latest_block.clone(),
         )
@@ -263,7 +254,6 @@ async fn get_v3_to_v2_arbitrage_profit(
     amount_in: U256,
     token_a: Address,
     token_b: Address,
-    fee: U24,
     v2_router: Address,
     latest_block: Block,
 ) -> Result<U256> {

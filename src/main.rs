@@ -11,7 +11,7 @@ use arbooo::common::pools;
 use arbooo::common::{
     logs::LogEvent,
     pairs::{Event, V2PoolCreated, V3PoolCreated},
-    revm::{EvmSimulator, Tx},
+    revm::EvmSimulator,
 };
 use dotenv::dotenv;
 use dotenv::var;
@@ -53,9 +53,9 @@ async fn main() -> Result<()> {
 
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
     let path = Path::new("cache/.cached-pools.csv");
-    let file = File::open(&path)?;
+    let file = File::open(path)?;
     let reader = io::BufReader::new(file);
-    // id,address,version,token0,token1,fee,block_number,timestamp
+    // id,address,version,token0,oken1,fee,block_number,timestamp
     for line in reader.lines().skip(1) {
         // Skip the header line
         let line = line?;

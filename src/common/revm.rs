@@ -10,18 +10,15 @@ use alloy_sol_types::SolCall;
 use anyhow::{anyhow, Error, Result};
 use log::info;
 use revm::db::{AlloyDB, CacheDB};
-use revm::handler::register::EvmHandler;
-use revm::inspectors::{GasInspector, NoOpInspector};
-use revm::primitives::{Bytes, HandlerCfg, Log, SpecId};
-use revm::{inspector_handle_register, ContextWithHandlerCfg};
+use revm::inspector_handle_register;
+use revm::primitives::{Bytes, Log};
 use revm::{
     primitives::{AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256},
-    Context, Database, Evm, EvmContext, InMemoryDB,
+    Database, Evm,
 };
-use std::io::Read;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::{Mutex as TokioMutex, MutexGuard as TokioMutexGuard};
+use tokio::sync::Mutex as TokioMutex;
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
@@ -46,10 +43,7 @@ pub struct Tx {
 
 impl Tx {
     pub fn from(tx: VictimTx) -> Self {
-        let gas_limit = match tx.gas_limit {
-            Some(gas_limit) => gas_limit,
-            None => 5000000,
-        };
+        let gas_limit = tx.gas_limit.unwrap_or(5000000);
         Self {
             caller: tx.from,
             transact_to: tx.to,
@@ -167,19 +161,18 @@ impl<'a> EvmSimulator<'a> {
             evm.context.evm.env.tx.gas_price = tx.gas_price;
             evm.context.evm.env.tx.gas_limit = tx.gas_limit;
 
-            let result: revm::primitives::ExecutionResult;
-
-            if commit {
-                result = match evm.transact_commit() {
+            let result = match commit {
+                true => match evm.transact_commit() {
                     Ok(result) => result,
                     Err(e) => return Err(anyhow!("EVM call failed: {:?}", e)),
-                };
-            } else {
-                let ref_tx = evm
-                    .transact()
-                    .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
-                result = ref_tx.result;
-            }
+                },
+                false => {
+                    let ref_tx = evm
+                        .transact()
+                        .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
+                    ref_tx.result
+                }
+            };
 
             let output = match result {
                 ExecutionResult::Success {
@@ -255,9 +248,9 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub async fn set_eth_balance(&mut self, target: Address, amount: U256) {
-        let user_balance = amount.into();
+        let user_balance = amount;
         let user_info = AccountInfo::new(user_balance, 0, B256::ZERO, Bytecode::default());
-        self.insert_account_info(target.into(), user_info).await;
+        self.insert_account_info(target, user_info).await;
     }
 
     pub async fn get_eth_balance(&mut self, address: Address) -> U256 {
@@ -381,14 +374,6 @@ impl<'a> EvmSimulator<'a> {
 
     pub async fn load_pool_state(&self, pool_address: Address) -> Result<(), Error> {
         let mut evm = self.evm.lock().await;
-
-        // Load the basic account info (code, balance, etc)
-        let account = evm
-            .context
-            .evm
-            .db
-            .basic(pool_address)?
-            .ok_or_else(|| anyhow!("Pool not found"))?;
 
         // Get all storage slots from the provider
         // You might want to batch this or load specific slots based on the pool type (V2 or V3)
@@ -582,25 +567,4 @@ fn get_balance_slot(address: Address) -> U256 {
     let mut bytes = [0u8; 32];
     bytes[12..32].copy_from_slice(address.as_slice());
     U256::from_be_bytes(bytes)
-}
-
-fn evm_decoder(error_data: Bytes) -> Result<String> {
-    // The next 32 bytes is the offset to where the string data starts
-    // The next 32 bytes after that is the length of the string
-    // Then comes the actual string data
-    let string_hex = &error_data[64..]; // Skip the first two 32-byte chunks
-
-    // Convert hex to string
-    let decoded_string = String::from_utf8(
-        hex::decode(string_hex)
-            .expect("Decoding failed")
-            .into_iter()
-            .filter(|&x| x != 0) // Remove null terminators
-            .collect::<Vec<u8>>(),
-    )
-    .expect("Invalid UTF-8");
-
-    println!("Decoded error message: {}", decoded_string);
-    Ok(decoded_string)
-    // Output: "UniswapV2Router: INVALID_PATH"
 }

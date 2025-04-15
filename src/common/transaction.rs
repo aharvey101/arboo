@@ -1,11 +1,9 @@
 use alloy::{
-    hex::encode_prefixed,
-    network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder},
-    primitives::{Address, TxKind, U256},
-    providers::{PendingTransactionBuilder, Provider, ProviderBuilder, SendableTx},
-    rpc::types::{TransactionInput, TransactionRequest},
+    network::{EthereumWallet, TransactionBuilder},
+    primitives::{Address, U256},
+    providers::{Provider, ProviderBuilder},
+    rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
-    transports::{TransportErrorKind, TransportResult},
 };
 use alloy_primitives::{address, aliases::U24};
 use alloy_sol_types::SolCall;
@@ -13,7 +11,7 @@ use anyhow::Result;
 use dotenv::var;
 use log::info;
 use reqwest::Url;
-use std::{str::FromStr, time::Duration};
+use std::str::FromStr;
 
 pub async fn send_transaction(
     contract_address: Address,

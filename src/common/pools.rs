@@ -1,13 +1,4 @@
-use crate::{
-    arbitrage::simulation::{one_ether, one_hundred_ether, one_thousand_eth},
-    common::revm::EvmSimulator,
-};
-use alloy::network::Ethereum;
-use alloy_sol_types::SolCall;
-use futures::StreamExt;
-use num_bigint::BigInt;
 use std::{
-    collections::HashMap,
     fs::{create_dir_all, OpenOptions},
     str::FromStr,
     sync::Arc,
@@ -15,15 +6,10 @@ use std::{
 use {
     ::log::info,
     alloy::{
-        eips::BlockId,
-        primitives::{Address, FixedBytes, B256, U256, U64},
+        primitives::{Address, FixedBytes, B256, U256},
         providers::{Provider, ProviderBuilder, RootProvider},
         pubsub::PubSubFrontend,
-        rpc::{
-            client::WsConnect,
-            types::{eth::Filter, BlockTransactionsKind},
-        },
-        signers::local::PrivateKeySigner,
+        rpc::{client::WsConnect, types::eth::Filter},
     },
     alloy_sol_types::SolValue,
     anyhow::Result,
@@ -222,17 +208,10 @@ pub async fn load_all_pools(
     );
 
     for range in block_range {
-        let mut requests = Vec::new();
-        requests.push(tokio::task::spawn(load_uniswap_v2_pools(
-            provider.clone(),
-            range.0,
-            range.1,
-        )));
-        requests.push(tokio::task::spawn(load_uniswap_v3_pools(
-            provider.clone(),
-            range.0,
-            range.1,
-        )));
+        let requests = vec![
+            tokio::task::spawn(load_uniswap_v2_pools(provider.clone(), range.0, range.1)),
+            tokio::task::spawn(load_uniswap_v3_pools(provider.clone(), range.0, range.1)),
+        ];
 
         let results = futures::future::join_all(requests).await;
         results.into_iter().for_each(|result| {
@@ -314,7 +293,7 @@ pub async fn load_uniswap_v2_pools(
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
-//        .address(UNISWAP_V2_FACTORY)
+        //        .address(UNISWAP_V2_FACTORY)
         .event("PairCreated(address,address,address,uint256)");
 
     let logs = provider.get_logs(&event_filter).await?;
@@ -322,13 +301,11 @@ pub async fn load_uniswap_v2_pools(
     for log in logs {
         let block_number = log.block_number.unwrap_or_default();
 
-        let topic0 = FixedBytes::from(log.topics()[1]);
+        let topic0 = log.topics()[1];
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
         let token0 = Address::from(topic0);
 
-        let token1 = Address::from(
-            FixedBytes::<20>::try_from(&FixedBytes::from(log.topics()[2])[12..32]).unwrap(),
-        );
+        let token1 = Address::from(FixedBytes::<20>::try_from(&log.topics()[2][12..32]).unwrap());
         let log_data = log.inner.data.data.to_vec();
         let log_data = log_data.as_slice();
         let decoded: (Address, B256) = SolValue::abi_decode(log_data, false).unwrap();
@@ -358,7 +335,7 @@ pub async fn load_uniswap_v3_pools(
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
-//        .address(UNISWAP_V3_FACTORY)
+        //        .address(UNISWAP_V3_FACTORY)
         .event("PoolCreated(address,address,uint24,int24,address)");
 
     let logs = provider.get_logs(&event_filter).await?;
@@ -380,7 +357,7 @@ pub async fn load_uniswap_v3_pools(
         // Decode the log data
         let log_data = &log.inner.data.data;
         let decoded: (B256, B256) = SolValue::abi_decode(log_data, false).unwrap();
-        let pool_address = FixedBytes::<32>::try_from(decoded.1).unwrap();
+        let pool_address = decoded.1;
         let pool_address = FixedBytes::<20>::try_from(&pool_address[12..32]).unwrap();
         let pool_address = Address::from(pool_address);
         let fee = u32::from_str_radix(decoded.0.to_string().as_str().trim_start_matches("0x"), 16)
@@ -402,9 +379,6 @@ pub async fn load_uniswap_v3_pools(
     Ok(pools)
 }
 
-fn weth_address() -> String {
-    String::from("0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
-}
 alloy::sol! {
     interface IV3Pool {
         function liquidity() external view returns (uint128);
@@ -424,118 +398,4 @@ pub struct PoolLiquidity {
     pub liquidity: U256,
     pub sqrt_price_x96: U256,
     pub tick: i32,
-}
-
-// Check if the contract that emitted the log is a Uniswap V2 pool
-async fn is_v2_pool(address: Address, provider: Arc<RootProvider<PubSubFrontend>>) -> Result<bool> {
-    // Get the contract bytecode
-    let code = provider
-        .get_code_at(address)
-        .await
-        .unwrap_or(Default::default())
-        .to_string();
-
-    // You can compare against known V2 pool creation code hash
-    // This is the init code hash for Uniswap V2 pairs
-    let v2_init_code_hash = "96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f";
-
-    // Or check specific bytecode patterns unique to V2 pools
-    let is_v2 = code.contains(v2_init_code_hash);
-
-    Ok(is_v2)
-}
-
-// The is_v3_pool function uses an incorrect/incomplete hash for checking V3 pools
-// Should use full bytecode verification or a more reliable method
-async fn is_v3_pool(
-    address: Address,
-    provider: &Arc<RootProvider<PubSubFrontend>>,
-) -> Result<bool> {
-    let code = provider.get_code_at(address).await.unwrap().to_string();
-
-    // Use full bytecode verification instead of partial hash
-    let v3_init_code_hash = "e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54";
-    let is_v3 = code.contains(v3_init_code_hash);
-    Ok(is_v3)
-}
-
-// functon that takes in a reference to the evm and reference to a pool address, and an amount of required liquidity
-// returns a boolean of if the contract has the required liquidity or not
-async fn liquidity_test(
-    evm: Arc<tokio::sync::Mutex<EvmSimulator<'static>>>,
-    pool_address: &Address,
-    required_liquidity: BigInt,
-    caller_address: Address,
-) -> Result<bool, anyhow::Error> {
-    // construct sol call for liquidity:
-    evm.lock()
-        .await
-        .set_eth_balance(
-            caller_address,
-            U256::from(1000) * U256::from(10).pow(U256::from(18)),
-        )
-        .await;
-    alloy::sol! {
-       function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    }
-
-    let params = getReservesCall {}.abi_encode();
-
-    // do call to evm?
-
-    let tx = crate::common::revm::Tx {
-        caller: caller_address,
-        transact_to: *pool_address,
-        value: U256::ZERO,
-        gas_price: U256::from(20_000),
-        gas_limit: 120_000_000u64,
-        data: params.into(),
-    };
-
-    let res = evm.lock().await.call(tx)?;
-
-    let output = decode_reserves_call(&res.output).unwrap_or_else(|e| vec![U256::ZERO, U256::ZERO]);
-
-    let output1 = BigInt::from_signed_bytes_be(&output[0].to_be_bytes_vec());
-
-    let output2 = BigInt::from_signed_bytes_be(&output[1].to_be_bytes_vec());
-
-    let liquidity = BigInt::from(output1 * output2);
-    let liquidity = liquidity.sqrt();
-
-    if liquidity >= BigInt::from(required_liquidity) {
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-// function that creates an evm
-async fn create_evm(
-    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
-) -> (EvmSimulator<'static>, Address) {
-    let latest_block_number = provider.get_block_number().await.unwrap();
-
-    let contract_wallet = PrivateKeySigner::random();
-    let contract_wallet_address = contract_wallet.address();
-
-    let evm = EvmSimulator::new(
-        provider.clone(),
-        Some(contract_wallet_address),
-        U64::from(latest_block_number),
-    );
-    (evm, contract_wallet_address)
-}
-
-fn decode_reserves_call(data: &revm::primitives::Bytes) -> Result<Vec<U256>, String> {
-    let decoded_data = hex::decode(data.to_string().trim_start_matches("0x"))
-        .map_err(|e| format!("Failed to decode data: {}", e))?;
-    if decoded_data.len() != 96 {
-        return Err("Invalid data length".to_string());
-    }
-    // Next 32 bytes contain reserves 0
-    let reserves_one = U256::from_be_slice(&decoded_data[0..32]);
-    // Next 32 btes contain reserves 1
-    let reserves_two = U256::from_be_slice(&decoded_data[32..64]);
-
-    Ok(vec![reserves_one, reserves_two])
 }
