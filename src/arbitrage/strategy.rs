@@ -59,7 +59,7 @@ pub async fn strategy(
                 let signer = PrivateKeySigner::from_str(&private_key).unwrap();
 
                 let nonce = provider
-                    .get_transaction_count(signer.address())
+                    .get_transaction_count(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
                     .await
                     .expect("error getting nonce");
 
@@ -86,7 +86,7 @@ pub async fn strategy(
                     Err(_) => continue,
                 };
 
-                if optimal_result.possible_profit < U256::from(10_000_000) {
+                if optimal_result.possible_profit < U256::from(100_000_000_000u128) {
                     // info!("No arbitrage opportunity found");
                     continue;
                 }
@@ -137,16 +137,12 @@ pub async fn strategy(
                 let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
                 let contract_address = Address::from_str(&contract_address).unwrap();
 
-                let bribe = 800_000_000u128;
-
-                let max_fee_per_gas = u128::from(gas_limit);
-
                 tokio::spawn(send_transaction(
                     contract_address,
                     Some(block_base_fee as u128),
-                    Some(4_000_000),
-                    Some(bribe + 2_000_000),
-                    Some(bribe),
+                    Some(1_500_000),
+                    Some(block_base_fee as u128),
+                    Some(2_000_000),
                     transaction,
                     nonce,
                 ));
