@@ -1,5 +1,4 @@
 use super::pairs::Event;
-use crate::arbitrage::simulation::{get_address, AddressType};
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::Address;
 use alloy::providers::{Provider, RootProvider};

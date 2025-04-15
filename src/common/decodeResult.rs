@@ -129,7 +129,6 @@ fn decode_string_error(data: Vec<u8>) -> DecodedEVMRevert {
 
     // Ensure we have enough data for the string
     let expected_size = 4 + 32 + 32 + length;
-    let padded_size = expected_size + (32 - (expected_size % 32)) % 32;
     if data.len() < expected_size {
         return DecodedEVMRevert {
             selector,
@@ -186,8 +185,9 @@ fn u256_to_u64(bytes: &[u8]) -> u64 {
     let mut result = 0u64;
     let start = bytes.len().saturating_sub(8);
 
-    for (i, byte) in bytes[start..].iter().enumerate() {
-        result = result << 8 | (*byte as u64);
+    let tmp = bytes[start..].iter().enumerate();
+    for (_, byte) in tmp {
+        result = (result << 8) | (*byte as u64);
     }
 
     result

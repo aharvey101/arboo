@@ -2,23 +2,15 @@ use alloy_primitives::Address;
 use log::info;
 use revm::interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs, InstructionResult,
-    Interpreter, SuccessOrHalt,
+    Interpreter,
 };
 use revm::primitives::{Bytes, Log, B256, U256};
 use revm::Database;
 use revm::EvmContext;
 use std::collections::HashMap;
-use std::ops::Add;
-
-use crate::arbitrage::simulation::{get_address, AddressType};
 
 /// A comprehensive REVM Inspector that tracks:
-/// - Gas usage
-/// - Storage access
-/// - Contract calls/creates
-/// - Log events
-/// - Errors
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RevmInspector {
     /// Track the call stack
     pub calls: Vec<CallInfo>,
@@ -179,10 +171,6 @@ impl RevmInspector {
 }
 
 impl<DB: Database> revm::Inspector<DB> for RevmInspector {
-    fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-        // Record the current opcode
-    }
-
     //
 
     fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
