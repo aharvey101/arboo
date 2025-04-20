@@ -5,9 +5,9 @@ libs = ["lib"]
 # solc_version = "0.8.24"
 # auto_detect_solc = false
 remappings = [
-    "@uniswap=lib",
-    "@openzeppelin/contracts/token/ERC20=lib/openzeppelin-contracts/contracts/interfaces/",
+  "@uniswap=lib",
+  "aave-v3-core/=lib/aave-v3-core/",
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
 ]
-[profile]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

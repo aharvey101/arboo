@@ -34,10 +34,16 @@ pub async fn get_logs(
 
     while let Some(res) = stream.next().await {
         let key = res.address();
+
+        // if the address is one of the usd eth pool contracts (univ2, univ3, univ4, aave, curve, balancer), we want to check for an arb transaction
+        // across all of the contracts, at first we can just check with one token, ie; (usdc / eth)
+        // across all contracts, but then after that we need to do all usd tokens
+        // 
+
+
         //iinfo!("Log Pool Address: {:?}", key);   
         // The strategy needs both the log pool address and the corresponding other v pool address, they are in hashmap
         if let Some(event) = pairs.get(&key) {
-
             match event {
             Event::PairCreated(pair) => {
                 if let Some(Event::PoolCreated(v3_pair)) = pairs.values().find(|value| {

@@ -142,3 +142,10 @@ async fn main() -> Result<()> {
 // [x] Create an Inspector
 // [ ] Make it take profitable Arbitrages :shrug:
 // [ ]
+//
+//
+// USD / ETH Arbitrages:
+// [ ] - Smart contract (probably a lot of work here)
+// [ ] - Strategy (ie; see if it's profitable)
+// [ ] - Simulatotion (simulate inputs with apparent profitable amount and the smart contract)
+// [ ] -

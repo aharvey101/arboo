@@ -264,7 +264,7 @@ impl<'a> EvmSimulator<'a> {
             .balance
     }
 
-    pub async fn load_account(&mut self, address: Address) -> () {
+    pub async fn load_account(&mut self, address: Address) {
         let mut evm = self.evm.lock().await;
         evm.context.evm.db.load_account(address).unwrap();
     }

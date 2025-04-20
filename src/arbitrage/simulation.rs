@@ -137,7 +137,7 @@ pub async fn simulation(
     )
     .await
     .expect("Error checking weth balance");
-
+    info!("Balance: {balance}");
     Ok(balance)
 }
 
