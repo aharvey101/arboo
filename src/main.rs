@@ -1,13 +1,19 @@
+use alloy::eips::BlockId;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::{
     network::Ethereum, primitives::U64, pubsub::PubSubFrontend, rpc::client::WsConnect,
     signers::local::PrivateKeySigner,
 };
+use alloy_primitives::aliases::U24;
+use alloy_primitives::{address, U160, U256};
+use alloy_sol_types::SolCall;
 use anyhow::Result;
+use arbooo::arbitrage::simulation::{self, get_address, one_thousand_eth, AddressType};
 use arbooo::arbitrage::strategy::strategy;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
+use arbooo::common::revm::Tx;
 use arbooo::common::{
     logs::LogEvent,
     pairs::{Event, V2PoolCreated, V3PoolCreated},
@@ -29,7 +35,7 @@ use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv()?;
+    let dotenv = dotenv()?;
     logger::setup_logger();
     info!("Logger setup");
     let ws_url = var::<&str>("WS_URL").unwrap();
@@ -40,7 +46,7 @@ async fn main() -> Result<()> {
 
     if !Path::new("cache/.cached-pools.csv").try_exists()? {
         info!("Cache doesn't exist, crawling blocks for pools");
-        pools::load_all_pools(ws_url, 10_000_000, 50_000)
+        pools::load_all_pools(ws_url, 100_000, 50_000)
             .await
             .unwrap();
     }

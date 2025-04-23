@@ -333,3 +333,128 @@ async fn liquidity_test(
     }
     Ok(false)
 }
+//    let latest_block_number = provider.get_block_number().await?;
+//    let block_id = BlockId::from_str(latest_block_number.to_string().as_str()).unwrap();
+//    let latest_block = provider
+//        .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
+//        .await?
+//        .expect("Expected block");
+//
+//    let latest_gas_limit = latest_block.header.gas_limit;
+//    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+//    let my_wallet = PrivateKeySigner::random();
+//    // set initial eth value;
+//    let initial_eth_balance = U256::from(99_000) * U256::from(10).pow(U256::from(18));
+//
+//    simulator
+//        .lock()
+//        .await
+//        .set_eth_balance(my_wallet.address(), initial_eth_balance)
+//        .await;
+//    alloy::sol! {
+//        function swapEthForWeth(
+//            address to,
+//            uint256 deadline
+//        ) external payable;
+//    };
+//
+//    let function_call = swapEthForWethCall {
+//        to: my_wallet.address(),
+//        deadline: U256::from(9999999999_u64),
+//    };
+//
+//    let function_call_data = function_call.abi_encode();
+//
+//    let new_tx = Tx {
+//        caller: my_wallet.address(),
+//        transact_to: get_address(AddressType::Weth),
+//        data: function_call_data.into(),
+//        value: one_thousand_eth(),
+//        gas_limit: latest_gas_limit,
+//        gas_price: latest_gas_price,
+//    };
+//
+//    simulator.lock().await.call(new_tx)?;
+//
+//    alloy::sol! {
+//        function approve(address spender, uint256 amount) external returns (bool);
+//    }
+//    let approve_data = approveCall {
+//        spender: get_address(AddressType::V3Router),
+//        amount: U256::MAX, // Infinite approval, you can set a specific amount instead
+//    }
+//    .abi_encode();
+//
+//    let approve_tx = Tx {
+//        caller: my_wallet.address(),
+//        transact_to: get_address(AddressType::Weth),
+//        data: approve_data.into(),
+//        value: U256::ZERO,
+//        gas_limit: latest_gas_limit,
+//        gas_price: latest_gas_price,
+//    };
+//
+//    simulator.lock().await.call(approve_tx)?;
+//
+//    alloy::sol! {
+//        interface ISwapRouter {
+//              struct ExactInputSingleParams {
+//                address tokenIn;
+//                address tokenOut;
+//                uint24 fee;
+//                address recipient;
+//                uint256 amountIn;
+//                uint256 amountOutMinimum;
+//                uint160 sqrtPriceLimitX96;
+//        }
+//       function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+//    }
+//    }
+//
+//    let function_params = ISwapRouter::ExactInputSingleParams {
+//        tokenIn: address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+//        tokenOut: address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
+//        fee: U24::from(3000),
+//        recipient: my_wallet.address(),
+//        amountIn: one_thousand_eth(),
+//        amountOutMinimum: U256::ZERO,
+//        sqrtPriceLimitX96: U160::ZERO,
+//    };
+//
+//    let function_call = ISwapRouter::exactInputSingleCall {
+//        params: function_params,
+//    };
+//    let function_call_data = function_call.abi_encode();
+//
+//    let new_tx = Tx {
+//        caller: my_wallet.address(),
+//        transact_to: get_address(AddressType::V3Router),
+//        data: function_call_data.into(),
+//        value: U256::ZERO,
+//        gas_limit: latest_gas_limit * 2,
+//        gas_price: latest_gas_price,
+//    };
+//
+//    match simulator.lock().await.call(new_tx) {
+//        Ok(res) => {
+//            info!("Res from mock call, {:?}", res);
+//        }
+//        Err(err) => info!("Error doing swap of weth to Link {:?},", err),
+//    };
+//
+//    match simulation(
+//        address!("a6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8"),
+//        address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
+//        address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+//        U256::from(999) * U256::from(10).pow(U256::from(18)),
+//        simulator.clone(),
+//    )
+//    .await
+//    {
+//        Ok(res) => {
+//            info!("balance of sim eth wallet after sim {res}");
+//        }
+//        Err(err) => {
+//            info!("Simulation Errors: {err}");
+//        }
+//    }

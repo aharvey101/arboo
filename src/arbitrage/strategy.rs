@@ -12,7 +12,7 @@ use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy_primitives::aliases::U24;
-use alloy_primitives::{address, Bytes};
+use alloy_primitives::{address, Bytes, U160};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
@@ -37,11 +37,10 @@ pub async fn strategy(
     let mut event_reciever = sender.subscribe();
     loop {
         match event_reciever.recv().await {
-            // this has to recieve the event
             Ok(message) => {
                 // reserves of the target pool to low?
                 let is_v2_to_v3 = message.pool_variant == 3;
-
+                log::debug!("Message: {:?}", message);
                 // Calculate optimal amount
                 let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
 
@@ -49,13 +48,14 @@ pub async fn strategy(
                     .get_block(BlockId::latest(), BlockTransactionsKind::Full)
                     .await
                     .unwrap()
-                    .expect("Expected block");
+                    .unwrap();
+
                 let block_base_fee = latest_block.header.base_fee_per_gas.unwrap();
 
                 let nonce = provider
                     .get_transaction_count(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
                     .await
-                    .expect("error getting nonce");
+                    .inspect(|e| info!("error getting nonce, {:?}", e))?;
 
                 load_specific_pools(
                     simulator.clone(),
@@ -79,8 +79,8 @@ pub async fn strategy(
                     Err(_) => continue,
                 };
 
-                if optimal_result.possible_profit < U256::from(100_000_000_000u128) {
-                    // info!("No arbitrage opportunity found");
+                if optimal_result.possible_profit < U256::from(100_000u128) {
+                    info!("No arbitrage opportunity found");
                     continue;
                 }
                 // simulate with optimal amoun in arbooo
@@ -89,7 +89,7 @@ pub async fn strategy(
                 } else {
                     message.corresponding_pool_address
                 };
-                info!(
+                log::debug!(
                     "Tike taken to calculate optimal amount: {:?}",
                     time.elapsed()
                 );
@@ -99,7 +99,7 @@ pub async fn strategy(
                     optimal_result.optimal_amount, target_pool
                 );
 
-                simulation(
+                match simulation(
                     target_pool,
                     message.token0,
                     message.token1,
@@ -107,7 +107,18 @@ pub async fn strategy(
                     simulator.clone(),
                 )
                 .await
-                .unwrap_or_default();
+                {
+                    Ok(res) => {
+                        info!("balance of sim eth wallet after sim {res}");
+                        if res < U256::from(10000000000000000u128) {
+                            info!(" Profit less than 0.1 eth")
+                        }
+                    }
+                    Err(err) => {
+                        info!("Simulation Errors: {err}");
+                        continue;
+                    }
+                }
 
                 log::debug!("Time taken to run sim {:?}", time.elapsed());
 
@@ -117,6 +128,7 @@ pub async fn strategy(
                     info!("Block has passed, opportunity has passed");
                     continue;
                 }
+
                 let transaction = create_input_data(
                     target_pool,
                     message.fee,
@@ -125,10 +137,10 @@ pub async fn strategy(
                     optimal_result.optimal_amount,
                 )
                 .await
-                .unwrap();
+                .inspect(|e| info!("Error creating input data: {:?}", e))?;
 
-                let contract_address = var::<&str>("CONTRACT_ADDRESS").unwrap();
-                let contract_address = Address::from_str(&contract_address).unwrap();
+                let contract_address = var::<&str>("CONTRACT_ADDRESS")?;
+                let contract_address = Address::from_str(&contract_address)?;
 
                 tokio::spawn(send_transaction(
                     contract_address,
@@ -384,8 +396,7 @@ async fn get_v3_to_v2_arbitrage_profit(
     let profit = v2_buy_back_amount - amount_in;
 
     // Step 4: If tokenA is not WETH, calculate how much WETH we'd get by swapping profit
-    let weth = Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-        .expect("WETH address should be valid");
+    let weth = get_address(AddressType::Weth);
 
     if token_a != weth {
         // Calculate WETH equivalent of profit
@@ -458,114 +469,6 @@ fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
 
     Ok(number)
 }
-//
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use mockall::*;
-
-//     mock! {
-//         SimulatorWrapper {
-//             async fn get_amounts_out(
-//                 &self,
-//                 amount: U256,
-//                 token_in: Address,
-//                 token_out: Address,
-//                 v2_router: Address,
-//                 is_v2_to_v3: bool,
-//             ) -> Result<U256>;
-//         }
-//     }
-
-//     #[tokio::test]
-//     async fn test_find_optimal_amount() {
-//         let mut mock_sim = MockSimulatorWrapper::new();
-
-//         // Mock sequence of get_amounts_out calls
-//         mock_sim
-//             .expect_get_amounts_out()
-//             .times(2) // We expect 2 calls based on binary search
-//             .returning(|amount, _, _, _, _| {
-//                 // Simulate different profits for different amounts
-//                 if amount < U256::from(500) * U256::from(10).pow(U256::from(18)) {
-//                     Ok(U256::from(100) * U256::from(10).pow(U256::from(18)))
-//                 } else {
-//                     Ok(U256::from(50) * U256::from(10).pow(U256::from(18)))
-//                 }
-//             });
-
-//         let simulator = Arc::new(TokioMutex::new(mock_sim));
-
-//         let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
-//         let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
-//         let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
-
-//         let result = find_optimal_amount_v3_to_v2(
-//             token_in,
-//             token_out,
-//             simulator,
-//             max_input,
-//             true
-//         ).await.unwrap();
-
-//         assert!(result.optimal_amount > U256::ZERO);
-//         assert!(result.expected_profit > U256::ZERO);
-//         assert!(result.optimal_amount <= max_input);
-//     }
-
-//     #[tokio::test]
-//     async fn test_find_optimal_amount_zero_profit() {
-//         let mut mock_sim = MockSimulatorWrapper::new();
-
-//         mock_sim
-//             .expect_get_amounts_out()
-//             .returning(|_, _, _, _, _| Ok(U256::ZERO));
-
-//         let simulator = Arc::new(TokioMutex::new(mock_sim));
-
-//         let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
-//         let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
-//         let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
-
-//         let result = find_optimal_amount_v3_to_v2(
-//             token_in,
-//             token_out,
-//             simulator,
-//             max_input,
-//             true
-//         ).await.unwrap();
-
-//         assert_eq!(result.optimal_amount, U256::ZERO);
-//         assert_eq!(result.expected_profit, U256::ZERO);
-//     }
-
-//     #[tokio::test]
-//     async fn test_find_optimal_amount_error() {
-//         let mut mock_sim = MockSimulatorWrapper::new();
-
-//         mock_sim
-//             .expect_get_amounts_out()
-//             .returning(|_, _, _, _, _| Err(anyhow!("Simulation failed")));
-
-//         let simulator = Arc::new(TokioMutex::new(mock_sim));
-
-//         let token_in = Address::from_str("0x1000000000000000000000000000000000000000").unwrap();
-//         let token_out = Address::from_str("0x2000000000000000000000000000000000000000").unwrap();
-//         let max_input = U256::from(1000) * U256::from(10).pow(U256::from(18));
-
-//         let result = find_optimal_amount_v3_to_v2(
-//             token_in,
-//             token_out,
-//             simulator,
-//             max_input,
-//             true
-//         ).await.unwrap();
-
-//         assert_eq!(result.optimal_amount, U256::ZERO);
-//         assert_eq!(result.expected_profit, U256::ZERO);
-//     }
-// }
-//
 
 async fn load_specific_pools<'a>(
     simulator: Arc<Mutex<EvmSimulator<'_>>>,
@@ -585,27 +488,27 @@ async fn load_specific_pools<'a>(
         let fields: Vec<&str> = line.split(',').collect();
         match fields[2] {
             "2" => {
-                let pair_address = Address::from_str(fields[1]).expect("error");
+                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
                 pools_map.insert(
                     pair_address,
                     Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).expect("error"),
-                        token0: Address::from_str(fields[3]).expect("error"),
-                        token1: Address::from_str(fields[4]).expect("error"),
-                        fee: fields[5].parse::<u32>().expect("error"),
-                        block_number: fields[6].parse::<u64>().expect("error"),
+                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
+                        token0: Address::from_str(fields[3]).unwrap_or_default(),
+                        token1: Address::from_str(fields[4]).unwrap_or_default(),
+                        fee: fields[5].parse::<u32>().unwrap_or_default(),
+                        block_number: fields[6].parse::<u64>().unwrap_or_default(),
                     }),
                 );
             }
             "3" => {
-                let pair_address = Address::from_str(fields[1]).expect("error");
+                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
                 pools_map.insert(
                     pair_address,
                     Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).expect("error"),
-                        token0: Address::from_str(fields[3]).expect("error"),
-                        token1: Address::from_str(fields[4]).expect("error"),
-                        fee: fields[5].parse::<u32>().expect("error"),
+                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
+                        token0: Address::from_str(fields[3]).unwrap_or_default(),
+                        token1: Address::from_str(fields[4]).unwrap_or_default(),
+                        fee: fields[5].parse::<u32>().unwrap_or_default(),
                         tick_spacing: 0i32,
                     }),
                 );
@@ -663,27 +566,27 @@ async fn load_pools<'a>(simulator: Arc<Mutex<EvmSimulator<'a>>>) {
         let fields: Vec<&str> = line.split(',').collect();
         match fields[2] {
             "2" => {
-                let pair_address = Address::from_str(fields[1]).expect("error");
+                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
                 pools_map.insert(
                     pair_address,
                     Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).expect("error"),
-                        token0: Address::from_str(fields[3]).expect("error"),
-                        token1: Address::from_str(fields[4]).expect("error"),
-                        fee: fields[5].parse::<u32>().expect("error"),
-                        block_number: fields[6].parse::<u64>().expect("error"),
+                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
+                        token0: Address::from_str(fields[3]).unwrap_or_default(),
+                        token1: Address::from_str(fields[4]).unwrap_or_default(),
+                        fee: fields[5].parse::<u32>().unwrap_or_default(),
+                        block_number: fields[6].parse::<u64>().unwrap_or_default(),
                     }),
                 );
             }
             "3" => {
-                let pair_address = Address::from_str(fields[1]).expect("error");
+                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
                 pools_map.insert(
                     pair_address,
                     Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).expect("error"),
-                        token0: Address::from_str(fields[3]).expect("error"),
-                        token1: Address::from_str(fields[4]).expect("error"),
-                        fee: fields[5].parse::<u32>().expect("error"),
+                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
+                        token0: Address::from_str(fields[3]).unwrap_or_default(),
+                        token1: Address::from_str(fields[4]).unwrap_or_default(),
+                        fee: fields[5].parse::<u32>().unwrap_or_default(),
                         tick_spacing: 0i32,
                     }),
                 );

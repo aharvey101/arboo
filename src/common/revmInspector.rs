@@ -1,8 +1,8 @@
 use alloy_primitives::Address;
 use log::info;
 use revm::interpreter::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs, InstructionResult,
-    Interpreter,
+    opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs,
+    InstructionResult, Interpreter,
 };
 use revm::primitives::{Bytes, Log, B256, U256};
 use revm::Database;
@@ -187,6 +187,7 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
         _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
+        //log::info!("call : {:?}", inputs);
         // Record the call
         let call_info = CallInfo {
             address: Some(inputs.target_address),
@@ -210,6 +211,7 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
         _inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
+        //log::info!("call outcome: {:?}", outcome);
         if let Some(last_call) = self.calls.last_mut() {
             // Extract information from the outcome
             last_call.gas_used = Some(outcome.gas().spent());
@@ -222,7 +224,6 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
                 }
                 InstructionResult::Revert => {
                     last_call.error = Some("Reverted".to_string());
-
                     // Try to decode the revert reason
                     let output = outcome.output();
                     if output.len() >= 4 + 32 + 32 {
@@ -246,7 +247,6 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
                 }
                 error => {
                     last_call.error = Some(format!("Error: {:?}", error));
-
                     // Add to errors collection
                     self.errors.push(ErrorInfo {
                         phase: "call".to_string(),
@@ -328,7 +328,7 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
             }
         }
 
-        log::debug!("outcome of end: {:?}", outcome);
+        //log::debug!("outcome of end: {:?}", outcome);
         outcome
     }
 
@@ -402,7 +402,15 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
 
         outcome
     }
-
+    //    #[inline]
+    //    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    //        info!("step Interpreter: {:?}", interp);
+    //    }
+    //
+    //    #[inline]
+    //    fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    //        info!("step end interp: {:?}", interp);
+    //    }
     //fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
     //    self.selfdestructs.push(SelfDestructInfo {
     //        contract,
