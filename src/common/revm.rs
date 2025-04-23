@@ -232,6 +232,11 @@ impl<'a> EvmSimulator<'a> {
         self.insert_account_info(self.owner, contract_info).await;
     }
 
+    pub async fn deploy_code_at(&mut self, target: Address, bytecode: Bytecode) {
+        let code_hash = bytecode.clone().hash_slow();
+        let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode.clone());
+        self.insert_account_info(target, contract_info).await;
+    }
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
         let mut evm = self.evm.lock().await;
         let account = evm.context.evm.db.basic(address).unwrap().unwrap();

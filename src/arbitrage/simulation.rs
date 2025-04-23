@@ -36,6 +36,15 @@ pub async fn simulation(
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
 
     let my_wallet = PrivateKeySigner::random();
+
+    let contract_wallet = PrivateKeySigner::random();
+
+    simulator
+        .lock()
+        .await
+        .deploy_code_at(contract_wallet.address(), arboo_bytecode())
+        .await;
+
     // set initial eth value;
     let initial_eth_balance = U256::from(10_001) * U256::from(10).pow(U256::from(18));
 
@@ -79,11 +88,8 @@ pub async fn simulation(
     .await
     .expect("error checking weth balance");
 
-    info!("Weth Balance: {:?}", weth_balance);
-
     let fee1 = alloy_primitives::aliases::U24::from(500);
 
-    // Note: Setup the swap abi
     alloy::sol! {
         #[derive(Debug)]
         function flashSwap_V3_to_V2(
@@ -95,7 +101,6 @@ pub async fn simulation(
         ) external;
     };
 
-    // Note: create the params
     let function_call = flashSwap_V3_to_V2Call {
         pool0: target_pool,
         fee1,
@@ -109,24 +114,18 @@ pub async fn simulation(
     // Note: create the transaction
     let new_tx = Tx {
         caller: my_wallet.address(),
-        transact_to: simulator.lock().await.owner,
+        transact_to: contract_wallet.address(),
         data: function_call_data.into(),
         value: U256::ZERO,
-        gas_limit: latest_gas_limit as u64,
+        gas_limit: latest_gas_limit,
         gas_price: latest_gas_price,
     };
 
-    // Call said transaction
-    match simulator.lock().await.call(new_tx) {
-        Ok(res) => {
-            info!("res  from sim call{:?}", res);
-            // evm_decoder(res.output).unwrap();
-        }
-        Err(err) => {
-            info!("TX Sim Error: {:?}", err);
-            return Ok(U256::ZERO);
-        }
-    }
+    simulator
+        .lock()
+        .await
+        .call(new_tx)
+        .inspect_err(|e| info!("Error running flash sim: {:?}", e))?;
 
     let balance = check_weth_balance(
         my_wallet.address(),
@@ -138,7 +137,8 @@ pub async fn simulation(
     .await
     .expect("Error checking weth balance");
 
-    Ok(balance)
+    let profit = balance - weth_balance;
+    Ok(profit)
 }
 
 pub fn one_ether() -> U256 {
@@ -181,7 +181,7 @@ pub enum AddressType {
 pub fn get_address(address_type: AddressType) -> Address {
     match address_type {
         AddressType::Weth => address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-        AddressType::V3Router => address!("66a9893cc07d91d95644aedd05d03f95e1dba8af"),
+        AddressType::V3Router => address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
         AddressType::V2Router => address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
         AddressType::V3Factory => address!("1F98431c8aD98523631AE4a59f267346ea31F984"),
         AddressType::V2Factory => address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
@@ -237,8 +237,6 @@ async fn check_weth_balance(
     let result = simulator.call(new_tx)?;
 
     let balance = U256::from_be_slice(&result.output);
-
-    let balance = balance / U256::from(10).pow(U256::from(18));
 
     Ok(balance)
 }
