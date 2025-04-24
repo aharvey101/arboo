@@ -30,7 +30,7 @@ pub async fn simulation(
     let latest_block = provider
         .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
         .await?
-        .expect("Expected block");
+        .ok_or(anyhow::Error::msg("Error getting block"))?;
 
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
@@ -85,8 +85,7 @@ pub async fn simulation(
         &latest_gas_price,
         None,
     )
-    .await
-    .expect("error checking weth balance");
+    .await?;
 
     let fee1 = alloy_primitives::aliases::U24::from(500);
 
@@ -135,7 +134,7 @@ pub async fn simulation(
         None,
     )
     .await
-    .expect("Error checking weth balance");
+    .inspect(|e| info!("Error checking weth balance {e}",))?;
 
     let profit = balance - weth_balance;
     Ok(profit)
