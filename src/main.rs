@@ -1,19 +1,13 @@
-use alloy::eips::BlockId;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::{
     network::Ethereum, primitives::U64, pubsub::PubSubFrontend, rpc::client::WsConnect,
     signers::local::PrivateKeySigner,
 };
-use alloy_primitives::aliases::U24;
-use alloy_primitives::{address, U160, U256};
-use alloy_sol_types::SolCall;
 use anyhow::Result;
-use arbooo::arbitrage::simulation::{self, get_address, one_thousand_eth, AddressType};
 use arbooo::arbitrage::strategy::strategy;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
-use arbooo::common::revm::Tx;
 use arbooo::common::{
     logs::LogEvent,
     pairs::{Event, V2PoolCreated, V3PoolCreated},
@@ -141,9 +135,6 @@ async fn main() -> Result<()> {
 }
 
 // MVP What is left to do:
-// [x] get the logs to send to the evm and have it recieve those events
-// [x] Figure out a strategy for finding out how much to arb, ie; what amount is profitable
-// [x] Figure out how to send transactions
 // [ ] Fix up all the decoding so that we can understand the errors
 // [x] Create an Inspector
 // [ ] Make it take profitable Arbitrages :shrug:

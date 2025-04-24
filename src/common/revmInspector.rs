@@ -187,7 +187,7 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
         _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        //log::info!("call : {:?}", inputs);
+        //log::debug!("call : {:?}", inputs);
         // Record the call
         let call_info = CallInfo {
             address: Some(inputs.target_address),
@@ -211,7 +211,7 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
         _inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
-        //log::info!("call outcome: {:?}", outcome);
+        //log::debug!("call outcome: {:?}", outcome);
         if let Some(last_call) = self.calls.last_mut() {
             // Extract information from the outcome
             last_call.gas_used = Some(outcome.gas().spent());

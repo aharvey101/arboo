@@ -1,5 +1,5 @@
-use crate::arbitrage::simulation::simulation;
 use crate::arbitrage::simulation::{get_address, AddressType};
+use crate::arbitrage::simulation::{one_ether, simulation};
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
@@ -40,7 +40,7 @@ pub async fn strategy(
             Ok(message) => {
                 // reserves of the target pool to low?
                 let is_v2_to_v3 = message.pool_variant == 3;
-                log::debug!("Message: {:?}", message);
+                //log::debug!("Message: {:?}", message);
                 // Calculate optimal amount
                 let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
 
@@ -51,11 +51,6 @@ pub async fn strategy(
                     .unwrap();
 
                 let block_base_fee = latest_block.header.base_fee_per_gas.unwrap();
-
-                let nonce = provider
-                    .get_transaction_count(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
-                    .await
-                    .inspect(|e| info!("error getting nonce, {:?}", e))?;
 
                 load_specific_pools(
                     simulator.clone(),
@@ -109,16 +104,17 @@ pub async fn strategy(
                 .await
                 {
                     Ok(res) => {
-                        info!("balance of sim eth wallet after sim {res}");
-                        if res < U256::from(10000000000000000u128) {
-                            info!(" Profit less than 0.1 eth")
+                        info!("simulated profit {res}");
+                        if res < one_ether() / U256::from(1000) {
+                            info!(" Profit less than 0.1 eth");
+                            continue;
                         }
                     }
                     Err(err) => {
                         info!("Simulation Errors: {err}");
                         continue;
                     }
-                }
+                };
 
                 log::debug!("Time taken to run sim {:?}", time.elapsed());
 
@@ -141,6 +137,11 @@ pub async fn strategy(
 
                 let contract_address = var::<&str>("CONTRACT_ADDRESS")?;
                 let contract_address = Address::from_str(&contract_address)?;
+
+                let nonce = provider
+                    .get_transaction_count(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
+                    .await
+                    .inspect(|e| info!("error getting nonce, {:?}", e))?;
 
                 tokio::spawn(send_transaction(
                     contract_address,
@@ -209,7 +210,7 @@ pub async fn find_optimal_amount_v3_to_v2(
             right = mid - U256::from(1);
         }
     }
-
+    info!("Best Profit: {:?}", best_profit);
     if best_profit == U256::ZERO {
         return Ok(ArbitrageResult {
             optimal_amount: U256::ZERO,
@@ -254,7 +255,7 @@ pub async fn find_optimal_amount_v3_to_v2(
     let res = sim.call(tx)?;
 
     let possible_profit = decode_quote_output_v3(res.output).expect("failed to decode output");
-    info!("possible_profit {possible_profit}");
+    log::debug!("possible_profit {possible_profit}");
     Ok(ArbitrageResult {
         optimal_amount,
         possible_profit,
