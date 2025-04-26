@@ -13,6 +13,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{address, Bytes, U160};
+use alloy_sol_types::abi::token;
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
@@ -42,7 +43,7 @@ pub async fn strategy(
                 let is_v2_to_v3 = message.pool_variant == 3;
                 //log::debug!("Message: {:?}", message);
                 // Calculate optimal amount
-                let max_input = U256::from(10_000) * U256::from(10).pow(U256::from(18)); // 1000
+                let max_input = U256::from(100_000_000) * U256::from(10).pow(U256::from(18)); // 1000
 
                 let latest_block = provider
                     .get_block(BlockId::latest(), BlockTransactionsKind::Full)
@@ -61,12 +62,15 @@ pub async fn strategy(
 
                 let time = std::time::Instant::now();
 
+                //info!("Message: {:?}", message);
                 let optimal_result = match find_optimal_amount_v3_to_v2(
                     message.token0,
                     message.token1,
                     simulator.clone(),
                     max_input,
+                    message.fee,
                     latest_block.clone(),
+                    message.corresponding_pool_address,
                 )
                 .await
                 {
@@ -94,30 +98,6 @@ pub async fn strategy(
                     optimal_result.optimal_amount, target_pool
                 );
 
-                match simulation(
-                    target_pool,
-                    message.token0,
-                    message.token1,
-                    optimal_result.optimal_amount,
-                    simulator.clone(),
-                )
-                .await
-                {
-                    Ok(res) => {
-                        info!("simulated profit {res}");
-                        if res < one_ether() / U256::from(1000) {
-                            info!(" Profit less than 0.1 eth");
-                            continue;
-                        }
-                    }
-                    Err(err) => {
-                        info!("Simulation Errors: {err}");
-                        continue;
-                    }
-                };
-
-                log::debug!("Time taken to run sim {:?}", time.elapsed());
-
                 if provider.get_block_number().await.unwrap_or_default()
                     > latest_block.header.number
                 {
@@ -128,8 +108,8 @@ pub async fn strategy(
                 let transaction = create_input_data(
                     target_pool,
                     message.fee,
-                    message.token0,
                     message.token1,
+                    message.token0,
                     optimal_result.optimal_amount,
                 )
                 .await
@@ -171,7 +151,9 @@ pub async fn find_optimal_amount_v3_to_v2(
     token_out: Address,
     simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
     max_input: U256,
+    fee: U24,
     latest_block: Block,
+    target_pool: Address,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
     let mut optimal_amount = U256::ZERO;
@@ -180,22 +162,17 @@ pub async fn find_optimal_amount_v3_to_v2(
 
     while left <= right {
         let mid = (left + right) / U256::from(2);
-
         // Only query once per iteration with mid
-        let v3_amount_out = match get_v3_to_v2_arbitrage_profit(
-            simulator.clone(),
-            mid,
+        let v3_amount_out = simulation(
+            target_pool,
             token_in,
             token_out,
-            get_address(AddressType::V2Router),
-            latest_block.clone(),
+            mid,
+            fee,
+            simulator.clone(),
         )
         .await
-        {
-            Ok(amount) => amount,
-            Err(_) => break,
-        };
-
+        .unwrap_or_default();
         // Calculate profit based on mid amount
         let current_profit = v3_amount_out;
 
@@ -210,7 +187,6 @@ pub async fn find_optimal_amount_v3_to_v2(
             right = mid - U256::from(1);
         }
     }
-    info!("Best Profit: {:?}", best_profit);
     if best_profit == U256::ZERO {
         return Ok(ArbitrageResult {
             optimal_amount: U256::ZERO,
@@ -261,208 +237,7 @@ pub async fn find_optimal_amount_v3_to_v2(
         possible_profit,
     })
 }
-
-async fn get_v3_to_v2_arbitrage_profit(
-    simulator: Arc<Mutex<EvmSimulator<'_>>>,
-    amount_in: U256,
-    token_a: Address,
-    token_b: Address,
-    v2_router: Address,
-    latest_block: Block,
-) -> Result<U256> {
-    // Setup the simulation environment
-    let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
-    let mut sim = simulator.lock().await;
-    let sim_owner = sim.owner;
-
-    // Set a large ETH balance for testing
-    sim.set_eth_balance(
-        sim_owner,
-        U256::from(1000) * U256::from(10).pow(U256::from(18)),
-    )
-    .await;
-
-    // Step 1: Calculate how many tokenB we get from borrowing tokenA on Uniswap V3
-    // We'll use the V3 Quoter contract to simulate this
-    alloy::sol! {
-        #[derive(Debug)]
-        function quoteExactInput(
-            bytes memory path,
-            uint256 amountIn
-        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
-    }
-    let v3_quoter_address = get_address(AddressType::V2Quoter);
-
-    // Construct the path for token swap (token_a -> token_b with fee)
-    let mut path = Vec::with_capacity(43);
-
-    path.extend_from_slice(token_a.as_slice());
-    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
-    path.extend_from_slice(token_b.as_slice());
-
-    let path = alloy::primitives::Bytes::from(path);
-
-    let tx_data = quoteExactInputCall {
-        path,
-        amountIn: amount_in,
-    };
-
-    let tx_data = tx_data.abi_encode();
-    let tx = Tx {
-        caller: sim_owner,
-        transact_to: v3_quoter_address,
-        data: tx_data.into(),
-        value: U256::ZERO,
-        gas_price: latest_gas_price,
-        gas_limit: latest_gas_limit,
-    };
-
-    let res = match sim.call(tx) {
-        Ok(res) => res,
-        Err(e) => {
-            // info!("Failed to call V3 quote: {:?}", e);
-            return Ok(U256::ZERO); // Return zero profit if V3 quote fails
-        }
-    };
-
-    // Extract the exact tokenB amount we'd receive from V3
-    let v3_amount_out = match decode_quote_exact_input_single_output(res.output) {
-        Ok(amount_out) => amount_out,
-        Err(e) => {
-            info!("Failed to decode V3 quote output: {:?}", e);
-            return Ok(U256::ZERO);
-        }
-    };
-
-    if v3_amount_out == U256::ZERO {
-        info!("V3 swap would result in zero tokens, no arbitrage possible");
-        return Ok(U256::ZERO);
-    }
-
-    // Step 2: Calculate how many tokenA we get back by swapping tokenB on Uniswap V2
-    alloy::sol! {
-        #[derive(Debug)]
-        function getAmountsOut(
-            uint amountIn,
-            address[] calldata path
-        ) external view returns (uint[] memory amounts);
-    };
-
-    let tx_call: getAmountsOutCall = getAmountsOutCall {
-        amountIn: v3_amount_out,
-        path: vec![token_b, token_a],
-    };
-
-    let data = tx_call.abi_encode();
-    let tx = Tx {
-        caller: sim_owner,
-        transact_to: v2_router,
-        data: data.into(),
-        value: U256::ZERO,
-        gas_price: latest_gas_price,
-        gas_limit: latest_gas_limit,
-    };
-
-    let res = match sim.call(tx) {
-        Ok(res) => res,
-        Err(e) => {
-            //info!("Failed to call V2 getAmountsOut: {:?}", e);
-            return Ok(U256::ZERO);
-        }
-    };
-
-    let v2_buy_back_amount = match decode_uniswap_v2_quote(&res.output) {
-        Ok(amount_out) => amount_out,
-        Err(e) => {
-            //info!("Failed to decode V2 quote output: {}", e);
-            return Ok(U256::ZERO);
-        }
-    };
-
-    if v2_buy_back_amount == U256::ZERO {
-        //info!("V2 swap would result in zero tokens, no arbitrage possible");
-        return Ok(U256::ZERO);
-    }
-
-    // Step 3: Check if profitable
-    if v2_buy_back_amount <= amount_in {
-        //info!(
-        //    "Not profitable: buy back amount {} <= amount in {}",
-        //    v2_buy_back_amount, amount_in
-        //);
-        return Ok(U256::ZERO);
-    }
-
-    let profit = v2_buy_back_amount - amount_in;
-
-    // Step 4: If tokenA is not WETH, calculate how much WETH we'd get by swapping profit
-    let weth = get_address(AddressType::Weth);
-
-    if token_a != weth {
-        // Calculate WETH equivalent of profit
-        let tx_call: getAmountsOutCall = getAmountsOutCall {
-            amountIn: profit,
-            path: vec![token_a, weth],
-        };
-
-        let data = tx_call.abi_encode();
-        let tx = Tx {
-            caller: sim_owner,
-            transact_to: v2_router,
-            data: data.into(),
-            value: U256::ZERO,
-            gas_price: latest_gas_price,
-            gas_limit: latest_gas_limit,
-        };
-
-        let res = match sim.call(tx) {
-            Ok(res) => res,
-            Err(e) => {
-                info!("Failed to calculate WETH profit: {:?}", e);
-                return Ok(profit); // Return the token profit if WETH calc fails
-            }
-        };
-
-        let weth_profit = match decode_uniswap_v2_quote(&res.output) {
-            Ok(amount_out) => amount_out,
-            Err(e) => {
-                info!("Failed to decode WETH profit quote: {}", e);
-                return Ok(profit);
-            }
-        };
-        return Ok(weth_profit);
-    }
-
-    // If tokenA is already WETH, just return the profit
-    Ok(profit)
-}
-
 // Helper function to decode V3 quoter output
-fn decode_quote_exact_input_single_output(output: Bytes) -> Result<U256> {
-    let output = hex::decode(output.to_string().trim_start_matches("0x"))?;
-    // Just return the first value (amountOut) which is all we need
-    let amount_out = U256::from_be_slice(&output[0..32]);
-    Ok(amount_out)
-}
-
-// Helper function to decode V2 getAmountsOut output
-fn decode_uniswap_v2_quote(output: &Bytes) -> Result<U256, String> {
-    let decoded_data =
-        hex::decode(output.to_string().trim_start_matches("0x")).expect("failed to decode data");
-
-    // First 32 bytes is the offset to the array data
-    let offset = U256::from_be_slice(&decoded_data[0..32]);
-    assert_eq!(offset, U256::from(32), "Unexpected offset");
-
-    // Next 32 bytes contain the array length
-    let array_length = U256::from_be_slice(&decoded_data[32..64]);
-    assert_eq!(array_length, U256::from(2), "Expected array length 2");
-
-    // We want the second element (index 1) which is at position 96..128
-    let amount_out = U256::from_be_slice(&decoded_data[96..128]);
-    Ok(amount_out)
-}
 fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
     let output = hex::decode(output.to_string().trim_start_matches("0x"))?;
 
@@ -553,64 +328,4 @@ async fn load_specific_pools<'a>(
     };
 
     Ok(())
-}
-
-async fn load_pools<'a>(simulator: Arc<Mutex<EvmSimulator<'a>>>) {
-    let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new("cache/.cached-pools.csv");
-    let file = File::open(&path).expect("Error getting File");
-    let reader = io::BufReader::new(file);
-
-    for line in reader.lines().skip(1) {
-        // Skip the header line
-        let line = line.expect("Expected Line");
-        let fields: Vec<&str> = line.split(',').collect();
-        match fields[2] {
-            "2" => {
-                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
-                pools_map.insert(
-                    pair_address,
-                    Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
-                        token0: Address::from_str(fields[3]).unwrap_or_default(),
-                        token1: Address::from_str(fields[4]).unwrap_or_default(),
-                        fee: fields[5].parse::<u32>().unwrap_or_default(),
-                        block_number: fields[6].parse::<u64>().unwrap_or_default(),
-                    }),
-                );
-            }
-            "3" => {
-                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
-                pools_map.insert(
-                    pair_address,
-                    Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
-                        token0: Address::from_str(fields[3]).unwrap_or_default(),
-                        token1: Address::from_str(fields[4]).unwrap_or_default(),
-                        fee: fields[5].parse::<u32>().unwrap_or_default(),
-                        tick_spacing: 0i32,
-                    }),
-                );
-            }
-            &_ => continue,
-        };
-    }
-
-    let mut sim = simulator.lock().await;
-    for event in pools_map.iter() {
-        info!("Loading pool, {:?}, number:", event.0);
-        sim.load_account(*event.0).await;
-        sim.load_pool_state(*event.0)
-            .await
-            .expect("Failed to load basic state");
-        if let (_, Event::PairCreated(V2PoolCreated { .. })) = event {
-            sim.load_v2_pool_state(*event.0)
-                .await
-                .expect("Failed to load v2 pool state");
-        } else {
-            sim.load_v3_pool_state(*event.0)
-                .await
-                .expect("Failed to load v3 state");
-        }
-    }
 }

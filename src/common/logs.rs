@@ -47,14 +47,14 @@ pub async fn get_logs(
                     //info!("Log Block Number: {:?}", res.block_number);
                     if v3_pair.token0 == v3_pair.token1 {continue}
                     
-                    let _ = event_sender.send(LogEvent {
+                    event_sender.send(LogEvent {
                     pool_variant: 2,
                     corresponding_pool_address: v3_pair.pair_address,
                     log_pool_address: key,
                     token0:pair.token0,
                     token1: pair.token1,
                     fee: U24::from(pair.fee),
-                    });
+                    }).unwrap();
                 }
             }
             Event::PoolCreated(pair) => {
@@ -62,14 +62,14 @@ pub async fn get_logs(
                 matches!(value, Event::PairCreated(v2_pair) if (v2_pair.token0 == pair.token0 && v2_pair.token1 == pair.token1) || (v2_pair.token0 == pair.token1 && v2_pair.token1 == pair.token0))
                 }) {
 
-                let _ = event_sender.send(LogEvent {
+                event_sender.send(LogEvent {
                     pool_variant: 3,
                     corresponding_pool_address: v2_pair.pair_address,
                     log_pool_address: key,
                     token0: pair.token0,
                     token1: pair.token1,
                     fee: U24::from(pair.fee),
-                });
+                }).unwrap();
                 }
             }
             }

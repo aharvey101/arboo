@@ -6,6 +6,7 @@ use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
 use alloy::signers::local::PrivateKeySigner;
+use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use revm::primitives::{address, Address, Bytecode, U256};
@@ -18,6 +19,7 @@ pub async fn simulation(
     token_a: Address,
     token_b: Address,
     amount: U256,
+    fee: U24,
     simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
 ) -> Result<U256> {
     let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
@@ -87,8 +89,6 @@ pub async fn simulation(
     )
     .await?;
 
-    let fee1 = alloy_primitives::aliases::U24::from(500);
-
     alloy::sol! {
         #[derive(Debug)]
         function flashSwap_V3_to_V2(
@@ -102,7 +102,7 @@ pub async fn simulation(
 
     let function_call = flashSwap_V3_to_V2Call {
         pool0: target_pool,
-        fee1,
+        fee1: fee,
         tokenIn: token_a,
         tokenOut: token_b,
         amountIn: amount,
@@ -134,7 +134,7 @@ pub async fn simulation(
         None,
     )
     .await
-    .inspect(|e| info!("Error checking weth balance {e}",))?;
+    .inspect_err(|e| info!("Error checking weth balance {e}",))?;
 
     let profit = balance - weth_balance;
     Ok(profit)
