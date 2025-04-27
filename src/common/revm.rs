@@ -1,3 +1,5 @@
+use crate::arbitrage::simulation::{arboo_bytecode, get_address, AddressType};
+
 use super::revmInspector::{self, RevmInspector};
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
@@ -68,6 +70,7 @@ pub struct TxResult {
 #[derive(Debug)]
 pub struct EvmSimulator<'a> {
     pub owner: Address,
+    pub contract_address: Address,
     pub evm: TokioMutex<
         Evm<
             'a,
@@ -86,6 +89,39 @@ impl<'a> EvmSimulator<'a> {
         EvmSimulator::new_with_db(owner, block_number, provider)
     }
 
+    pub async fn setup(&mut self) {
+        self.deploy_code_at(self.contract_address, arboo_bytecode())
+            .await;
+
+        let initial_eth_balance = U256::from(100_000_000) * U256::from(10).pow(U256::from(18));
+
+        self.set_eth_balance(self.owner, initial_eth_balance).await;
+
+        alloy::sol! {
+            function swapEthForWeth(
+                address to,
+                uint256 deadline
+            ) external payable;
+        };
+        let function_call = swapEthForWethCall {
+            to: self.owner,
+            deadline: U256::from(9999999999_u64),
+        };
+
+        let function_call_data = function_call.abi_encode();
+
+        let new_tx = Tx {
+            caller: self.owner,
+            transact_to: get_address(AddressType::Weth),
+            data: function_call_data.into(),
+            value: U256::from(10_000_000) * U256::from(10).pow(U256::from(18)),
+            gas_limit: 50_000_000u64,
+            gas_price: U256::from(10000000000u128),
+        };
+
+        self.call(new_tx).unwrap();
+    }
+
     pub fn new_with_db(
         owner: Option<Address>,
         block_number: U64,
@@ -95,7 +131,7 @@ impl<'a> EvmSimulator<'a> {
             Some(owner) => owner,
             None => PrivateKeySigner::random().address(),
         };
-
+        let contract_wallet = PrivateKeySigner::random();
         let inspector = revmInspector::RevmInspector::new();
 
         let alloy_db = CacheDB::new(AlloyDB::new(provider, BlockId::from(block_number)).unwrap());
@@ -117,6 +153,7 @@ impl<'a> EvmSimulator<'a> {
             owner,
             evm,
             block_number,
+            contract_address: contract_wallet.address(),
         }
     }
 
@@ -173,7 +210,7 @@ impl<'a> EvmSimulator<'a> {
                     ref_tx.result
                 }
             };
-
+            //info!("Result: {:?}", result);
             let output = match result {
                 ExecutionResult::Success {
                     gas_used,

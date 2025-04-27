@@ -5,7 +5,9 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
-use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::k256::ecdsa::SigningKey;
+use alloy::signers::k256::Secp256k1;
+use alloy::signers::local::{LocalSigner, PrivateKeySigner};
 use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
 use anyhow::Result;
@@ -21,73 +23,34 @@ pub async fn simulation(
     amount: U256,
     fee: U24,
     simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
+    provider: Arc<RootProvider<PubSubFrontend>>,
 ) -> Result<U256> {
-    let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
-    let provider: RootProvider<PubSubFrontend, Ethereum> =
-        ProviderBuilder::new().network().on_ws(ws_client).await?;
-    let provider = Arc::new(provider);
-
     let latest_block_number = provider.get_block_number().await?;
     let block_id = BlockId::from_str(latest_block_number.to_string().as_str()).unwrap();
     let latest_block = provider
         .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
         .await?
         .ok_or(anyhow::Error::msg("Error getting block"))?;
-
+    // info!(
+    //     "latest block timestamp: {:?}",
+    //     latest_block.header.timestamp
+    // );
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
 
-    let my_wallet = PrivateKeySigner::random();
-
-    let contract_wallet = PrivateKeySigner::random();
-
-    simulator
-        .lock()
-        .await
-        .deploy_code_at(contract_wallet.address(), arboo_bytecode())
-        .await;
-
-    // set initial eth value;
-    let initial_eth_balance = U256::from(10_001) * U256::from(10).pow(U256::from(18));
-
-    simulator
-        .lock()
-        .await
-        .set_eth_balance(my_wallet.address(), initial_eth_balance)
-        .await;
-
-    alloy::sol! {
-        function swapEthForWeth(
-            address to,
-            uint256 deadline
-        ) external payable;
-    };
-    let function_call = swapEthForWethCall {
-        to: my_wallet.address(),
-        deadline: U256::from(9999999999_u64),
-    };
-
-    let function_call_data = function_call.abi_encode();
-
-    let new_tx = Tx {
-        caller: my_wallet.address(),
-        transact_to: get_address(AddressType::Weth),
-        data: function_call_data.into(),
-        value: U256::from(10_000) * U256::from(10).pow(U256::from(18)),
-        gas_limit: latest_gas_limit as u64,
-        gas_price: latest_gas_price,
-    };
-
-    simulator.lock().await.call(new_tx)?;
+    let wallet_address = simulator.lock().await.owner;
 
     let weth_balance = check_weth_balance(
-        my_wallet.address(),
-        &mut *simulator.lock().await,
+        wallet_address,
+        simulator.clone(),
         &latest_gas_limit,
         &latest_gas_price,
         None,
     )
-    .await?;
+    .await
+    .inspect_err(|e| info!("Error getting weth balance {:?}", e))?;
+
+    //log::debug!("Initial Weth Balance: {:?}", weth_balance);
 
     alloy::sol! {
         #[derive(Debug)]
@@ -107,36 +70,39 @@ pub async fn simulation(
         tokenOut: token_b,
         amountIn: amount,
     };
-
+    //info!("flash swap function args: {:?}", function_call);
     let function_call_data = function_call.abi_encode();
+
+    let caller = simulator.lock().await.owner;
+    let contract_address = simulator.lock().await.contract_address;
 
     // Note: create the transaction
     let new_tx = Tx {
-        caller: my_wallet.address(),
-        transact_to: contract_wallet.address(),
+        caller,
+        transact_to: contract_address,
         data: function_call_data.into(),
         value: U256::ZERO,
         gas_limit: latest_gas_limit,
         gas_price: latest_gas_price,
     };
 
-    simulator
-        .lock()
-        .await
-        .call(new_tx)
-        .inspect_err(|e| info!("Error running flash sim: {:?}", e))?;
+    simulator.lock().await.call(new_tx)?;
 
     let balance = check_weth_balance(
-        my_wallet.address(),
-        &mut *simulator.lock().await,
+        wallet_address,
+        simulator.clone(),
         &latest_gas_limit,
         &latest_gas_price,
-        None,
+        Some(wallet_address),
     )
     .await
     .inspect_err(|e| info!("Error checking weth balance {e}",))?;
+    //info!("Weth Balance before swap = {weth_balance}");
+    //info!("Balance after swap: {balance}");
 
     let profit = balance - weth_balance;
+
+    info!("Profit: {profit}");
     Ok(profit)
 }
 
@@ -205,9 +171,9 @@ pub fn arboo_bytecode() -> Bytecode {
     Bytecode::new_raw(bytes.into())
 }
 
-async fn check_weth_balance(
+pub async fn check_weth_balance(
     wallet_address: Address,
-    simulator: &mut EvmSimulator<'_>,
+    simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
     latest_gas_limit: &u64,
     latest_gas_price: &U256,
     caller: Option<Address>,
@@ -233,7 +199,11 @@ async fn check_weth_balance(
         gas_price: *latest_gas_price,
     };
 
-    let result = simulator.call(new_tx)?;
+    let result = simulator
+        .lock()
+        .await
+        .call(new_tx)
+        .inspect_err(|e| info!("There was an error {e}"))?;
 
     let balance = U256::from_be_slice(&result.output);
 
