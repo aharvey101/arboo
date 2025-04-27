@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     // 1. Get all pools
 
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new("cache/.cached-pools.csv");
+    let path = Path::new("~/cache/.cached-pools.csv");
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
     // id,address,version,token0,oken1,fee,block_number,timestamp
