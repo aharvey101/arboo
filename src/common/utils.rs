@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy::contract;
 use alloy::eips::BlockId;
 use alloy::providers::Provider;
 use alloy::signers::local::PrivateKeySigner;
@@ -10,7 +11,11 @@ use alloy::{
 use log::info;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::arbitrage::simulation::{get_address, one_thousand_eth, simulation, AddressType};
+use crate::arbitrage::simulation::{
+    arboo_bytecode, check_weth_balance, five_hundred_thousand_eth, get_address, one_hundred_ether,
+    one_thousand_eth, simulation, AddressType,
+};
+use crate::arbitrage::strategy::find_optimal_amount_v3_to_v2;
 use crate::common::revm::Tx;
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{address, U160, U256, U64};
@@ -34,15 +39,27 @@ pub async fn sim_test(
 
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
-    let my_wallet = PrivateKeySigner::random();
+
+    // deploy contract:
+
+    let contract_address = simulator.lock().await.contract_address;
+    simulator
+        .lock()
+        .await
+        .deploy_code_at(contract_address, arboo_bytecode())
+        .await;
+
     // set initial eth value;
-    let initial_eth_balance = U256::from(99_000) * U256::from(10).pow(U256::from(18));
+    let initial_eth_balance = U256::from(1_000_000) * U256::from(10).pow(U256::from(18));
+
+    let wallet = simulator.lock().await.owner;
 
     simulator
         .lock()
         .await
-        .set_eth_balance(my_wallet.address(), initial_eth_balance)
+        .set_eth_balance(wallet, initial_eth_balance)
         .await;
+
     alloy::sol! {
         function swapEthForWeth(
             address to,
@@ -51,17 +68,17 @@ pub async fn sim_test(
     };
 
     let function_call = swapEthForWethCall {
-        to: my_wallet.address(),
+        to: wallet,
         deadline: U256::from(9999999999_u64),
     };
 
     let function_call_data = function_call.abi_encode();
 
     let new_tx = Tx {
-        caller: my_wallet.address(),
+        caller: wallet,
         transact_to: get_address(AddressType::Weth),
         data: function_call_data.into(),
-        value: one_thousand_eth(),
+        value: one_thousand_eth() * U256::from(10),
         gas_limit: latest_gas_limit,
         gas_price: latest_gas_price,
     };
@@ -78,7 +95,7 @@ pub async fn sim_test(
     .abi_encode();
 
     let approve_tx = Tx {
-        caller: my_wallet.address(),
+        caller: wallet,
         transact_to: get_address(AddressType::Weth),
         data: approve_data.into(),
         value: U256::ZERO,
@@ -107,7 +124,7 @@ pub async fn sim_test(
         tokenIn: address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
         tokenOut: address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
         fee: U24::from(3000),
-        recipient: my_wallet.address(),
+        recipient: wallet,
         amountIn: one_thousand_eth(),
         amountOutMinimum: U256::ZERO,
         sqrtPriceLimitX96: U160::ZERO,
@@ -118,8 +135,8 @@ pub async fn sim_test(
     };
     let function_call_data = function_call.abi_encode();
 
-    let new_tx = Tx {
-        caller: my_wallet.address(),
+    let big_swap_tx = Tx {
+        caller: wallet,
         transact_to: get_address(AddressType::V3Router),
         data: function_call_data.into(),
         value: U256::ZERO,
@@ -127,30 +144,28 @@ pub async fn sim_test(
         gas_price: latest_gas_price,
     };
 
-    match simulator.lock().await.call(new_tx) {
-        Ok(res) => {
-            info!("Res from mock call, {:?}", res);
-        }
-        Err(err) => info!("Error doing swap of weth to Link {:?},", err),
-    };
+    simulator
+        .lock()
+        .await
+        .call(big_swap_tx)
+        .inspect_err(|e| info!("Error running Link Swap: {:?}", e))?;
 
-    match simulation(
-        address!("a6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8"),
+    let instant = std::time::Instant::now();
+
+    find_optimal_amount_v3_to_v2(
         address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
         address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-        U256::from(999) * U256::from(10).pow(U256::from(18)),
-        U24::from(3000),
         simulator.clone(),
+        U256::MAX / U256::from(2),
+        U24::from(3000),
+        latest_block,
+        address!("a6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8"),
+        provider.clone(),
     )
-    .await
-    {
-        Ok(res) => {
-            info!("balance of sim eth wallet after sim {res}");
-        }
-        Err(err) => {
-            info!("Simulation Errors: {err}");
-        }
-    }
+    .await?;
+
+    info!("Time taken to run sim: {:?}", instant.elapsed());
+
     Ok(())
 }
 

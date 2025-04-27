@@ -1,4 +1,4 @@
-use crate::arbitrage::simulation::{get_address, AddressType};
+use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
 use crate::arbitrage::simulation::{one_ether, simulation};
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
@@ -11,6 +11,7 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
+use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{address, Bytes, U160};
 use alloy_sol_types::abi::token;
@@ -43,7 +44,7 @@ pub async fn strategy(
                 let is_v2_to_v3 = message.pool_variant == 3;
                 //log::debug!("Message: {:?}", message);
                 // Calculate optimal amount
-                let max_input = U256::from(100_000_000) * U256::from(10).pow(U256::from(18)); // 1000
+                let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
 
                 let latest_block = provider
                     .get_block(BlockId::latest(), BlockTransactionsKind::Full)
@@ -62,6 +63,8 @@ pub async fn strategy(
 
                 let time = std::time::Instant::now();
 
+                setup_evm(simulator.clone(), provider.clone()).await?;
+
                 //info!("Message: {:?}", message);
                 let optimal_result = match find_optimal_amount_v3_to_v2(
                     message.token0,
@@ -71,6 +74,7 @@ pub async fn strategy(
                     message.fee,
                     latest_block.clone(),
                     message.corresponding_pool_address,
+                    provider.clone(),
                 )
                 .await
                 {
@@ -79,7 +83,6 @@ pub async fn strategy(
                 };
 
                 if optimal_result.possible_profit < U256::from(100_000u128) {
-                    info!("No arbitrage opportunity found");
                     continue;
                 }
                 // simulate with optimal amoun in arbooo
@@ -146,6 +149,8 @@ pub struct ArbitrageResult {
     pub possible_profit: U256,
 }
 
+// lets do a really slow way to see if it's the binary search that is the problem?
+
 pub async fn find_optimal_amount_v3_to_v2(
     token_in: Address,
     token_out: Address,
@@ -154,6 +159,7 @@ pub async fn find_optimal_amount_v3_to_v2(
     fee: U24,
     latest_block: Block,
     target_pool: Address,
+    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
 ) -> Result<ArbitrageResult> {
     let mut best_profit = U256::ZERO;
     let mut optimal_amount = U256::ZERO;
@@ -163,6 +169,7 @@ pub async fn find_optimal_amount_v3_to_v2(
     while left <= right {
         let mid = (left + right) / U256::from(2);
         // Only query once per iteration with mid
+
         let v3_amount_out = simulation(
             target_pool,
             token_in,
@@ -170,9 +177,11 @@ pub async fn find_optimal_amount_v3_to_v2(
             mid,
             fee,
             simulator.clone(),
+            provider.clone(),
         )
         .await
-        .unwrap_or_default();
+        .unwrap_or(U256::ZERO);
+
         // Calculate profit based on mid amount
         let current_profit = v3_amount_out;
 
@@ -327,5 +336,89 @@ async fn load_specific_pools<'a>(
         _ => {}
     };
 
+    Ok(())
+}
+
+async fn setup_evm(
+    simulator: Arc<Mutex<EvmSimulator<'_>>>,
+    provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
+) -> Result<()> {
+    let latest_block = provider
+        .get_block(
+            BlockId::Number(alloy::eips::BlockNumberOrTag::Latest),
+            BlockTransactionsKind::Full,
+        )
+        .await
+        .inspect_err(|err| log::error!("Error getting block: {:?}", err))
+        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let latest_gas_limit = latest_block.header.gas_limit;
+    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+
+    // deploy contract:
+
+    let contract_address = simulator.lock().await.contract_address;
+    simulator
+        .lock()
+        .await
+        .deploy_code_at(contract_address, arboo_bytecode())
+        .await;
+
+    // set initial eth value;
+    let initial_eth_balance = U256::from(1_000_000) * U256::from(10).pow(U256::from(18));
+
+    let wallet = simulator.lock().await.owner;
+
+    simulator
+        .lock()
+        .await
+        .set_eth_balance(wallet, initial_eth_balance)
+        .await;
+
+    alloy::sol! {
+        function swapEthForWeth(
+            address to,
+            uint256 deadline
+        ) external payable;
+    };
+
+    let function_call = swapEthForWethCall {
+        to: wallet,
+        deadline: U256::from(9999999999_u64),
+    };
+
+    let function_call_data = function_call.abi_encode();
+
+    let new_tx = Tx {
+        caller: wallet,
+        transact_to: get_address(AddressType::Weth),
+        data: function_call_data.into(),
+        value: one_thousand_eth() * U256::from(10),
+        gas_limit: latest_gas_limit,
+        gas_price: latest_gas_price,
+    };
+
+    simulator.lock().await.call(new_tx)?;
+
+    alloy::sol! {
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+    let approve_data = approveCall {
+        spender: get_address(AddressType::V3Router),
+        amount: U256::MAX, // Infinite approval, you can set a specific amount instead
+    }
+    .abi_encode();
+
+    let approve_tx = Tx {
+        caller: wallet,
+        transact_to: get_address(AddressType::Weth),
+        data: approve_data.into(),
+        value: U256::ZERO,
+        gas_limit: latest_gas_limit,
+        gas_price: latest_gas_price,
+    };
+
+    simulator.lock().await.call(approve_tx)?;
     Ok(())
 }
