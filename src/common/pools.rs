@@ -123,7 +123,7 @@ pub async fn load_all_pools(
 ) -> Result<(Vec<Pool>, i64)> {
     create_dir_all("cache").expect("Error creating directory");
     info!("Creating cache file");
-    let cache_file = "cache/.cached-pools.csv";
+    let cache_file = "~/cache/.cached-pools.csv";
     let file_path = Path::new(cache_file);
     let file_exists = file_path.exists();
     let file = OpenOptions::new()
