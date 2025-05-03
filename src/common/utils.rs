@@ -25,7 +25,7 @@ use anyhow::Result;
 use super::revm::EvmSimulator;
 pub async fn sim_test(
     provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
-    simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
+    simulator: Arc<TokioMutex<EvmSimulator>>,
 ) -> Result<()> {
     let latest_block = provider
         .get_block(
@@ -152,17 +152,17 @@ pub async fn sim_test(
 
     let instant = std::time::Instant::now();
 
-    find_optimal_amount_v3_to_v2(
-        address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
-        address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-        simulator.clone(),
-        U256::MAX / U256::from(2),
-        U24::from(3000),
-        latest_block,
-        address!("a6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8"),
-        provider.clone(),
-    )
-    .await?;
+    //    find_optimal_amount_v3_to_v2(
+    //        address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
+    //        address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+    //        simulator,
+    //        U256::MAX / U256::from(2),
+    //        U24::from(3000),
+    //        latest_block,
+    //        address!("a6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8"),
+    //        provider.clone(),
+    //    )
+    //    .await?;
 
     info!("Time taken to run sim: {:?}", instant.elapsed());
 

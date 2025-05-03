@@ -1,20 +1,13 @@
 use crate::common::revm::{EvmSimulator, Tx};
 use ::log::info;
 use alloy::eips::BlockId;
-use alloy::network::Ethereum;
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::client::WsConnect;
-use alloy::signers::k256::ecdsa::SigningKey;
-use alloy::signers::k256::Secp256k1;
-use alloy::signers::local::{LocalSigner, PrivateKeySigner};
 use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use revm::primitives::{address, Address, Bytecode, U256};
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 
 pub async fn simulation(
     target_pool: Address,
@@ -22,9 +15,10 @@ pub async fn simulation(
     token_b: Address,
     amount: U256,
     fee: U24,
-    simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
-    provider: Arc<RootProvider<PubSubFrontend>>,
+    simulator: &mut EvmSimulator,
+    provider: &RootProvider<PubSubFrontend>,
 ) -> Result<U256> {
+    let time = std::time::Instant::now();
     let latest_block_number = provider.get_block_number().await?;
     let block_id = BlockId::from_str(latest_block_number.to_string().as_str()).unwrap();
     let latest_block = provider
@@ -38,11 +32,11 @@ pub async fn simulation(
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
 
-    let wallet_address = simulator.lock().await.owner;
+    let wallet_address = simulator.owner;
 
     let weth_balance = check_weth_balance(
         wallet_address,
-        simulator.clone(),
+        simulator,
         &latest_gas_limit,
         &latest_gas_price,
         None,
@@ -73,8 +67,8 @@ pub async fn simulation(
     //info!("flash swap function args: {:?}", function_call);
     let function_call_data = function_call.abi_encode();
 
-    let caller = simulator.lock().await.owner;
-    let contract_address = simulator.lock().await.contract_address;
+    let caller = simulator.owner;
+    let contract_address = simulator.contract_address;
 
     // Note: create the transaction
     let new_tx = Tx {
@@ -86,11 +80,11 @@ pub async fn simulation(
         gas_price: latest_gas_price,
     };
 
-    simulator.lock().await.call(new_tx)?;
+    simulator.call(new_tx)?;
 
     let balance = check_weth_balance(
         wallet_address,
-        simulator.clone(),
+        simulator,
         &latest_gas_limit,
         &latest_gas_price,
         Some(wallet_address),
@@ -173,7 +167,7 @@ pub fn arboo_bytecode() -> Bytecode {
 
 pub async fn check_weth_balance(
     wallet_address: Address,
-    simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
+    simulator: &mut EvmSimulator,
     latest_gas_limit: &u64,
     latest_gas_price: &U256,
     caller: Option<Address>,
@@ -200,8 +194,6 @@ pub async fn check_weth_balance(
     };
 
     let result = simulator
-        .lock()
-        .await
         .call(new_tx)
         .inspect_err(|e| info!("There was an error {e}"))?;
 

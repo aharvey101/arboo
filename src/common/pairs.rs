@@ -78,7 +78,7 @@ async fn decode_event(log: &Log) -> Option<Event> {
                 pair_address: address,
                 token0,
                 token1,
-                block_number: log.block_number.unwrap(),
+                //block_number: log.block_number.unwrap(),
                 fee: 500,
             }));
         } else if log.topics()[0] == B256::from_slice(&uniswap_v3_pool_create_sig) {
@@ -137,7 +137,7 @@ pub struct V2PoolCreated {
     pub token0: Address,
     pub token1: Address,
     pub pair_address: Address,
-    pub block_number: u64,
+    //pub block_number: u64,
     pub fee: u32,
 }
 // Uniswap V3 PoolCreated event

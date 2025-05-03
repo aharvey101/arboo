@@ -4,7 +4,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
-use arbooo::arbitrage::strategy::strategy;
+use arbooo::arbitrage::strategy::{initialize_strategy_pool, process_strategy};
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
@@ -29,7 +29,7 @@ use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let dotenv = dotenv()?;
+    dotenv()?;
     logger::setup_logger();
     info!("Logger setup");
     let ws_url = var::<&str>("WS_URL").unwrap();
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
                         token0: Address::from_str(fields[3]).unwrap(),
                         token1: Address::from_str(fields[4]).unwrap(),
                         fee: fields[5].parse::<u32>().unwrap(),
-                        block_number: fields[6].parse::<u64>().unwrap(),
+                        //block_number: fields[6].parse::<u64>().unwrap(),
                     }),
                 );
             }
@@ -95,38 +95,11 @@ async fn main() -> Result<()> {
     // 2. Listen for logs on pools
     set.spawn(logs::get_logs(provider.clone(), pools_map, sender.clone()));
 
-    let ws_client = WsConnect::new(std::env::var("WS_URL").expect("no ws url"));
-
-    let provider: RootProvider<PubSubFrontend, Ethereum> = ProviderBuilder::new()
-        .network()
-        .on_ws(ws_client)
-        .await
-        .expect("Provider failed to build");
-
-    let provider = Arc::new(provider);
-
-    let latest_block_number = provider
-        .get_block_number()
-        .await
-        .expect("Error getting block number");
-
-    let contract_wallet = PrivateKeySigner::random();
-    let contract_wallet_address = contract_wallet.address();
-
-    let simulator = EvmSimulator::new(
-        provider.clone(),
-        Some(contract_wallet_address),
-        U64::from(latest_block_number),
-    );
-
-    let simulator: Arc<TokioMutex<EvmSimulator<'_>>> = Arc::new(TokioMutex::new(simulator));
+    //let simulator: Arc<TokioMutex<EvmSimulator<'_>>> = Arc::new(TokioMutex::new(simulator));
 
     info!("Spawning evm");
 
-    strategy(sender, simulator.clone(), provider.clone())
-        .await
-        .unwrap();
-
+    initialize_strategy_pool(sender, ws_url).await;
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
     }

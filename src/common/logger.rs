@@ -8,7 +8,6 @@ pub fn setup_logger() {
         info: Color::Green,
         warn: Color::Red,
         error: Color::BrightRed,
-        ..ColoredLevelConfig::new()
     };
 
     fern::Dispatch::new()
