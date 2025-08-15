@@ -1,0 +1,75 @@
+{
+  "abi": [
+    {
+      "inputs": [
+        {"name": "_token0", "type": "address"},
+        {"name": "_token1", "type": "address"},
+        {"name": "_fee", "type": "uint24"}
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "token0",
+      "outputs": [{"name": "", "type": "address"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "token1",
+      "outputs": [{"name": "", "type": "address"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "fee",
+      "outputs": [{"name": "", "type": "uint24"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"name": "sqrtPriceX96", "type": "uint160"}],
+      "name": "initialize",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"name": "recipient", "type": "address"},
+        {"name": "amount0Desired", "type": "uint256"},
+        {"name": "amount1Desired", "type": "uint256"},
+        {"name": "amount0Min", "type": "uint256"},
+        {"name": "amount1Min", "type": "uint256"},
+        {"name": "deadline", "type": "uint256"}
+      ],
+      "name": "mint",
+      "outputs": [
+        {"name": "amount0", "type": "uint256"},
+        {"name": "amount1", "type": "uint256"}
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"name": "recipient", "type": "address"},
+        {"name": "zeroForOne", "type": "bool"},
+        {"name": "amountSpecified", "type": "int256"},
+        {"name": "sqrtPriceLimitX96", "type": "uint160"},
+        {"name": "data", "type": "bytes"}
+      ],
+      "name": "swap",
+      "outputs": [
+        {"name": "amount0", "type": "int256"},
+        {"name": "amount1", "type": "int256"}
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x608060405234801561001057600080fd5b50604051610520380380610520833981016040819052610032916100b8565b600080546001600160a01b039485166001600160a01b031991821617909155600180549390941692169190911790915560025550610103565b80516001600160a01b03811681146100b357600080fd5b919050565b6000806000606084860312156100cd57600080fd5b6100d68461009c565b92506100e46020850161009c565b9150604084015162ffffff811681146100fc57600080fd5b809150509250925092565b61040e806101126000396000f3fe608060405234801561001057600080fd5b506004361061007d5760003560e01c80630dfe168111610057578063022c0d9f146100b6578063128acb08146100cb578063cd2ed8fb146100de57600080fd5b8063022c0d9f146100c7578063128acb08146100dc5761007d565b600080fd5b60005461010090046001600160a01b031681565b6100c9600080fd5b6100c9600080fd5b005b005b6000600254905092915050565b50565b600080fd5b600080fd5b50565b50505056fea264697066735822122000000000000000000000000000000000000000000000000000000000000000000064736f6c63430008150033"
+}

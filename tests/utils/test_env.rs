@@ -26,7 +26,8 @@ impl Default for TestConfig {
     fn default() -> Self {
         // Try to load .env.test file first, then fall back to .env
         let _ = dotenv::from_filename(".env.test").or_else(|_| dotenv::dotenv());
-        
+        let ws_url = std::env::var("TEST_WS_URL").unwrap();
+        println!("websoket url: {:?}", ws_url);
         Self {
             ws_url: std::env::var("TEST_WS_URL")
                 .unwrap_or_else(|_| "wss://eth.merkle.io".to_string()),

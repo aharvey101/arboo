@@ -14,6 +14,7 @@ use utils::test_env::TestEnvironment;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::from_filename(".env.test")?;
     // Setup logging for tests
     logger::setup_logger();
     info!("🧪 Starting E2E Test Runner");
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
 async fn run_provider_connection_test() -> TestResult {
     info!("🔗 Running Provider Connection Test");
     
-    match test_provider_connection().await {
+    match test_integrated_environment().await {
         Ok(_) => TestResult::success("Provider Connection"),
         Err(e) => TestResult::failure("Provider Connection", format!("{}", e)),
     }
@@ -74,8 +75,8 @@ async fn run_provider_connection_test() -> TestResult {
 async fn run_atomic_tests() -> TestResult {
     info!("⚛️  Running Atomic Tests");
     
-    // Run the most basic test - provider connection and blockchain interaction
-    match test_provider_connection().await {
+    // Run the most basic test - integrated test environment setup
+    match test_integrated_environment().await {
         Ok(_) => TestResult::success("Atomic Tests"),
         Err(e) => TestResult::failure("Atomic Tests", format!("{}", e)),
     }
@@ -227,44 +228,36 @@ async fn run_phase5_tests() -> TestResult {
     }
 }
 
-async fn test_provider_connection() -> Result<()> {
-    use alloy::providers::{ProviderBuilder, Provider};
-    use alloy::rpc::client::WsConnect;
-    use std::time::Duration;
+async fn test_integrated_environment() -> Result<()> {
+    use utils::integrated_test_env::{IntegratedTestEnvironment, TestEnvironmentConfig};
+    use alloy::providers::Provider;
     
-    info!("  📡 Testing WebSocket provider connection...");
+    info!("  🏗️  Creating integrated test environment...");
     
-    // Use a public endpoint for testing (or local if available)
-    let ws_url = std::env::var("TEST_WS_URL")
-        .unwrap_or_else(|_| "wss://eth.merkle.io".to_string());
+    // Create a simple test configuration
+    let config = TestEnvironmentConfig {
+        mainnet_fork_url: "https://rpc.ankr.com/eth".to_string(),
+        private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+        websocket_port: None,
+        enable_logging: true,
+        gas_limit: 21000,
+        gas_price: 20_000_000_000,
+    };
     
-    let ws_client = WsConnect::new(ws_url.clone());
-    let provider = ProviderBuilder::new().on_ws(ws_client).await?;
+    info!("  🚀 Setting up test environment with Anvil...");
+    let test_env = IntegratedTestEnvironment::new(config).await?;
     
-    info!("  ✅ Provider connected to: {}", ws_url);
+    info!("  ✅ Test environment created successfully");
     
-    // Test basic blockchain interaction
-    info!("  🔍 Testing block number retrieval...");
+    // Test basic provider functionality
+    info!("  � Testing provider connection...");
+    let provider = test_env.provider();
     let block_number = provider.get_block_number().await?;
     info!("  ✅ Current block number: {}", block_number);
     
-    // Test that we can get recent blocks
-    info!("  📦 Testing block retrieval...");
-    let latest_block = provider
-        .get_block(alloy::eips::BlockId::latest(), alloy::rpc::types::BlockTransactionsKind::Hashes)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("Failed to get latest block"))?;
-    
-    info!("  ✅ Retrieved block {} with {} transactions", 
-          latest_block.header.number, 
-          latest_block.transactions.len());
-    
-    // Test provider stays connected for a short period
-    info!("  ⏱️  Testing connection stability...");
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    
-    let block_number_2 = provider.get_block_number().await?;
-    info!("  ✅ Connection stable, new block: {}", block_number_2);
+    info!("  🧹 Cleaning up test environment...");
+    test_env.cleanup().await?;
+    info!("  ✅ Test environment cleanup completed");
     
     Ok(())
 }

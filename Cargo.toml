@@ -73,6 +73,7 @@ fern = { version = "0.7.1", features = ["colored"] }
 chrono = "0.4.39"
 mockall = "0.13.1"
 num-bigint = "0.4.6"
+rand = "0.8"
 
 # E2E Test binaries
 [[bin]]
@@ -84,3 +85,5 @@ tokio-test = "0.4"
 wiremock = "0.5"
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
+tokio-tungstenite = "0.26.1"
+rand = "0.8"
