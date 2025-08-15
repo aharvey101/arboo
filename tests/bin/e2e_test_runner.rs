@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
         }
         "integration" => test_results.add(run_integration_tests().await),
         "phase4" => test_results.add(run_phase4_tests().await),
+        "phase5" => test_results.add(run_phase5_tests().await),
         "full-flow" => test_results.add(run_full_flow_tests().await),
         "all" => {
             test_results.add(run_atomic_tests().await);
@@ -42,10 +43,11 @@ async fn main() -> Result<()> {
             test_results.add(run_evm_tests().await);
             test_results.add(run_integration_tests().await);
             test_results.add(run_phase4_tests().await);
+            test_results.add(run_phase5_tests().await);
         }
         _ => {
             eprintln!("❌ Unknown test: {}", test_name);
-            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, phase4, full-flow, all");
+            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, phase4, phase5, full-flow, all");
             process::exit(1);
         }
     }
@@ -161,6 +163,70 @@ async fn run_full_flow_tests() -> TestResult {
     run_phase4_tests().await
 }
 
+async fn run_phase5_tests() -> TestResult {
+    info!("🔬 Running Phase 5: Edge Case & Stress Tests");
+    
+    // Run all Phase 5 test categories
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Test network disconnection scenarios
+    info!("🌐 Testing Network Disconnection Scenarios");
+    match run_network_disconnection_test().await {
+        Ok(_) => info!("✅ Network disconnection tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Network disconnection tests failed: {}", e));
+        }
+    }
+    
+    // Test gas price spike scenarios
+    info!("⛽ Testing Gas Price Spike Scenarios");
+    match run_gas_price_spike_test().await {
+        Ok(_) => info!("✅ Gas price spike tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Gas price spike tests failed: {}", e));
+        }
+    }
+    
+    // Test insufficient liquidity scenarios
+    info!("💧 Testing Insufficient Liquidity Scenarios");
+    match run_insufficient_liquidity_test().await {
+        Ok(_) => info!("✅ Insufficient liquidity tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Insufficient liquidity tests failed: {}", e));
+        }
+    }
+    
+    // Test block reorganization scenarios
+    info!("🔄 Testing Block Reorganization Scenarios");
+    match run_block_reorganization_test().await {
+        Ok(_) => info!("✅ Block reorganization tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Block reorganization tests failed: {}", e));
+        }
+    }
+    
+    // Test MEV competition scenarios
+    info!("🏆 Testing MEV Competition Scenarios");
+    match run_mev_competition_test().await {
+        Ok(_) => info!("✅ MEV competition tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("MEV competition tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Phase 5: Edge Case & Stress Tests")
+    } else {
+        TestResult::failure("Phase 5: Edge Case & Stress Tests", errors.join("; "))
+    }
+}
+
 async fn test_provider_connection() -> Result<()> {
     use alloy::providers::{ProviderBuilder, Provider};
     use alloy::rpc::client::WsConnect;
@@ -273,6 +339,102 @@ async fn run_error_recovery_test() -> Result<()> {
     
     if output.status.success() {
         info!("✅ Error recovery test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+// Phase 5 individual test functions
+async fn run_network_disconnection_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🌐 Running network disconnection test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_websocket_disconnection_recovery", "--test", "network_disconnection_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Network disconnection test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_gas_price_spike_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("⛽ Running gas price spike test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_gas_price_spike_handling", "--test", "gas_price_spike_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Gas price spike test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_insufficient_liquidity_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("💧 Running insufficient liquidity test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_low_liquidity_handling", "--test", "insufficient_liquidity_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Insufficient liquidity test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_block_reorganization_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔄 Running block reorganization test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_block_reorganization_handling", "--test", "block_reorganization_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Block reorganization test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_mev_competition_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🏆 Running MEV competition test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_mev_competition_detection", "--test", "mev_competition_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ MEV competition test passed");
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
