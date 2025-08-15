@@ -1,6 +1,5 @@
 use crate::arbitrage::simulation::{arboo_bytecode, get_address, AddressType};
-
-use super::revmInspector::{self, RevmInspector};
+use crate::common::revmInspector;
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
 use alloy::network::{AnyNetwork, Ethereum};
@@ -12,7 +11,6 @@ use alloy_sol_types::SolCall;
 use anyhow::{anyhow, Error, Result};
 use log::info;
 use revm::db::{AlloyDB, CacheDB};
-use revm::inspector_handle_register;
 use revm::primitives::{Bytes, Log};
 use revm::{
     primitives::{AccountInfo, Bytecode, ExecutionResult, Output, TransactTo, B256, U256},
@@ -20,7 +18,6 @@ use revm::{
 };
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {
@@ -68,21 +65,20 @@ pub struct TxResult {
 // type My_Evm_Context = EvmContext<CacheDB<AlloyDB<Client, AnyNetwork, RootProvider<PubSubFrontend>>>>;
 
 #[derive(Debug)]
-pub struct EvmSimulator<'a> {
+pub struct EvmSimulator {
     pub owner: Address,
     pub contract_address: Address,
-    pub evm: TokioMutex<
-        Evm<
-            'a,
-            RevmInspector,
-            CacheDB<AlloyDB<PubSubFrontend, Ethereum, Arc<RootProvider<PubSubFrontend, Ethereum>>>>,
-        >,
+    pub evm: Evm<
+        'static,
+        (),
+        //CacheDB<AlloyDB<PubSubFrontend, Ethereum, RootProvider<PubSubFrontend, Ethereum>>>,
+        CacheDB<AlloyDB<PubSubFrontend, Ethereum, RootProvider<PubSubFrontend, Ethereum>>>,
     >,
     pub block_number: U64,
 }
-impl<'a> EvmSimulator<'a> {
+impl EvmSimulator {
     pub fn new(
-        provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
+        provider: RootProvider<PubSubFrontend, Ethereum>,
         owner: Option<Address>,
         block_number: U64,
     ) -> Self {
@@ -125,7 +121,7 @@ impl<'a> EvmSimulator<'a> {
     pub fn new_with_db(
         owner: Option<Address>,
         block_number: U64,
-        provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
+        provider: RootProvider<PubSubFrontend, Ethereum>,
     ) -> Self {
         let owner = match owner {
             Some(owner) => owner,
@@ -138,8 +134,9 @@ impl<'a> EvmSimulator<'a> {
 
         let evm = Evm::builder()
             .with_db(alloy_db)
-            .with_external_context(inspector)
-            .append_handler_register(inspector_handle_register)
+            //.with_external_context(EmptyDB::new())
+            //.with_external_context(inspector)
+            //.append_handler_register(inspector_handle_register)
             .modify_env(|env| {
                 env.block.number = U256::from(block_number);
                 env.block.coinbase =
@@ -147,7 +144,7 @@ impl<'a> EvmSimulator<'a> {
             })
             .build();
 
-        let evm = TokioMutex::new(evm);
+        //let evm = TokioMutex::new(evm);
 
         Self {
             owner,
@@ -157,28 +154,20 @@ impl<'a> EvmSimulator<'a> {
         }
     }
 
-    pub fn set_arc_mutex(&mut self) -> Arc<TokioMutex<&mut EvmSimulator<'a>>> {
-        Arc::new(TokioMutex::new(self))
-    }
-
     pub async fn get_block_number(&mut self) -> U256 {
-        let evm = self.evm.lock().await;
-        evm.block().number
+        self.evm.block().number
     }
 
     pub async fn get_coinbase(&mut self) -> Address {
-        let evm = self.evm.lock().await;
-        evm.block().coinbase
+        self.evm.block().coinbase
     }
 
     pub async fn get_base_fee(&mut self) -> U256 {
-        let evm = self.evm.lock().await;
-        evm.block().basefee
+        self.evm.block().basefee
     }
 
     pub async fn set_base_fee(&mut self, base_fee: U256) {
-        let mut evm = self.evm.lock().await;
-        evm.context.evm.env.block.basefee = base_fee;
+        self.evm.context.evm.env.block.basefee = base_fee;
     }
 
     pub fn staticcall(&mut self, tx: Tx) -> Result<TxResult> {
@@ -190,77 +179,74 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub fn _call(&mut self, tx: Tx, commit: bool) -> Result<TxResult> {
-        if let Ok(mut evm) = self.evm.try_lock() {
-            evm.context.evm.env.tx.caller = tx.caller;
-            evm.context.evm.env.tx.transact_to = TransactTo::Call(tx.transact_to);
-            evm.context.evm.env.tx.data = tx.data.clone();
-            evm.context.evm.env.tx.value = tx.value;
-            evm.context.evm.env.tx.gas_price = tx.gas_price;
-            evm.context.evm.env.tx.gas_limit = tx.gas_limit;
+        self.evm.context.evm.env.tx.caller = tx.caller;
+        self.evm.context.evm.env.tx.transact_to = TransactTo::Call(tx.transact_to);
+        self.evm.context.evm.env.tx.data = tx.data.clone();
+        self.evm.context.evm.env.tx.value = tx.value;
+        self.evm.context.evm.env.tx.gas_price = tx.gas_price;
+        self.evm.context.evm.env.tx.gas_limit = tx.gas_limit;
 
-            let result = match commit {
-                true => match evm.transact_commit() {
-                    Ok(result) => result,
-                    Err(e) => return Err(anyhow!("EVM call failed: {:?}", e)),
-                },
-                false => {
-                    let ref_tx = evm
-                        .transact()
-                        .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
-                    ref_tx.result
-                }
-            };
-            //info!("Result: {:?}", result);
-            let output = match result {
-                ExecutionResult::Success {
+        let result = match commit {
+            true => match self.evm.transact_commit() {
+                Ok(result) => result,
+                Err(e) => return Err(anyhow!("EVM call failed: {:?}", e)),
+            },
+            false => {
+                let ref_tx = self
+                    .evm
+                    .transact()
+                    .map_err(|e| anyhow!("EVM staticcall failed: {:?}", e))?;
+                ref_tx.result
+            }
+        };
+        //info!("Result: {:?}", result);
+        let output = match result {
+            ExecutionResult::Success {
+                gas_used,
+                gas_refunded,
+                output,
+                logs,
+                ..
+            } => match output {
+                Output::Call(o) => TxResult {
+                    output: o,
+                    logs: Some(logs),
                     gas_used,
                     gas_refunded,
-                    output,
-                    logs,
-                    ..
-                } => match output {
-                    Output::Call(o) => TxResult {
-                        output: o,
-                        logs: Some(logs),
-                        gas_used,
-                        gas_refunded,
-                    },
-                    Output::Create(o, _) => TxResult {
-                        output: o,
-                        logs: Some(logs),
-                        gas_used,
-                        gas_refunded,
-                    },
                 },
-                ExecutionResult::Revert { gas_used, output } => {
-                    return Err(anyhow!(
-                        "EVM REVERT: {:?} / Gas used: {:?}",
-                        output,
-                        gas_used
-                    ))
-                }
-                ExecutionResult::Halt { reason, .. } => {
-                    return Err(anyhow!("EVM HALT: {:?}", reason))
-                }
-            };
+                Output::Create(o, _) => TxResult {
+                    output: o,
+                    logs: Some(logs),
+                    gas_used,
+                    gas_refunded,
+                },
+            },
+            ExecutionResult::Revert { gas_used, output } => {
+                return Err(anyhow!(
+                    "EVM REVERT: {:?} / Gas used: {:?}",
+                    output,
+                    gas_used
+                ))
+            }
+            ExecutionResult::Halt { reason, .. } => return Err(anyhow!("EVM HALT: {:?}", reason)),
+        };
 
-            Ok(output)
-        } else {
-            Err(anyhow!("EVM lock failed"))
-        }
+        Ok(output)
     }
 
     pub async fn insert_account_info(&mut self, target: Address, account_info: AccountInfo) {
-        let mut evm = self.evm.lock().await;
-        evm.context.evm.db.insert_account_info(target, account_info);
+        self.evm
+            .context
+            .evm
+            .db
+            .insert_account_info(target, account_info);
     }
 
     pub async fn insert_contract(&mut self, data: Bytecode) {
-        let mut evm = self.evm.lock().await;
         let code_hash = data.hash_slow();
         info!("code hash in insert_contract: {:?}", code_hash);
         let mut account_info = AccountInfo::new(U256::from(0), 0, code_hash, data);
-        evm.context.evm.db.insert_contract(&mut account_info);
+        self.evm.context.evm.db.insert_contract(&mut account_info);
     }
 
     pub async fn deploy(&mut self, bytecode: Bytecode) {
@@ -275,16 +261,14 @@ impl<'a> EvmSimulator<'a> {
         self.insert_account_info(target, contract_info).await;
     }
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
-        let mut evm = self.evm.lock().await;
-        let account = evm.context.evm.db.basic(address).unwrap().unwrap();
+        let account = self.evm.context.evm.db.basic(address).unwrap().unwrap();
         Ok(account)
     }
 
     pub async fn get_contract(&mut self, code_hash: B256) -> Result<(), Error> {
-        let mut evm = self.evm.lock().await;
         let new_code_hash =
             B256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")?;
-        let contracts = evm.context.evm.db.code_by_hash(new_code_hash);
+        let contracts = self.evm.context.evm.db.code_by_hash(new_code_hash);
         info!("contracts: {:?}", contracts);
         Ok(())
     }
@@ -296,8 +280,8 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub async fn get_eth_balance(&mut self, address: Address) -> U256 {
-        let mut evm = self.evm.lock().await;
-        evm.context
+        self.evm
+            .context
             .evm
             .db
             .load_account(address)
@@ -307,13 +291,12 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub async fn load_account(&mut self, address: Address) -> () {
-        let mut evm = self.evm.lock().await;
-        evm.context.evm.db.load_account(address).unwrap();
+        self.evm.context.evm.db.load_account(address).unwrap();
     }
 
     pub async fn get_code_at(&mut self, address: Address) -> Result<AccountInfo, Error> {
-        let mut evm = self.evm.lock().await;
-        Ok(evm
+        Ok(self
+            .evm
             .context
             .evm
             .db
@@ -329,13 +312,12 @@ impl<'a> EvmSimulator<'a> {
         token: Address,
         index: U256,
     ) -> U256 {
-        let mut evm = self.evm.lock().await;
-        evm.context.evm.db.storage(address, index).unwrap()
+        self.evm.context.evm.db.storage(address, index).unwrap()
     }
 
     pub async fn get_storage(&mut self, address: Address) -> AccountInfo {
-        let mut evm = self.evm.lock().await;
-        evm.context
+        self.evm
+            .context
             .evm
             .db
             .load_account(address)
@@ -345,8 +327,8 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub async fn insert_account_storage(&mut self, target: Address, index: U256, value: U256) {
-        let mut evm = self.evm.lock().await;
-        evm.context
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(target, index, value)
@@ -402,21 +384,17 @@ impl<'a> EvmSimulator<'a> {
     }
 
     pub async fn get_accounts(&mut self) {
-        let evm = self.evm.lock().await;
-        let accounts = &evm.context.evm.db.accounts;
+        let accounts = &self.evm.context.evm.db.accounts;
         info!("Accounts: {:?}", accounts);
     }
 
     pub async fn get_db(&mut self) {
-        let evm = self.evm.lock().await;
-        let db = &evm.context.evm.db;
+        let db = &self.evm.context.evm.db;
         info!("//////////////////////////////////////////////////////");
         info!("Logs: {:?}", db);
     }
 
-    pub async fn load_pool_state(&self, pool_address: Address) -> Result<(), Error> {
-        let mut evm = self.evm.lock().await;
-
+    pub async fn load_pool_state(&mut self, pool_address: Address) -> Result<(), Error> {
         // Get all storage slots from the provider
         // You might want to batch this or load specific slots based on the pool type (V2 or V3)
         let storage_slots = vec![
@@ -427,8 +405,9 @@ impl<'a> EvmSimulator<'a> {
         ];
 
         for slot in storage_slots {
-            let value = evm.context.evm.db.storage(pool_address, slot)?;
-            evm.context
+            let value = self.evm.context.evm.db.storage(pool_address, slot)?;
+            self.evm
+                .context
                 .evm
                 .db
                 .insert_account_storage(pool_address, slot, value)?;
@@ -438,13 +417,17 @@ impl<'a> EvmSimulator<'a> {
     }
 
     // Helper method to load V2 pool specific storage
-    pub async fn load_v2_pool_state(&self, pool_address: Address) -> Result<(), Error> {
-        let mut evm = self.evm.lock().await;
-
+    pub async fn load_v2_pool_state(&mut self, pool_address: Address) -> Result<(), Error> {
         // V2 pools store reserves in slot 0
         let reserves_slot = U256::from(0);
-        let reserves = evm.context.evm.db.storage(pool_address, reserves_slot)?;
-        evm.context
+        let reserves = self
+            .evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, reserves_slot)?;
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(pool_address, reserves_slot, reserves)?;
@@ -452,12 +435,13 @@ impl<'a> EvmSimulator<'a> {
         // Load other V2-specific storage slots
         // token0 balance
         let token0_balance_slot = U256::from(1);
-        let token0_balance = evm
+        let token0_balance = self
+            .evm
             .context
             .evm
             .db
             .storage(pool_address, token0_balance_slot)?;
-        evm.context.evm.db.insert_account_storage(
+        self.evm.context.evm.db.insert_account_storage(
             pool_address,
             token0_balance_slot,
             token0_balance,
@@ -465,12 +449,13 @@ impl<'a> EvmSimulator<'a> {
 
         // token1 balance
         let token1_balance_slot = U256::from(2);
-        let token1_balance = evm
+        let token1_balance = self
+            .evm
             .context
             .evm
             .db
             .storage(pool_address, token1_balance_slot)?;
-        evm.context.evm.db.insert_account_storage(
+        self.evm.context.evm.db.insert_account_storage(
             pool_address,
             token1_balance_slot,
             token1_balance,
@@ -480,53 +465,67 @@ impl<'a> EvmSimulator<'a> {
     }
 
     // Helper method to load V3 pool specific storage
-    pub async fn load_v3_pool_state(&self, pool_address: Address) -> Result<(), Error> {
-        let mut evm = self.evm.lock().await;
-
+    pub async fn load_v3_pool_state(&mut self, pool_address: Address) -> Result<(), Error> {
         // Basic pool state
         let liquidity_slot = U256::from(0);
-        let liquidity = evm.context.evm.db.storage(pool_address, liquidity_slot)?;
+        let liquidity = self
+            .evm
+            .context
+            .evm
+            .db
+            .storage(pool_address, liquidity_slot)?;
 
         // info!("liquidity {:?}", liquidity);
 
-        evm.context
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(pool_address, liquidity_slot, liquidity)?;
 
         let sqrt_price_slot = U256::from(1);
-        let sqrt_price = evm.context.evm.db.storage(pool_address, sqrt_price_slot)?;
-        evm.context
+        let sqrt_price = self
+            .evm
+            .context
             .evm
             .db
-            .insert_account_storage(pool_address, sqrt_price_slot, sqrt_price)?;
+            .storage(pool_address, sqrt_price_slot)?;
+        self.evm.context.evm.db.insert_account_storage(
+            pool_address,
+            sqrt_price_slot,
+            sqrt_price,
+        )?;
 
         let tick_slot = U256::from(2);
-        let tick = evm.context.evm.db.storage(pool_address, tick_slot)?;
-        evm.context
+        let tick = self.evm.context.evm.db.storage(pool_address, tick_slot)?;
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(pool_address, tick_slot, tick)?;
 
         // Fee and protocol fee settings
         let fee_slot = U256::from(3);
-        let fee = evm.context.evm.db.storage(pool_address, fee_slot)?;
+        let fee = self.evm.context.evm.db.storage(pool_address, fee_slot)?;
 
-        evm.context
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(pool_address, fee_slot, fee)?;
 
         let token0_slot = U256::from(4);
-        let token0 = evm.context.evm.db.storage(pool_address, token0_slot)?;
-        evm.context
+        let token0 = self.evm.context.evm.db.storage(pool_address, token0_slot)?;
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(pool_address, token0_slot, token0)?;
 
         let token1_slot = U256::from(5);
-        let token1 = evm.context.evm.db.storage(pool_address, token1_slot)?;
-        evm.context
+        let token1 = self.evm.context.evm.db.storage(pool_address, token1_slot)?;
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(pool_address, token1_slot, token1)?;
@@ -558,24 +557,26 @@ impl<'a> EvmSimulator<'a> {
 
         // Protocol fees
         let protocol_fees0_slot = U256::from(8);
-        let protocol_fees0 = evm
+        let protocol_fees0 = self
+            .evm
             .context
             .evm
             .db
             .storage(pool_address, protocol_fees0_slot)?;
-        evm.context.evm.db.insert_account_storage(
+        self.evm.context.evm.db.insert_account_storage(
             pool_address,
             protocol_fees0_slot,
             protocol_fees0,
         )?;
 
         let protocol_fees1_slot = U256::from(9);
-        let protocol_fees1 = evm
+        let protocol_fees1 = self
+            .evm
             .context
             .evm
             .db
             .storage(pool_address, protocol_fees1_slot)?;
-        evm.context.evm.db.insert_account_storage(
+        self.evm.context.evm.db.insert_account_storage(
             pool_address,
             protocol_fees1_slot,
             protocol_fees1,
@@ -585,8 +586,14 @@ impl<'a> EvmSimulator<'a> {
         let token0_addr = Address::from_slice(&token0.to_be_bytes::<32>()[12..]);
         let balance0_slot = get_balance_slot(pool_address);
 
-        let balance0 = evm.context.evm.db.storage(token0_addr, balance0_slot)?;
-        evm.context
+        let balance0 = self
+            .evm
+            .context
+            .evm
+            .db
+            .storage(token0_addr, balance0_slot)?;
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(token0_addr, balance0_slot, balance0)?;
@@ -594,8 +601,14 @@ impl<'a> EvmSimulator<'a> {
         let token1_addr = Address::from_slice(&token1.to_be_bytes::<32>()[12..]);
         let balance1_slot = get_balance_slot(pool_address);
 
-        let balance1 = evm.context.evm.db.storage(token1_addr, balance1_slot)?;
-        evm.context
+        let balance1 = self
+            .evm
+            .context
+            .evm
+            .db
+            .storage(token1_addr, balance1_slot)?;
+        self.evm
+            .context
             .evm
             .db
             .insert_account_storage(token1_addr, balance1_slot, balance1)?;

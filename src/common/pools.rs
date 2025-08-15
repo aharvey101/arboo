@@ -50,7 +50,7 @@ pub struct Pool {
     pub token0: Address,
     pub token1: Address,
     pub fee: u32, // uniswap v3 specific
-    pub block_number: u64,
+                  //pub block_number: u64,
 }
 
 impl From<StringRecord> for Pool {
@@ -66,13 +66,13 @@ impl From<StringRecord> for Pool {
             token0: Address::from_str(record.get(3).unwrap()).unwrap(),
             token1: Address::from_str(record.get(4).unwrap()).unwrap(),
             fee: record.get(5).unwrap().parse().unwrap(),
-            block_number: record.get(6).unwrap().parse().unwrap(),
+            //block_number: record.get(6).unwrap().parse().unwrap(),
         }
     }
 }
 
 impl Pool {
-    pub fn cache_row(&self) -> (i64, String, i32, String, String, u32, u64) {
+    pub fn cache_row(&self) -> (i64, String, i32, String, String, u32) {
         (
             self.id,
             format!("{:?}", self.address),
@@ -80,7 +80,7 @@ impl Pool {
             format!("{:?}", self.token0),
             format!("{:?}", self.token1),
             self.fee,
-            self.block_number,
+            //self.block_number,
         )
     }
 
@@ -123,7 +123,7 @@ pub async fn load_all_pools(
 ) -> Result<(Vec<Pool>, i64)> {
     create_dir_all("cache").expect("Error creating directory");
     info!("Creating cache file");
-    let cache_file = "~/cache/.cached-pools.csv";
+    let cache_file = "/Users/alexander/cache/.cached-pools.csv";
     let file_path = Path::new(cache_file);
     let file_exists = file_path.exists();
     let file = OpenOptions::new()
@@ -151,13 +151,8 @@ pub async fn load_all_pools(
     } else {
         info!("Writing");
         writer.write_record([
-            "id",
-            "address",
-            "version",
-            "token0",
-            "token1",
-            "fee",
-            "block_number",
+            "id", "address", "version", "token0", "token1", "fee",
+            //"block_number",
         ])?;
     }
     info!("Pools loaded: {:?}", pools.len());
@@ -173,11 +168,11 @@ pub async fn load_all_pools(
     };
     let last_id = id;
 
-    let from_block = if id != -1 {
-        pools.last().as_ref().unwrap().block_number + 1
-    } else {
-        from_block
-    };
+    //    let from_block = if id != -1 {
+    //        pools.last().as_ref().unwrap().block_number + 1
+    //    } else {
+    //        from_block
+    //    };
 
     let to_block = provider.get_block_number().await.unwrap();
 
@@ -266,7 +261,7 @@ pub async fn load_all_pools(
     //let mut pools = filtered_pools;
     //info!("amount of pools after liquidity test: {:?}", pools.len());
     let mut added = 0;
-    pools.sort_by_key(|p| p.block_number);
+    //pools.sort_by_key(|p| p.block_number);
     for pool in pools.iter_mut() {
         if pool.id == -1 {
             id += 1;
@@ -299,7 +294,7 @@ pub async fn load_uniswap_v2_pools(
     let logs = provider.get_logs(&event_filter).await?;
 
     for log in logs {
-        let block_number = log.block_number.unwrap_or_default();
+        //let block_number = log.block_number.unwrap_or_default();
 
         let topic0 = log.topics()[1];
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
@@ -317,7 +312,7 @@ pub async fn load_uniswap_v2_pools(
             token0,
             token1,
             fee: 300,
-            block_number,
+            //block_number,
         };
         pools.push(pool_data);
     }
@@ -344,7 +339,7 @@ pub async fn load_uniswap_v3_pools(
             info!("V3 log 1 empty");
             continue;
         }
-        let block_number = log.block_number.unwrap_or_default();
+        //let block_number = log.block_number.unwrap_or_default();
 
         let topic0 = log.topics()[1];
         let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
@@ -371,7 +366,7 @@ pub async fn load_uniswap_v3_pools(
             token0,
             token1,
             fee,
-            block_number,
+            //block_number,
         };
         pools.push(pool_data);
     }
