@@ -1,7 +1,7 @@
 use crate::common::revm::{EvmSimulator, Tx};
 use ::log::info;
 use alloy::eips::BlockId;
-use alloy::providers::{Provider, RootProvider};
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
@@ -20,15 +20,18 @@ pub async fn simulation(
 ) -> Result<U256> {
     let time = std::time::Instant::now();
     let latest_block_number = provider.get_block_number().await?;
+    info!("got block number: {:?}", latest_block_number);
+    let syncying_status = provider.syncing().await?;
+    info!("Syncing status: {:?}", syncying_status);
     let block_id = BlockId::from_str(latest_block_number.to_string().as_str()).unwrap();
     let latest_block = provider
         .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
         .await?
         .ok_or(anyhow::Error::msg("Error getting block"))?;
-    // info!(
-    //     "latest block timestamp: {:?}",
-    //     latest_block.header.timestamp
-    // );
+    info!(
+        "latest block timestamp: {:?}",
+        latest_block.header.timestamp
+    );
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
 
@@ -44,7 +47,7 @@ pub async fn simulation(
     .await
     .inspect_err(|e| info!("Error getting weth balance {:?}", e))?;
 
-    //log::debug!("Initial Weth Balance: {:?}", weth_balance);
+    log::debug!("Initial Weth Balance: {:?}", weth_balance);
 
     alloy::sol! {
         #[derive(Debug)]
@@ -80,7 +83,9 @@ pub async fn simulation(
         gas_price: latest_gas_price,
     };
 
-    simulator.call(new_tx)?;
+    simulator
+        .call(new_tx)
+        .inspect_err(|e| info!("Error doing sim {:?}", e))?;
 
     let balance = check_weth_balance(
         wallet_address,
@@ -91,12 +96,9 @@ pub async fn simulation(
     )
     .await
     .inspect_err(|e| info!("Error checking weth balance {e}",))?;
-    //info!("Weth Balance before swap = {weth_balance}");
-    //info!("Balance after swap: {balance}");
 
     let profit = balance - weth_balance;
 
-    info!("Profit: {profit}");
     Ok(profit)
 }
 

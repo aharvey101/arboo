@@ -12,7 +12,6 @@ use alloy::providers::{Provider, ProviderBuilder, RootProvider, WsConnect};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy::signers::local::PrivateKeySigner;
-use alloy::transports::ws;
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{address, U64};
 use alloy_sol_types::SolCall;
@@ -30,11 +29,12 @@ use std::{
 };
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
+use url::Url;
 
 pub struct StrategyWorkerPool {
     sender: mpsc::Sender<LogEvent>,
 }
-
+#[allow(clippy::all)]
 impl StrategyWorkerPool {
     pub async fn new(sender: Sender<LogEvent>, ws_url: String) {
         let mut event_reciever = sender.subscribe();
@@ -43,9 +43,6 @@ impl StrategyWorkerPool {
 
         local.spawn_local(async move {
             while let Ok(res) = event_reciever.recv().await {
-                // spawn task?
-                info!("Log recieved, spawning task!");
-
                 tokio::task::spawn_local(process_strategy(res, ws_url.clone()));
             }
         });
@@ -70,12 +67,12 @@ impl StrategyWorkerPool {
 
 // Usage example in your main code:
 pub async fn initialize_strategy_pool(sender: Sender<LogEvent>, ws_url: String) {
-    StrategyWorkerPool::new(sender, ws_url).await
+    StrategyWorkerPool::new(sender, ws_url).await;
 }
 
 pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
     let time = std::time::Instant::now();
-    // log the runtime?
+    // log the runtime
     let ws_client = WsConnect::new(ws_url.clone());
     let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
 

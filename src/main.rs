@@ -38,9 +38,9 @@ async fn main() -> Result<()> {
     let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
     let provider = Arc::new(provider);
 
-    if !Path::new("cache/.cached-pools.csv").try_exists()? {
+    if !Path::new("/Users/alexander/cache/.cached-pools.csv").try_exists()? {
         info!("Cache doesn't exist, crawling blocks for pools");
-        pools::load_all_pools(ws_url, 100_000, 50_000)
+        pools::load_all_pools(ws_url.clone(), 100_000, 50_000)
             .await
             .unwrap();
     }
@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     // 1. Get all pools
 
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new("~/cache/.cached-pools.csv");
+    let path = Path::new("/Users/alexander/cache/.cached-pools.csv");
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
     // id,address,version,token0,oken1,fee,block_number,timestamp
@@ -98,7 +98,6 @@ async fn main() -> Result<()> {
     //let simulator: Arc<TokioMutex<EvmSimulator<'_>>> = Arc::new(TokioMutex::new(simulator));
 
     info!("Spawning evm");
-
     initialize_strategy_pool(sender, ws_url).await;
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
@@ -108,7 +107,7 @@ async fn main() -> Result<()> {
 }
 
 // MVP What is left to do:
-// [ ] Fix up all the decoding so that we can understand the errors
+// [] Fix up all the decoding so that we can understand the errors
 // [x] Create an Inspector
-// [ ] Make it take profitable Arbitrages :shrug:
-// [ ]
+// [x] Make it take profitable Arbitrages :shrug:
+// [ ] Make a ETH usdt ETH USD bot

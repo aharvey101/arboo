@@ -71,6 +71,7 @@ pub struct EvmSimulator {
     pub evm: Evm<
         'static,
         (),
+        //CacheDB<AlloyDB<PubSubFrontend, Ethereum, RootProvider<PubSubFrontend, Ethereum>>>,
         CacheDB<AlloyDB<PubSubFrontend, Ethereum, RootProvider<PubSubFrontend, Ethereum>>>,
     >,
     pub block_number: U64,
