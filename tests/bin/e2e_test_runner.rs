@@ -34,15 +34,18 @@ async fn main() -> Result<()> {
             test_results.add(run_evm_tests().await);
         }
         "integration" => test_results.add(run_integration_tests().await),
+        "phase4" => test_results.add(run_phase4_tests().await),
+        "full-flow" => test_results.add(run_full_flow_tests().await),
         "all" => {
             test_results.add(run_atomic_tests().await);
             test_results.add(run_pool_tests().await);
             test_results.add(run_evm_tests().await);
             test_results.add(run_integration_tests().await);
+            test_results.add(run_phase4_tests().await);
         }
         _ => {
             eprintln!("❌ Unknown test: {}", test_name);
-            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, all");
+            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, phase4, full-flow, all");
             process::exit(1);
         }
     }
@@ -99,6 +102,65 @@ async fn run_integration_tests() -> TestResult {
     TestResult::success("Integration Tests (Not Implemented)")
 }
 
+async fn run_phase4_tests() -> TestResult {
+    info!("🚀 Running Phase 4: Full Flow Tests");
+    
+    // Run all Phase 4 test categories
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Test full arbitrage cycles
+    info!("🔄 Testing Full Arbitrage Cycles");
+    match run_full_arbitrage_cycle_test().await {
+        Ok(_) => info!("✅ Full arbitrage cycle tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Full arbitrage cycle tests failed: {}", e));
+        }
+    }
+    
+    // Test concurrent opportunities (sequential due to thread safety)
+    info!("🔄 Testing Concurrent Opportunities (Sequential Load)");
+    match run_concurrent_opportunities_test().await {
+        Ok(_) => info!("✅ Concurrent opportunities tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Concurrent opportunities tests failed: {}", e));
+        }
+    }
+    
+    // Test high-frequency scenarios
+    info!("⚡ Testing High-Frequency Scenarios");
+    match run_high_frequency_test().await {
+        Ok(_) => info!("✅ High-frequency tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("High-frequency tests failed: {}", e));
+        }
+    }
+    
+    // Test error recovery and reconnection
+    info!("🔧 Testing Error Recovery and Reconnection");
+    match run_error_recovery_test().await {
+        Ok(_) => info!("✅ Error recovery tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Error recovery tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Phase 4: Full Flow Tests")
+    } else {
+        TestResult::failure("Phase 4: Full Flow Tests", errors.join("; "))
+    }
+}
+
+async fn run_full_flow_tests() -> TestResult {
+    info!("🎯 Running Full Flow Tests Only");
+    run_phase4_tests().await
+}
+
 async fn test_provider_connection() -> Result<()> {
     use alloy::providers::{ProviderBuilder, Provider};
     use alloy::rpc::client::WsConnect;
@@ -139,6 +201,83 @@ async fn test_provider_connection() -> Result<()> {
     info!("  ✅ Connection stable, new block: {}", block_number_2);
     
     Ok(())
+}
+
+// Phase 4 individual test functions
+async fn run_full_arbitrage_cycle_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔄 Running full arbitrage cycle test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_complete_arbitrage_cycle", "--test", "full_arbitrage_cycle_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Full arbitrage cycle test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_concurrent_opportunities_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔄 Running concurrent opportunities test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_sequential_arbitrage_opportunities", "--test", "concurrent_opportunities_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Concurrent opportunities test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_high_frequency_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("⚡ Running high-frequency test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_high_frequency_opportunity_processing", "--test", "high_frequency_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ High-frequency test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
+}
+
+async fn run_error_recovery_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔧 Running error recovery test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_connection_failure_handling", "--test", "error_recovery_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Error recovery test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Test failed: {}", stderr))
+    }
 }
 
 #[derive(Debug)]

@@ -24,12 +24,23 @@ pub struct TestConfig {
 
 impl Default for TestConfig {
     fn default() -> Self {
+        // Try to load .env.test file first, then fall back to .env
+        let _ = dotenv::from_filename(".env.test").or_else(|_| dotenv::dotenv());
+        
         Self {
             ws_url: std::env::var("TEST_WS_URL")
                 .unwrap_or_else(|_| "wss://eth.merkle.io".to_string()),
-            use_local_fork: false,
-            fork_block_number: None,
-            test_timeout_secs: 30,
+            use_local_fork: std::env::var("USE_LOCAL_FORK")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            fork_block_number: std::env::var("FORK_BLOCK_NUMBER")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+            test_timeout_secs: std::env::var("TEST_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()
+                .unwrap_or(30),
         }
     }
 }

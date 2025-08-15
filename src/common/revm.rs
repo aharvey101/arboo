@@ -81,7 +81,7 @@ impl EvmSimulator {
         provider: RootProvider<PubSubFrontend, Ethereum>,
         owner: Option<Address>,
         block_number: U64,
-    ) -> Self {
+    ) -> Result<Self, anyhow::Error> {
         EvmSimulator::new_with_db(owner, block_number, provider)
     }
 
@@ -122,7 +122,7 @@ impl EvmSimulator {
         owner: Option<Address>,
         block_number: U64,
         provider: RootProvider<PubSubFrontend, Ethereum>,
-    ) -> Self {
+    ) -> Result<Self, anyhow::Error> {
         let owner = match owner {
             Some(owner) => owner,
             None => PrivateKeySigner::random().address(),
@@ -130,7 +130,10 @@ impl EvmSimulator {
         let contract_wallet = PrivateKeySigner::random();
         let inspector = revmInspector::RevmInspector::new();
 
-        let alloy_db = CacheDB::new(AlloyDB::new(provider, BlockId::from(block_number)).unwrap());
+        let alloy_db = CacheDB::new(
+            AlloyDB::new(provider, BlockId::from(block_number))
+                .ok_or_else(|| anyhow::anyhow!("Failed to create AlloyDB: provider or block unavailable"))?
+        );
 
         let evm = Evm::builder()
             .with_db(alloy_db)
@@ -146,12 +149,12 @@ impl EvmSimulator {
 
         //let evm = TokioMutex::new(evm);
 
-        Self {
+        Ok(Self {
             owner,
             evm,
             block_number,
             contract_address: contract_wallet.address(),
-        }
+        })
     }
 
     pub async fn get_block_number(&mut self) -> U256 {
