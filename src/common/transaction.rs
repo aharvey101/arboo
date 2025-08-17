@@ -22,14 +22,18 @@ pub async fn send_transaction(
     input: Vec<u8>,
     nonce: u64,
 ) -> Result<()> {
-    let http_url = var::<&str>("HTTP_URL").unwrap();
+    let http_url = var::<&str>("HTTP_URL")
+        .map_err(|e| anyhow::anyhow!("HTTP_URL environment variable not set: {}", e))?;
     let http_url = http_url.as_str();
 
-    let private_key = var("PRIVATE_KEY").unwrap();
-    let signer = PrivateKeySigner::from_str(&private_key).unwrap();
+    let private_key = var("PRIVATE_KEY")
+        .map_err(|e| anyhow::anyhow!("PRIVATE_KEY environment variable not set: {}", e))?;
+    let signer = PrivateKeySigner::from_str(&private_key)
+        .map_err(|e| anyhow::anyhow!("Invalid private key format: {}", e))?;
     let wallet = EthereumWallet::from(signer.clone());
 
-    let http_url = Url::from_str(http_url).unwrap();
+    let http_url = Url::from_str(http_url)
+        .map_err(|e| anyhow::anyhow!("Invalid HTTP_URL format '{}': {}", http_url, e))?;
     let provider = ProviderBuilder::new()
         .with_recommended_fillers()
         .wallet(wallet.clone())
@@ -49,7 +53,7 @@ pub async fn send_transaction(
         gas_price,
         gas_limit,
         base_fee,
-        bribe.unwrap(),
+        bribe.unwrap_or(0),
         nonce
     );
     //NOTE:  gas limit should be the amount of gas that was simulated for hte transaction to have taken up
@@ -62,10 +66,10 @@ pub async fn send_transaction(
         .with_to(contract_address)
         .with_nonce(nonce)
         // NOTE: this should be gas price?
-        .with_max_fee_per_gas(base_fee.unwrap())
+        .with_max_fee_per_gas(base_fee.ok_or_else(|| anyhow::anyhow!("Base fee is required"))?)
         // NOTE: This too
-        .with_max_priority_fee_per_gas(bribe.unwrap())
-        .with_gas_limit(gas_limit.unwrap());
+        .with_max_priority_fee_per_gas(bribe.ok_or_else(|| anyhow::anyhow!("Priority fee (bribe) is required"))?)
+        .with_gas_limit(gas_limit.ok_or_else(|| anyhow::anyhow!("Gas limit is required"))?);
 
     info!("TX: {:?}", tx);
 
@@ -76,7 +80,7 @@ pub async fn send_transaction(
     let pending = provider
         .send_tx_envelope(envelope)
         .await
-        .unwrap()
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction: {}", e))?
         .with_timeout(Some(std::time::Duration::from_secs_f32(20_f32)));
 
     let res = pending.watch().await?;

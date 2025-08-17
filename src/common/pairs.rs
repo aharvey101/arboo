@@ -13,7 +13,8 @@ pub async fn get_pairs(
     client: Arc<RootProvider<PubSubFrontend>>,
 ) -> Result<HashMap<Address, Event>> {
     // NOTE: fee's are still broken
-    let latest_block = client.get_block_number().await.unwrap();
+    let latest_block = client.get_block_number().await
+        .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
     let from_block = latest_block - 100_000;
 
     let to_block = latest_block;
@@ -47,8 +48,9 @@ pub async fn get_pairs(
         if let Some(next) = iter.peek() {
             if *next == current {
                 result.insert(current.get_address(), current);
-                let next = iter.next().unwrap();
-                result.insert(next.get_address(), next);
+                if let Some(next) = iter.next() {
+                    result.insert(next.get_address(), next);
+                }
             }
         }
     }
@@ -101,13 +103,13 @@ async fn decode_event(log: &Log) -> Option<Event> {
 fn uniswap_v3_factory_address() -> Address {
     "0x1F98431c8aD98523631AE4a59f267346ea31F984"
         .parse()
-        .unwrap()
+        .expect("Hard-coded Uniswap V3 factory address should be valid")
 }
 
 fn uniswap_v2_factory_address() -> Address {
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
         .parse()
-        .unwrap()
+        .expect("Hard-coded Uniswap V2 factory address should be valid")
 }
 
 #[derive(Debug, Clone)]

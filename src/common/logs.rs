@@ -29,7 +29,11 @@ pub async fn get_logs(
     let filter = Filter::new()
         .event_signature(vec![v3_swap_signature, v2_swap_signature])
         .from_block(BlockNumberOrTag::Latest);
-    let sub = client.subscribe_logs(&filter).await.unwrap();
+    let sub = client.subscribe_logs(&filter).await
+        .map_err(|e| log::error!("Failed to subscribe to logs: {}", e))
+        .unwrap_or_else(|_| {
+            panic!("Critical: Cannot subscribe to blockchain logs. Check WebSocket connection.")
+        });
     let mut stream = sub.into_stream();
 
     while let Some(res) = stream.next().await {

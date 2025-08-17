@@ -102,7 +102,8 @@ pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
     // Calculate optimal amount
     let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
 
-    let block_base_fee = latest_block.header.base_fee_per_gas.unwrap();
+    let block_base_fee = latest_block.header.base_fee_per_gas
+        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?;
     info!("loading the pools");
     load_specific_pools(
         &mut simulator,
@@ -254,7 +255,8 @@ pub async fn find_optimal_amount_v3_to_v2(
     }
 
     let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
+        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
     let sim = simulator;
     let mut path = Vec::new();
     path.extend_from_slice(token_in.as_slice());
@@ -279,7 +281,8 @@ pub async fn find_optimal_amount_v3_to_v2(
 
     let res = sim.call(tx)?;
 
-    let possible_profit = decode_quote_output_v3(res.output).expect("failed to decode output");
+    let possible_profit = decode_quote_output_v3(res.output)
+        .map_err(|e| anyhow::anyhow!("Failed to decode V3 quoter output: {}", e))?;
     log::debug!("possible_profit {possible_profit}");
     Ok(ArbitrageResult {
         optimal_amount,
@@ -302,14 +305,16 @@ async fn load_specific_pools(
 ) -> Result<()> {
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
     let path = Path::new("cache/.cached-pools.csv");
-    let file = File::open(&path).expect("Error getting File");
+    let file = File::open(&path)
+        .map_err(|e| anyhow::anyhow!("Error opening cached pools file: {}", e))?;
     let reader = io::BufReader::new(file);
 
     let sim = simulator;
 
     for line in reader.lines().skip(1) {
         // Skip the header line
-        let line = line.expect("Expected Line");
+        let line = line
+            .map_err(|e| anyhow::anyhow!("Error reading line from cached pools file: {}", e))?;
         let fields: Vec<&str> = line.split(',').collect();
         match fields[2] {
             "2" => {
@@ -346,15 +351,15 @@ async fn load_specific_pools(
             Event::PoolCreated(pool) => {
                 sim.load_v3_pool_state(pool.pair_address)
                     .await
-                    .expect("Failed to load v2 pool state");
+                    .map_err(|e| anyhow::anyhow!("Failed to load v3 pool state for {}: {}", pool.pair_address, e))?;
             }
             Event::PairCreated(pool) => {
                 sim.load_v2_pool_state(pool.pair_address)
                     .await
-                    .expect("Failed to load v2 pool state");
+                    .map_err(|e| anyhow::anyhow!("Failed to load v2 pool state for {}: {}", pool.pair_address, e))?;
                 sim.load_pool_state(pool.pair_address)
                     .await
-                    .expect("Failed to load basic state");
+                    .map_err(|e| anyhow::anyhow!("Failed to load basic pool state for {}: {}", pool.pair_address, e))?;
             }
         },
         _ => {}
@@ -365,12 +370,12 @@ async fn load_specific_pools(
             Event::PoolCreated(pool) => {
                 sim.load_v3_pool_state(pool.pair_address)
                     .await
-                    .expect("Failed to load v2 pool state");
+                    .map_err(|e| anyhow::anyhow!("Failed to load v3 pool state for {}: {}", pool.pair_address, e))?;
             }
             Event::PairCreated(pool) => {
                 sim.load_v3_pool_state(pool.pair_address)
                     .await
-                    .expect("Failed to load v2 pool state");
+                    .map_err(|e| anyhow::anyhow!("Failed to load v3 pool state for {}: {}", pool.pair_address, e))?;
             }
         },
         _ => {}
@@ -389,9 +394,8 @@ async fn setup_evm(
             BlockTransactionsKind::Full,
         )
         .await
-        .inspect_err(|err| log::error!("Error getting block: {:?}", err))
-        .unwrap_or_default()
-        .unwrap_or_default();
+        .map_err(|e| anyhow::anyhow!("Error getting latest block: {}", e))?
+        .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?;
 
     let latest_gas_limit = latest_block.header.gas_limit;
     let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
