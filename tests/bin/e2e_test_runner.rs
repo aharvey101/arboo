@@ -3,8 +3,7 @@
 // Usage: cargo run --bin e2e_test_runner
 
 use anyhow::Result;
-use arbooo::common::logger;
-use log::info;
+use log::{info, LevelFilter};
 use std::process;
 
 // Include test utilities using relative path
@@ -12,11 +11,43 @@ mod utils {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
 }
 
+fn setup_test_logger() {
+    use fern::colors::{Color, ColoredLevelConfig};
+    
+    let colors = ColoredLevelConfig {
+        trace: Color::Cyan,
+        debug: Color::Blue,
+        info: Color::Green,
+        warn: Color::Yellow,
+        error: Color::Red,
+    };
+
+    let result = fern::Dispatch::new()
+        .format(move |out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%H:%M:%S]"),
+                colors.color(record.level()),
+                record.target(),
+                message
+            ))
+        })
+        .chain(std::io::stdout())
+        .level(LevelFilter::Info)  // Allow Info level and above
+        .level_for("test", LevelFilter::Debug)  // Allow Debug for test modules
+        .apply();
+        
+    if let Err(_) = result {
+        // Logger already initialized, which is fine
+        eprintln!("Logger already initialized");
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::from_filename(".env.test")?;
-    // Setup logging for tests
-    logger::setup_logger();
+    // Setup our dedicated test logger
+    setup_test_logger();
     info!("🧪 Starting E2E Test Runner");
 
     // Parse command line arguments for specific test selection
@@ -65,7 +96,6 @@ async fn main() -> Result<()> {
 
 async fn run_provider_connection_test() -> TestResult {
     info!("🔗 Running Provider Connection Test");
-    
     match test_integrated_environment().await {
         Ok(_) => TestResult::success("Provider Connection"),
         Err(e) => TestResult::failure("Provider Connection", format!("{}", e)),

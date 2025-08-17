@@ -176,22 +176,6 @@ impl AnvilInstance {
         Ok(provider)
     }
 
-    /// Mine a number of blocks
-    pub async fn mine_blocks(&self, count: u64) -> Result<()> {
-        let provider = self.get_http_provider()?;
-        
-        for _ in 0..count {
-            // Use anvil_mine RPC method
-            let _: serde_json::Value = provider
-                .client()
-                .request("anvil_mine", ())
-                .await?;
-        }
-        
-        debug!("⛏️  Mined {} blocks", count);
-        Ok(())
-    }
-
     /// Set the next block timestamp
     pub async fn set_next_block_timestamp(&self, timestamp: u64) -> Result<()> {
         let provider = self.get_http_provider()?;
@@ -341,17 +325,4 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_anvil_mining() -> Result<()> {
-        let anvil = create_clean_anvil().await?;
-        let provider = anvil.get_http_provider()?;
-        
-        let initial_block = provider.get_block_number().await?;
-        anvil.mine_blocks(3).await?;
-        let final_block = provider.get_block_number().await?;
-        
-        assert_eq!(final_block, initial_block + 3);
-        
-        Ok(())
-    }
 }
