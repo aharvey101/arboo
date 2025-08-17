@@ -5,8 +5,9 @@ use anyhow::Result;
 use arbooo::common::logger;
 use log::info;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::{TestEnvironment, assertions};
 
 #[tokio::test]

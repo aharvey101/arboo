@@ -10,8 +10,9 @@ use alloy_primitives::aliases::U24;
 use revm::primitives::Address;
 use log::info;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 #[tokio::test]

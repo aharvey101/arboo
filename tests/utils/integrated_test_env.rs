@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+
 // Integrated Test Environment Setup
 // Combines all test infrastructure components for comprehensive E2E testing
 
@@ -6,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use alloy::primitives::{Address, U256};
 use log::{info, warn, debug};
-use crate::utils::{
+use super::{
     anvil_setup::{AnvilInstance, create_mainnet_fork},
     contract_deployment::{ContractDeployer, TokenConfig, TestEnvironment},
     mock_websocket::{MockWebSocketProvider, MockScenarios},

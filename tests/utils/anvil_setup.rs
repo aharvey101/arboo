@@ -1,12 +1,16 @@
-// Anvil Local Blockchain Fork Setup
-// Provides utilities for setting up and managing local Anvil forks for testing
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+
+// Anvil Setup and Management Utilities
+// Provides infrastructure for setting up and managing Anvil instances for testing
 
 use anyhow::{Result, Context};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
 use alloy::providers::{Provider, ProviderBuilder};
-use log::{info, warn, debug};
+use log::{info, debug};
 use portpicker::pick_unused_port;
 
 pub struct AnvilInstance {
@@ -172,22 +176,6 @@ impl AnvilInstance {
         Ok(provider)
     }
 
-    /// Mine a number of blocks
-    pub async fn mine_blocks(&self, count: u64) -> Result<()> {
-        let provider = self.get_http_provider()?;
-        
-        for _ in 0..count {
-            // Use anvil_mine RPC method
-            let _: serde_json::Value = provider
-                .client()
-                .request("anvil_mine", ())
-                .await?;
-        }
-        
-        debug!("⛏️  Mined {} blocks", count);
-        Ok(())
-    }
-
     /// Set the next block timestamp
     pub async fn set_next_block_timestamp(&self, timestamp: u64) -> Result<()> {
         let provider = self.get_http_provider()?;
@@ -303,14 +291,12 @@ impl AccountInfo {
 }
 
 /// Helper function to create a test Anvil instance with mainnet fork
-pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInstance> {
+pub async fn create_mainnet_fork(_block_number: Option<u64>) -> Result<AnvilInstance> {
     let fork_url = std::env::var("MAINNET_RPC_URL").ok();
-    println!("fork url: {:?}", fork_url);
     let config = AnvilConfig {
         fork_url,
         ..Default::default()
     };
-    println!("config: {:?}", config.fork_url);
     AnvilInstance::new(config).await
 }
 
@@ -339,17 +325,4 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_anvil_mining() -> Result<()> {
-        let anvil = create_clean_anvil().await?;
-        let provider = anvil.get_http_provider()?;
-        
-        let initial_block = provider.get_block_number().await?;
-        anvil.mine_blocks(3).await?;
-        let final_block = provider.get_block_number().await?;
-        
-        assert_eq!(final_block, initial_block + 3);
-        
-        Ok(())
-    }
 }

@@ -10,14 +10,15 @@ use log::{info, warn};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 /// Test behavior with invalid WebSocket URLs (connection failures)
 #[tokio::test]
 async fn test_connection_failure_handling() -> Result<()> {
-    let test_env = TestEnvironment::new().await?;
+    let _test_env = TestEnvironment::new().await?;
     info!("🔌 Testing connection failure handling");
 
     let invalid_urls = [
@@ -312,7 +313,7 @@ async fn test_graceful_degradation() -> Result<()> {
     
     // Analyze degradation pattern
     info!("📊 Graceful degradation analysis:");
-    for (i, (stress_name, total_ops, successful_ops, success_rate, duration)) in degradation_results.iter().enumerate() {
+    for (_i, (stress_name, total_ops, successful_ops, success_rate, duration)) in degradation_results.iter().enumerate() {
         info!("   📉 {}: {}/{} ops ({:.1}%) in {:?}", 
               stress_name, successful_ops, total_ops, success_rate, duration);
     }

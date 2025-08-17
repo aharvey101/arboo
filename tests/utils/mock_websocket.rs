@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 // Mock WebSocket Provider for Controlled Testing Scenarios
 // Provides utilities for simulating WebSocket connections and events
 
@@ -7,7 +10,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use log::{info, debug, warn};
 use alloy::primitives::{Address, U256, B256};
@@ -221,7 +224,7 @@ impl MockWebSocketProvider {
     async fn run_server(
         listener: TcpListener,
         event_sender: broadcast::Sender<MockEvent>,
-        scenarios: Arc<Mutex<HashMap<String, MockScenario>>>,
+        _scenarios: Arc<Mutex<HashMap<String, MockScenario>>>,
         is_running: Arc<Mutex<bool>>,
     ) {
         {
@@ -229,13 +232,13 @@ impl MockWebSocketProvider {
             *running = true;
         }
 
-        let mut event_receiver = event_sender.subscribe();
+        let _event_receiver = event_sender.subscribe();
 
         while let Ok((stream, addr)) = listener.accept().await {
             debug!("📞 New WebSocket connection from {}", addr);
             
-            let event_sender_clone = event_sender.clone();
-            let mut event_receiver_clone = event_sender.subscribe();
+            let _event_sender_clone = event_sender.clone();
+            let event_receiver_clone = event_sender.subscribe();
 
             tokio::spawn(async move {
                 if let Err(e) = Self::handle_connection(stream, event_receiver_clone).await {

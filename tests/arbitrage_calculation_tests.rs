@@ -1,4 +1,7 @@
-// Arbitrage Opportunity Calculation E2E Tests
+#![allow(dead_code)]
+
+// Arbitrage Calculation E2E Tests
+// Validates arbitrage opportunity calculation and price analysis
 // Tests price difference detection, profit calculation, and slippage analysis
 
 use anyhow::Result;
@@ -7,8 +10,9 @@ use arbooo::arbitrage::simulation::{get_address, AddressType};
 use alloy::primitives::Address;
 use log::info;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 #[derive(Debug, Clone)]
