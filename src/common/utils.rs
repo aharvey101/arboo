@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use alloy::contract;
 use alloy::eips::BlockId;
 use alloy::providers::Provider;
-use alloy::signers::local::PrivateKeySigner;
 use alloy::{
     network::Ethereum, providers::RootProvider, pubsub::PubSubFrontend,
     rpc::types::BlockTransactionsKind,
@@ -12,13 +10,11 @@ use log::info;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::arbitrage::simulation::{
-    arboo_bytecode, check_weth_balance, five_hundred_thousand_eth, get_address, one_hundred_ether,
-    one_thousand_eth, simulation, AddressType,
+    arboo_bytecode, get_address, one_thousand_eth, AddressType,
 };
-use crate::arbitrage::strategy::find_optimal_amount_v3_to_v2;
 use crate::common::revm::Tx;
 use alloy_primitives::aliases::U24;
-use alloy_primitives::{address, U160, U256, U64};
+use alloy_primitives::{address, U160, U256};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 
