@@ -20,7 +20,6 @@ pub struct AnvilInstance {
 
 pub struct AnvilConfig {
     pub fork_url: Option<String>,
-    pub fork_block_number: Option<u64>,
     pub chain_id: u64,
     pub accounts: u32,
     pub balance: u64, // in ETH
@@ -33,7 +32,6 @@ impl Default for AnvilConfig {
     fn default() -> Self {
         Self {
             fork_url: std::env::var("MAINNET_RPC_URL").ok(),
-            fork_block_number: None,
             chain_id: 31337, // Anvil default
             accounts: 10,
             balance: 10000, // 10k ETH per account
@@ -68,12 +66,6 @@ impl AnvilInstance {
         if let Some(fork_url) = &config.fork_url {
             cmd.arg("--fork-url").arg(fork_url);
             
-            if let Some(block) = config.fork_block_number {
-                cmd.arg("--fork-block-number").arg(block.to_string());
-                info!("📡 Forking from {} at specific block {}", fork_url, block);
-            } else {
-                info!("📡 Forking from {} at latest block", fork_url);
-            }
         }
 
         // Debug: print the exact command

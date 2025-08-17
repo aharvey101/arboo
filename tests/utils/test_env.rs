@@ -7,7 +7,6 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
 use log::info;
 use std::sync::Arc;
-use revm::primitives::Address;
 use super::anvil_setup::{AnvilInstance, create_mainnet_fork};
 
 pub struct TestEnvironment {
@@ -19,7 +18,6 @@ pub struct TestEnvironment {
 #[derive(Debug, Clone)]
 pub struct TestConfig {
     pub ws_url: String,
-    pub use_local_fork: bool,
     pub fork_block_number: Option<u64>,
     pub test_timeout_secs: u64,
 }
@@ -32,30 +30,16 @@ impl Default for TestConfig {
         println!("🔍 Environment Variables Debug:");
         println!("  TEST_WS_URL: {:?}", std::env::var("TEST_WS_URL"));
         println!("  WS_URL: {:?}", std::env::var("WS_URL"));
-        println!("  USE_LOCAL_FORK: {:?}", std::env::var("USE_LOCAL_FORK"));
         println!("  MAINNET_RPC_URL: {:?}", std::env::var("MAINNET_RPC_URL"));
         
-        let use_local_fork = std::env::var("USE_LOCAL_FORK")
-            .unwrap_or_else(|_| "false".to_string())
-            .parse()
-            .unwrap_or(false);
+        // Always use local fork (anvil), so ws_url will be set when anvil starts
+        let ws_url = "".to_string(); // Will be set when anvil starts
         
-        // If we're using local fork (anvil), we'll get the URL from anvil later
-        // Otherwise, try environment variables
-        let ws_url = if use_local_fork {
-            "".to_string() // Will be set when anvil starts
-        } else {
-            std::env::var("TEST_WS_URL")
-                .or_else(|_| std::env::var("WS_URL"))
-                .unwrap_or_else(|_| "wss://eth.merkle.io".to_string())
-        };
-        
-        println!("  Final ws_url: {}", if ws_url.is_empty() { "[will use anvil]" } else { &ws_url });
-        println!("  Final use_local_fork: {}", use_local_fork);
+        println!("  Final ws_url: [will use anvil]");
+        println!("  Always using local fork (anvil)");
         
         Self {
             ws_url,
-            use_local_fork,
             fork_block_number: std::env::var("FORK_BLOCK_NUMBER")
                 .ok()
                 .and_then(|s| s.parse().ok()),
@@ -74,38 +58,27 @@ impl TestEnvironment {
     
     pub async fn new_with_config(config: TestConfig) -> Result<Self> {
         info!("🏗️  Setting up test environment...");
-        info!("🔧 Config - use_local_fork: {}", config.use_local_fork);
         info!("🔧 Config - ws_url: {}", config.ws_url);
         info!("🔧 Config - fork_block_number: {:?}", config.fork_block_number);
+        info!("🔧 Always using local anvil fork");
         
-        let (provider, anvil_instance) = if config.use_local_fork {
-            info!("🔧 Setting up local anvil fork...");
-            let anvil = create_mainnet_fork(config.fork_block_number).await?;
-            
-            // Connect to the local anvil instance via WebSocket
-            let ws_url = format!("ws://127.0.0.1:{}", anvil.port);
-            info!("🔗 Connecting to local anvil at: {}", ws_url);
-            
-            let ws_client = WsConnect::new(ws_url);
-            let provider = ProviderBuilder::new().on_ws(ws_client).await?;
-            let provider = Arc::new(provider);
-            
-            (provider, Some(anvil))
-        } else {
-            info!("🌐 Connecting to external provider: {}", config.ws_url);
-            let ws_client = WsConnect::new(config.ws_url.clone());
-            let provider = ProviderBuilder::new().on_ws(ws_client).await?;
-            let provider = Arc::new(provider);
-            
-            (provider, None)
-        };
+        info!("🔧 Setting up local anvil fork...");
+        let anvil = create_mainnet_fork(config.fork_block_number).await?;
+        
+        // Connect to the local anvil instance via WebSocket
+        let ws_url = format!("ws://127.0.0.1:{}", anvil.port);
+        info!("🔗 Connecting to local anvil at: {}", ws_url);
+        
+        let ws_client = WsConnect::new(ws_url);
+        let provider = ProviderBuilder::new().on_ws(ws_client).await?;
+        let provider = Arc::new(provider);
         
         info!("✅ Test environment ready");
         
         Ok(Self {
             provider,
             test_config: config,
-            anvil_instance,
+            anvil_instance: Some(anvil),
         })
     }
     
@@ -115,16 +88,14 @@ impl TestEnvironment {
         let block_number = self.provider.get_block_number().await?;
         if let Some(anvil) = &self.anvil_instance {
             info!("📦 Connected to local anvil (port {}) at block: {}", anvil.port, block_number);
-        } else {
-            info!("📦 Connected to external provider at block: {}", block_number);
         }
         
         Ok(())
     }
     
-    /// Returns true if using local anvil, false if using external provider
+    /// Always returns true since we always use local anvil now
     pub fn is_using_anvil(&self) -> bool {
-        self.anvil_instance.is_some()
+        true
     }
     
     pub async fn get_latest_block_info(&self) -> Result<TestBlockInfo> {
