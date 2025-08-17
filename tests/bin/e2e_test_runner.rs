@@ -84,9 +84,54 @@ async fn run_atomic_tests() -> TestResult {
 async fn run_pool_tests() -> TestResult {
     info!("🏊 Running Pool Data Tests");
     
-    // Test pool data structures and cache operations
-    // For now, we'll return success as a placeholder
-    TestResult::success("Pool Data Tests (Basic Structure Tests)")
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Test 1: Pool Data Structures
+    info!("📊 Testing Pool Data Structures");
+    match utils::pool_test_runner::run_pool_data_structure_tests().await {
+        Ok(_) => info!("✅ Pool data structure tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Pool data structure tests failed: {}", e));
+        }
+    }
+    
+    // Test 2: Pool Cache Operations
+    info!("💾 Testing Pool Cache Operations");
+    match utils::pool_test_runner::run_pool_cache_tests().await {
+        Ok(_) => info!("✅ Pool cache tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Pool cache tests failed: {}", e));
+        }
+    }
+    
+    // Test 3: Pool Pairing Logic
+    info!("🔗 Testing Pool Pairing Logic");
+    match utils::pool_test_runner::run_pool_pairing_tests().await {
+        Ok(_) => info!("✅ Pool pairing tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Pool pairing tests failed: {}", e));
+        }
+    }
+    
+    // Test 4: Pool Discovery Infrastructure
+    info!("🔍 Testing Pool Discovery Infrastructure");
+    match utils::pool_test_runner::run_pool_discovery_tests().await {
+        Ok(_) => info!("✅ Pool discovery tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Pool discovery tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Pool Data Tests")
+    } else {
+        TestResult::failure("Pool Data Tests", errors.join("; "))
+    }
 }
 
 async fn run_evm_tests() -> TestResult {
