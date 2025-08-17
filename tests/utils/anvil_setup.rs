@@ -60,7 +60,8 @@ impl AnvilInstance {
            .arg("--gas-limit").arg(config.gas_limit.to_string())
            .arg("--gas-price").arg(config.gas_price.to_string())
            .arg("--base-fee").arg(config.base_fee.to_string())
-           .arg("--host").arg("127.0.0.1");
+           .arg("--host").arg("127.0.0.1")
+           .arg("--silent");
 
         // Fork configuration if provided
         if let Some(fork_url) = &config.fork_url {
@@ -307,7 +308,6 @@ pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInsta
     println!("fork url: {:?}", fork_url);
     let config = AnvilConfig {
         fork_url,
-        fork_block_number: block_number,
         ..Default::default()
     };
     println!("config: {:?}", config.fork_url);
