@@ -10,7 +10,6 @@ use std::process;
 // Include the test utilities from the parent tests directory
 #[path = "../utils/mod.rs"]
 mod utils;
-use utils::test_env::TestEnvironment;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,20 +34,20 @@ async fn main() -> Result<()> {
             test_results.add(run_evm_tests().await);
         }
         "integration" => test_results.add(run_integration_tests().await),
-        "phase4" => test_results.add(run_phase4_tests().await),
-        "phase5" => test_results.add(run_phase5_tests().await),
-        "full-flow" => test_results.add(run_full_flow_tests().await),
+        "full-flow" => test_results.add(run_comprehensive_flow_tests().await),
+        "edge-cases" => test_results.add(run_edge_case_tests().await),
+        "stress" => test_results.add(run_edge_case_tests().await),
         "all" => {
             test_results.add(run_atomic_tests().await);
             test_results.add(run_pool_tests().await);
             test_results.add(run_evm_tests().await);
             test_results.add(run_integration_tests().await);
-            test_results.add(run_phase4_tests().await);
-            test_results.add(run_phase5_tests().await);
+            test_results.add(run_comprehensive_flow_tests().await);
+            test_results.add(run_edge_case_tests().await);
         }
         _ => {
             eprintln!("❌ Unknown test: {}", test_name);
-            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, phase4, phase5, full-flow, all");
+            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, full-flow, edge-cases, stress, all");
             process::exit(1);
         }
     }
@@ -105,10 +104,10 @@ async fn run_integration_tests() -> TestResult {
     TestResult::success("Integration Tests (Not Implemented)")
 }
 
-async fn run_phase4_tests() -> TestResult {
-    info!("🚀 Running Phase 4: Full Flow Tests");
+async fn run_comprehensive_flow_tests() -> TestResult {
+    info!("🚀 Running Comprehensive Flow Tests");
     
-    // Run all Phase 4 test categories
+    // Run all comprehensive flow test categories
     let mut all_passed = true;
     let mut errors = Vec::new();
     
@@ -153,21 +152,16 @@ async fn run_phase4_tests() -> TestResult {
     }
     
     if all_passed {
-        TestResult::success("Phase 4: Full Flow Tests")
+        TestResult::success("Comprehensive Flow Tests")
     } else {
-        TestResult::failure("Phase 4: Full Flow Tests", errors.join("; "))
+        TestResult::failure("Comprehensive Flow Tests", errors.join("; "))
     }
 }
 
-async fn run_full_flow_tests() -> TestResult {
-    info!("🎯 Running Full Flow Tests Only");
-    run_phase4_tests().await
-}
-
-async fn run_phase5_tests() -> TestResult {
-    info!("🔬 Running Phase 5: Edge Case & Stress Tests");
+async fn run_edge_case_tests() -> TestResult {
+    info!("🔬 Running Edge Case & Stress Tests");
     
-    // Run all Phase 5 test categories
+    // Run all edge case test categories
     let mut all_passed = true;
     let mut errors = Vec::new();
     
@@ -222,9 +216,9 @@ async fn run_phase5_tests() -> TestResult {
     }
     
     if all_passed {
-        TestResult::success("Phase 5: Edge Case & Stress Tests")
+        TestResult::success("Edge Case & Stress Tests")
     } else {
-        TestResult::failure("Phase 5: Edge Case & Stress Tests", errors.join("; "))
+        TestResult::failure("Edge Case & Stress Tests", errors.join("; "))
     }
 }
 
@@ -262,7 +256,7 @@ async fn test_integrated_environment() -> Result<()> {
     Ok(())
 }
 
-// Phase 4 individual test functions
+// Individual comprehensive flow test functions
 async fn run_full_arbitrage_cycle_test() -> Result<()> {
     use std::process::Command;
     
@@ -339,7 +333,7 @@ async fn run_error_recovery_test() -> Result<()> {
     }
 }
 
-// Phase 5 individual test functions
+// Individual edge case and stress test functions
 async fn run_network_disconnection_test() -> Result<()> {
     use std::process::Command;
     
