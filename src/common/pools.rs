@@ -55,18 +55,30 @@ pub struct Pool {
 
 impl From<StringRecord> for Pool {
     fn from(record: StringRecord) -> Self {
-        let version = match record.get(2).unwrap().parse().unwrap() {
+        let version = match record.get(2)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2) {
             2 => DexVariant::UniswapV2,
             _ => DexVariant::UniswapV2,
         };
         Self {
-            id: record.get(0).unwrap().parse().unwrap(),
-            address: Address::from_str(record.get(1).unwrap()).unwrap(),
+            id: record.get(0)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            address: record.get(1)
+                .and_then(|v| Address::from_str(v).ok())
+                .unwrap_or_default(),
             version,
-            token0: Address::from_str(record.get(3).unwrap()).unwrap(),
-            token1: Address::from_str(record.get(4).unwrap()).unwrap(),
-            fee: record.get(5).unwrap().parse().unwrap(),
-            //block_number: record.get(6).unwrap().parse().unwrap(),
+            token0: record.get(3)
+                .and_then(|v| Address::from_str(v).ok())
+                .unwrap_or_default(),
+            token1: record.get(4)
+                .and_then(|v| Address::from_str(v).ok())
+                .unwrap_or_default(),
+            fee: record.get(5)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3000),
+            //block_number: record.get(6).and_then(|v| v.parse().ok()).unwrap_or(0),
         }
     }
 }
@@ -121,7 +133,8 @@ pub async fn load_all_pools(
     from_block: u64,
     chunk: u64,
 ) -> Result<(Vec<Pool>, i64)> {
-    create_dir_all("cache").expect("Error creating directory");
+    create_dir_all("cache")
+        .map_err(|e| anyhow::anyhow!("Error creating cache directory: {}", e))?;
     info!("Creating cache file");
     let cache_file = "/Users/alexander/cache/.cached-pools.csv";
     let file_path = Path::new(cache_file);
@@ -130,7 +143,7 @@ pub async fn load_all_pools(
         .append(true)
         .create(true)
         .open(cache_file)
-        .unwrap();
+        .map_err(|e| anyhow::anyhow!("Error opening cache file '{}': {}", cache_file, e))?;
     let mut writer = csv::Writer::from_writer(file);
 
     let mut pools = Vec::new();
@@ -141,7 +154,8 @@ pub async fn load_all_pools(
         let mut reader = csv::Reader::from_path(cache_file)?;
 
         for row in reader.records() {
-            let row = row.unwrap();
+            let row = row
+                .map_err(|e| anyhow::anyhow!("Error reading CSV row: {}", e))?;
             let pool = Pool::from(row);
             if let DexVariant::UniswapV2 = pool.version {
                 v2_pool_cnt += 1
@@ -162,7 +176,9 @@ pub async fn load_all_pools(
     let provider = Arc::new(ws);
 
     let mut id = if !pools.is_empty() {
-        pools.last().as_ref().unwrap().id
+        pools.last()
+            .map(|p| p.id)
+            .unwrap_or(-1)
     } else {
         -1
     };
@@ -174,7 +190,8 @@ pub async fn load_all_pools(
     //        from_block
     //    };
 
-    let to_block = provider.get_block_number().await.unwrap();
+    let to_block = provider.get_block_number().await
+        .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
 
     let mut blocks_processed = 0;
 
@@ -198,7 +215,7 @@ pub async fn load_all_pools(
         ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
         )
-        .unwrap()
+        .unwrap_or_else(|_| ProgressStyle::default_bar())
         .progress_chars("##-"),
     );
 
@@ -238,7 +255,7 @@ pub async fn load_all_pools(
         ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
         )
-        .unwrap()
+        .unwrap_or_else(|_| ProgressStyle::default_bar())
         .progress_chars("##-"),
     );
     //    for (_, pool) in pools.clone().iter_mut().enumerate() {
@@ -297,13 +314,16 @@ pub async fn load_uniswap_v2_pools(
         //let block_number = log.block_number.unwrap_or_default();
 
         let topic0 = log.topics()[1];
-        let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
+        let topic0 = FixedBytes::<20>::try_from(&topic0[12..32])
+            .map_err(|e| anyhow::anyhow!("Invalid topic0 format in V2 log: {}", e))?;
         let token0 = Address::from(topic0);
 
-        let token1 = Address::from(FixedBytes::<20>::try_from(&log.topics()[2][12..32]).unwrap());
+        let token1 = Address::from(FixedBytes::<20>::try_from(&log.topics()[2][12..32])
+            .map_err(|e| anyhow::anyhow!("Invalid topic2 format in V2 log: {}", e))?);
         let log_data = log.inner.data.data.to_vec();
         let log_data = log_data.as_slice();
-        let decoded: (Address, B256) = SolValue::abi_decode(log_data, false).unwrap();
+        let decoded: (Address, B256) = SolValue::abi_decode(log_data, false)
+            .map_err(|e| anyhow::anyhow!("Failed to decode V2 log data: {}", e))?;
 
         let pool_data = Pool {
             id: -1,
@@ -342,21 +362,25 @@ pub async fn load_uniswap_v3_pools(
         //let block_number = log.block_number.unwrap_or_default();
 
         let topic0 = log.topics()[1];
-        let topic0 = FixedBytes::<20>::try_from(&topic0[12..32]).unwrap();
+        let topic0 = FixedBytes::<20>::try_from(&topic0[12..32])
+            .map_err(|e| anyhow::anyhow!("Invalid topic0 format in V3 log: {}", e))?;
         let token0 = Address::from(topic0);
 
         let topic1 = log.topics()[2];
-        let topic1 = FixedBytes::<20>::try_from(&topic1[12..32]).unwrap();
+        let topic1 = FixedBytes::<20>::try_from(&topic1[12..32])
+            .map_err(|e| anyhow::anyhow!("Invalid topic1 format in V3 log: {}", e))?;
         let token1 = Address::from(topic1);
 
         // Decode the log data
         let log_data = &log.inner.data.data;
-        let decoded: (B256, B256) = SolValue::abi_decode(log_data, false).unwrap();
+        let decoded: (B256, B256) = SolValue::abi_decode(log_data, false)
+            .map_err(|e| anyhow::anyhow!("Failed to decode V3 log data: {}", e))?;
         let pool_address = decoded.1;
-        let pool_address = FixedBytes::<20>::try_from(&pool_address[12..32]).unwrap();
+        let pool_address = FixedBytes::<20>::try_from(&pool_address[12..32])
+            .map_err(|e| anyhow::anyhow!("Invalid pool address format in V3 log: {}", e))?;
         let pool_address = Address::from(pool_address);
         let fee = u32::from_str_radix(decoded.0.to_string().as_str().trim_start_matches("0x"), 16)
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("Invalid fee format in V3 log: {}", e))?;
 
         // info!("is v3: {:?}", is_v3);
         let pool_data = Pool {

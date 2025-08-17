@@ -115,7 +115,9 @@ impl EvmSimulator {
             gas_price: U256::from(10000000000u128),
         };
 
-        self.call(new_tx).unwrap();
+        self.call(new_tx)
+            .map_err(|e| log::error!("Failed to initialize WETH swap: {}", e))
+            .ok(); // Non-critical setup failure, continue execution
     }
 
     pub fn new_with_db(
@@ -142,8 +144,8 @@ impl EvmSimulator {
             //.append_handler_register(inspector_handle_register)
             .modify_env(|env| {
                 env.block.number = U256::from(block_number);
-                env.block.coinbase =
-                    Address::from_str("0xDAFEA492D9c6733ae3d56b7Ed1ADB60692c98Bc5").unwrap();
+                env.block.coinbase = Address::from_str("0xDAFEA492D9c6733ae3d56b7Ed1ADB60692c98Bc5")
+                    .unwrap_or_else(|_| Address::ZERO); // Use zero address as fallback
             })
             .build();
 
@@ -264,7 +266,9 @@ impl EvmSimulator {
         self.insert_account_info(target, contract_info).await;
     }
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
-        let account = self.evm.context.evm.db.basic(address).unwrap().unwrap();
+        let account = self.evm.context.evm.db.basic(address)
+            .map_err(|e| anyhow::anyhow!("Database error accessing account {}: {}", address, e))?
+            .ok_or_else(|| anyhow::anyhow!("Account {} not found", address))?;
         Ok(account)
     }
 
@@ -288,13 +292,17 @@ impl EvmSimulator {
             .evm
             .db
             .load_account(address)
-            .unwrap()
-            .info
-            .balance
+            .map(|account| account.info.balance)
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to load account {} for balance check: {}", address, e);
+                U256::ZERO
+            })
     }
 
     pub async fn load_account(&mut self, address: Address) -> () {
-        self.evm.context.evm.db.load_account(address).unwrap();
+        if let Err(e) = self.evm.context.evm.db.load_account(address) {
+            log::warn!("Failed to load account {}: {}", address, e);
+        }
     }
 
     pub async fn get_code_at(&mut self, address: Address) -> Result<AccountInfo, Error> {
@@ -304,7 +312,7 @@ impl EvmSimulator {
             .evm
             .db
             .load_account(address)
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("Failed to load account {}: {}", address, e))?
             .info
             .clone())
     }
@@ -315,18 +323,21 @@ impl EvmSimulator {
         _token: Address,
         index: U256,
     ) -> U256 {
-        self.evm.context.evm.db.storage(address, index).unwrap()
+        self.evm.context.evm.db.storage(address, index)
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to get storage for {} at index {}: {}", address, index, e);
+                U256::ZERO
+            })
     }
 
-    pub async fn get_storage(&mut self, address: Address) -> AccountInfo {
+    pub async fn get_storage(&mut self, address: Address) -> Result<AccountInfo, Error> {
         self.evm
             .context
             .evm
             .db
             .load_account(address)
-            .unwrap()
-            .info
-            .clone()
+            .map(|account| account.info.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to load account {} for storage: {}", address, e))
     }
 
     pub async fn insert_account_storage(&mut self, target: Address, index: U256, value: U256) {
@@ -335,7 +346,8 @@ impl EvmSimulator {
             .evm
             .db
             .insert_account_storage(target, index, value)
-            .unwrap();
+            .map_err(|e| log::warn!("Failed to insert account storage for {}: {}", target, e))
+            .ok();
     }
     // NOTE: probably want to change this and not have to get the abi from that folder
     pub fn get_weth_balance(
@@ -350,7 +362,8 @@ impl EvmSimulator {
             function balanceOf(address account) external view returns (uint256);
         }
 
-        let abi = serde_json::from_str(include_str!("../arbitrage/weth.json")).unwrap();
+        let abi = serde_json::from_str(include_str!("../arbitrage/weth.json"))
+            .expect("Hard-coded WETH ABI should be valid JSON");
 
         let contract = ContractInstance::<
             Address,
@@ -372,13 +385,23 @@ impl EvmSimulator {
             gas_limit: *latest_gas_limit,
         };
 
-        let result = self.call(tx).unwrap();
+        let result = self.call(tx)
+            .unwrap_or_else(|e| {
+                log::error!("Failed to call balanceOf: {}", e);
+                TxResult {
+                    output: Bytes::new(),
+                    logs: None,
+                    gas_used: 0,
+                    gas_refunded: 0,
+                }
+            });
 
         print!("result from balance of call: {:?}", result);
 
         let res = contract
             .decode_output("balanceOf", &result.output, false)
-            .unwrap();
+            .map_err(|e| log::error!("Failed to decode balanceOf output: {}", e))
+            .unwrap_or_default();
 
         let balance = res[0].clone();
 

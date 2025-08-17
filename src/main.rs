@@ -27,17 +27,19 @@ async fn main() -> Result<()> {
     dotenv()?;
     logger::setup_logger();
     info!("Logger setup");
-    let ws_url = var::<&str>("WS_URL").unwrap();
+    let ws_url = var::<&str>("WS_URL")
+        .map_err(|e| anyhow::anyhow!("WS_URL environment variable not set: {}", e))?;
     let ws_client = WsConnect::new(ws_url.clone());
 
-    let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
+    let provider = ProviderBuilder::new().on_ws(ws_client).await
+        .map_err(|e| anyhow::anyhow!("Failed to create WebSocket provider: {}", e))?;
     let provider = Arc::new(provider);
 
     if !Path::new("/Users/alexander/cache/.cached-pools.csv").try_exists()? {
         info!("Cache doesn't exist, crawling blocks for pools");
         pools::load_all_pools(ws_url.clone(), 100_000, 50_000)
             .await
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
     }
 
     let mut set = JoinSet::new();
@@ -58,27 +60,37 @@ async fn main() -> Result<()> {
 
         match fields[2] {
             "2" => {
-                let pair_address = Address::from_str(fields[1]).unwrap();
+                let pair_address = Address::from_str(fields[1])
+                    .map_err(|e| anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e))?;
                 pools_map.insert(
                     pair_address,
                     Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap(),
-                        token0: Address::from_str(fields[3]).unwrap(),
-                        token1: Address::from_str(fields[4]).unwrap(),
-                        fee: fields[5].parse::<u32>().unwrap(),
-                        //block_number: fields[6].parse::<u64>().unwrap(),
+                        pair_address: Address::from_str(fields[1])
+                            .map_err(|e| anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e))?,
+                        token0: Address::from_str(fields[3])
+                            .map_err(|e| anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e))?,
+                        token1: Address::from_str(fields[4])
+                            .map_err(|e| anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e))?,
+                        fee: fields[5].parse::<u32>()
+                            .map_err(|e| anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e))?,
+                        //block_number: fields[6].parse::<u64>().map_err(|e| anyhow::anyhow!("Invalid V2 block number '{}': {}", fields[6], e))?,
                     }),
                 );
             }
             "3" => {
-                let pair_address = Address::from_str(fields[1]).unwrap();
+                let pair_address = Address::from_str(fields[1])
+                    .map_err(|e| anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e))?;
                 pools_map.insert(
                     pair_address,
                     Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap(),
-                        token0: Address::from_str(fields[3]).unwrap(),
-                        token1: Address::from_str(fields[4]).unwrap(),
-                        fee: fields[5].parse::<u32>().unwrap(),
+                        pair_address: Address::from_str(fields[1])
+                            .map_err(|e| anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e))?,
+                        token0: Address::from_str(fields[3])
+                            .map_err(|e| anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e))?,
+                        token1: Address::from_str(fields[4])
+                            .map_err(|e| anyhow::anyhow!("Invalid V3 token1 address '{}': {}", fields[4], e))?,
+                        fee: fields[5].parse::<u32>()
+                            .map_err(|e| anyhow::anyhow!("Invalid V3 fee '{}': {}", fields[5], e))?,
                         tick_spacing: 0i32,
                     }),
                 );
