@@ -530,7 +530,7 @@ async fn run_full_arbitrage_cycle_test() -> Result<()> {
     info!("🔄 Running full arbitrage cycle test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_complete_arbitrage_cycle", "--test", "full_arbitrage_cycle_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "full_arbitrage_cycle_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -549,7 +549,7 @@ async fn run_concurrent_opportunities_test() -> Result<()> {
     info!("🔄 Running concurrent opportunities test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_sequential_arbitrage_opportunities", "--test", "concurrent_opportunities_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "concurrent_opportunities_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -568,7 +568,7 @@ async fn run_high_frequency_test() -> Result<()> {
     info!("⚡ Running high-frequency test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_high_frequency_opportunity_processing", "--test", "high_frequency_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "high_frequency_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -587,7 +587,7 @@ async fn run_error_recovery_test() -> Result<()> {
     info!("🔧 Running error recovery test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_connection_failure_handling", "--test", "error_recovery_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "error_recovery_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -607,7 +607,7 @@ async fn run_network_disconnection_test() -> Result<()> {
     info!("🌐 Running network disconnection test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_websocket_disconnection_recovery", "--test", "network_disconnection_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "network_disconnection_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -626,7 +626,7 @@ async fn run_gas_price_spike_test() -> Result<()> {
     info!("⛽ Running gas price spike test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_gas_price_spike_handling", "--test", "gas_price_spike_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "gas_price_spike_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -645,7 +645,7 @@ async fn run_insufficient_liquidity_test() -> Result<()> {
     info!("💧 Running insufficient liquidity test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_low_liquidity_handling", "--test", "insufficient_liquidity_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "insufficient_liquidity_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -664,7 +664,7 @@ async fn run_block_reorganization_test() -> Result<()> {
     info!("🔄 Running block reorganization test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_block_reorganization_handling", "--test", "block_reorganization_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "block_reorganization_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -683,7 +683,7 @@ async fn run_mev_competition_test() -> Result<()> {
     info!("🏆 Running MEV competition test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_mev_competition_detection", "--test", "mev_competition_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "mev_competition_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -703,7 +703,7 @@ async fn run_evm_initialization_test() -> Result<()> {
     info!("🏗️ Running EVM simulator initialization test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_evm_simulator_module_availability", "--test", "evm_simulator_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "evm_simulator_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -722,7 +722,7 @@ async fn run_transaction_execution_test() -> Result<()> {
     info!("🔄 Running transaction execution test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_evm_simulator_types_and_structures", "--test", "evm_simulator_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "evm_simulator_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     
@@ -741,7 +741,7 @@ async fn run_contract_deployment_test() -> Result<()> {
     info!("📦 Running contract deployment test");
     
     let output = Command::new("cargo")
-        .args(&["test", "test_evm_simulator_constants_and_addresses", "--test", "evm_simulator_tests", "--", "--nocapture"])
+        .args(&["test", "--test", "evm_simulator_tests", "--", "--nocapture"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
     

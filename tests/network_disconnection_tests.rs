@@ -145,7 +145,11 @@ async fn test_intermittent_network_issues() -> Result<()> {
         ).await;
         
         let duration = start_time.elapsed();
-        let success = result.is_ok();
+        let success = match result {
+            Ok(Ok(_)) => true,  // No timeout and strategy succeeded
+            Ok(Err(_)) => false, // No timeout but strategy failed
+            Err(_) => false,    // Timeout occurred
+        };
         
         intermittent_results.push((operation_name, success, duration));
         
@@ -283,7 +287,11 @@ async fn test_connection_pooling_fallback() -> Result<()> {
             process_strategy(log_event.clone(), fallback_url.to_string())
         ).await;
 
-        let success = result.is_ok();
+        let success = match result {
+            Ok(Ok(_)) => true,  // No timeout and strategy succeeded
+            Ok(Err(_)) => false, // No timeout but strategy failed (this is what we expect for invalid URLs)
+            Err(_) => false,    // Timeout occurred
+        };
         fallback_results.push((fallback_name, success));
         
         info!("🔄 Fallback '{}': handled_gracefully={}", fallback_name, !success);
