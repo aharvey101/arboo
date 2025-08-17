@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             eprintln!("❌ Unknown test: {}", test_name);
-            eprintln!("Available tests: provider, atomic, unit, pool, evm, environment, transaction, performance, memory, component, integration, full-flow, edge-cases, stress, all");
+            eprintln!("Available tests: provider, atomic, unit, pool, evm, environment, transaction, performance, memory, component, integration, full-flow, edge-cases, gas-estimation, stress, all");
             process::exit(1);
         }
     }

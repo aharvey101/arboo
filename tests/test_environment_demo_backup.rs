@@ -13,7 +13,8 @@ async fn demo_simple_environment() -> Result<()> {
     
     info!("✅ Simple environment demo completed");
     Ok(())
-}mo
+}
+
 // Demonstrates the complete test infrastructure setup and usage
 
 use anyhow::Result;

@@ -792,3 +792,22 @@ pub async fn run_single_swap_simulation_tests() -> Result<()> {
         Err(anyhow::anyhow!("Single swap simulation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
     }
 }
+
+pub async fn run_gas_estimation_validation_test() -> Result<()> {
+    use std::process::Command;
+    
+    info!("⛽ Running Gas Estimation Validation Test");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "test_gas_estimation_validation", "--test", "profit_simulation_tests", "--", "--nocapture"])
+        .output()?;
+    
+    if output.status.success() {
+        info!("✅ Gas estimation validation test passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Gas estimation validation test failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
