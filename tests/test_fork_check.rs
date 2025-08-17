@@ -2,8 +2,9 @@ use anyhow::Result;
 use std::env;
 use alloy::providers::Provider;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::anvil_setup::{AnvilInstance, AnvilConfig};
 
 #[tokio::test]

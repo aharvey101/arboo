@@ -9,8 +9,9 @@ use log::info;
 use std::path::Path;
 use std::fs;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 #[tokio::test]

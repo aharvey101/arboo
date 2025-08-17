@@ -1,5 +1,7 @@
-// Transaction Execution Flow E2E Tests
-// Tests flash loan setup, multi-hop swap execution, and profit extraction
+#![allow(dead_code)]
+
+// Transaction Execution E2E Tests
+// Tests the full transaction creation and execution pipeline
 
 use anyhow::Result;
 use arbooo::common::logger;
@@ -9,8 +11,9 @@ use alloy::primitives::{U256, Address, Bytes};
 use alloy::rpc::types::TransactionRequest;
 use log::info;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 #[derive(Debug, Clone)]

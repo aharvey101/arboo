@@ -1,12 +1,16 @@
-// Anvil Local Blockchain Fork Setup
-// Provides utilities for setting up and managing local Anvil forks for testing
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+
+// Anvil Setup and Management Utilities
+// Provides infrastructure for setting up and managing Anvil instances for testing
 
 use anyhow::{Result, Context};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
 use alloy::providers::{Provider, ProviderBuilder};
-use log::{info, warn, debug};
+use log::{info, debug};
 use portpicker::pick_unused_port;
 
 pub struct AnvilInstance {
@@ -303,7 +307,7 @@ impl AccountInfo {
 }
 
 /// Helper function to create a test Anvil instance with mainnet fork
-pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInstance> {
+pub async fn create_mainnet_fork(_block_number: Option<u64>) -> Result<AnvilInstance> {
     let fork_url = std::env::var("MAINNET_RPC_URL").ok();
     let config = AnvilConfig {
         fork_url,

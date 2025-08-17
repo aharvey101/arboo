@@ -1,13 +1,18 @@
-// Test Contract Deployment Utilities
-// Provides utilities for deploying test tokens and pools for controlled testing
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
 
-use anyhow::{Result, Context};
+// Contract Deployment Test Utilities
+// Provides infrastructure for deploying test contracts in various configurations
+
+use anyhow::Result;
 use alloy::primitives::{Address, U256};
-use alloy::providers::Provider;
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 use alloy::network::EthereumWallet;
-use log::{info, debug};
 use std::sync::Arc;
+use log::{info, debug};
+use std::collections::HashMap;
 
 // Mock contract types for testing
 #[derive(Debug, Clone)]
@@ -92,8 +97,8 @@ where
         &self,
         token0: Address,
         token1: Address,
-        initial_liquidity_token0: U256,
-        initial_liquidity_token1: U256,
+        _initial_liquidity_token0: U256,
+        _initial_liquidity_token1: U256,
     ) -> Result<TestPoolContract> {
         info!("Deploying Uniswap V2 test pair for tokens {:?} and {:?}", token0, token1);
         
@@ -123,7 +128,7 @@ where
         token0: Address,
         token1: Address,
         fee: u32,
-        initial_price: Option<U256>,
+        _initial_price: Option<U256>,
     ) -> Result<TestPoolContract> {
         info!("Deploying Uniswap V3 test pool for tokens {:?} and {:?} with fee {}", token0, token1, fee);
         

@@ -1,5 +1,7 @@
-// High-Frequency Arbitrage Tests - Phase 4.3
-// Tests system behavior under high-frequency trading scenarios
+#![allow(unused_variables)]
+
+// High Frequency Trading Scenario Tests
+// Tests performance and accuracy under high-frequency trading conditions
 
 use anyhow::Result;
 use arbooo::arbitrage::strategy::process_strategy;
@@ -10,8 +12,9 @@ use log::info;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 /// Test high-frequency opportunity processing

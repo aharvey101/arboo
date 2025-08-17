@@ -7,9 +7,10 @@ use arbooo::common::logger;
 use log::info;
 use std::process;
 
-// Include the test utilities from the parent tests directory
-#[path = "../utils/mod.rs"]
-mod utils;
+// Include test utilities using relative path
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -270,6 +271,36 @@ async fn run_integration_tests() -> TestResult {
         Err(e) => {
             all_passed = false;
             errors.push(format!("Multi-component integration tests failed: {}", e));
+        }
+    }
+
+    // Test 7: Arbitrage Calculation and Profit Validation
+    info!("💰 Testing Arbitrage Calculation and Profit Validation");
+    match run_profit_calculation_tests().await {
+        Ok(_) => info!("✅ Profit calculation tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Profit calculation tests failed: {}", e));
+        }
+    }
+
+    // Test 8: Transaction Execution and Profit Extraction
+    info!("🚀 Testing Transaction Execution and Profit Extraction");
+    match run_transaction_execution_tests().await {
+        Ok(_) => info!("✅ Transaction execution tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Transaction execution tests failed: {}", e));
+        }
+    }
+
+    // Test 9: Profit Simulation Accuracy
+    info!("🎯 Testing Profit Simulation Accuracy");
+    match run_profit_simulation_tests().await {
+        Ok(_) => info!("✅ Profit simulation tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Profit simulation tests failed: {}", e));
         }
     }
     
@@ -778,9 +809,9 @@ async fn run_block_environment_test() -> Result<()> {
 // Integration test functions
 async fn run_e2e_arbitrage_pipeline_test() -> Result<()> {
     use utils::integrated_test_env::IntegratedTestEnvironment;
-    use arbooo::common::{logs::LogEvent, revm::EvmSimulator};
+    use arbooo::common::logs::LogEvent;
     use alloy::providers::Provider;
-    use alloy::primitives::{Address, U256, U64};
+    use alloy::primitives::{Address, U256};
     use alloy_primitives::aliases::U24;
     use std::str::FromStr;
     
@@ -1069,7 +1100,7 @@ async fn run_evm_pool_state_integration_test() -> Result<()> {
 async fn run_provider_pipeline_integration_test() -> Result<()> {
     use utils::integrated_test_env::IntegratedTestEnvironment;
     use alloy::providers::Provider;
-    use alloy::primitives::{Address, U256};
+    use alloy::primitives::Address;
     use tokio::time::{timeout, Duration};
     
     info!("📡 Testing provider and data pipeline integration");
@@ -1464,6 +1495,67 @@ async fn run_multi_component_integration_test() -> Result<()> {
     
     info!("✅ Multi-component system integration test completed successfully");
     Ok(())
+}
+
+// Profit validation test functions
+async fn run_profit_calculation_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("💰 Running arbitrage calculation and profit validation tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "arbitrage_calculation_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run arbitrage calculation tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Arbitrage calculation tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Arbitrage calculation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_transaction_execution_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🚀 Running transaction execution and profit extraction tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "transaction_execution_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run transaction execution tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Transaction execution tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Transaction execution tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_profit_simulation_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🎯 Running profit simulation accuracy tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "profit_simulation_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run profit simulation tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Profit simulation tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Profit simulation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
 }
 
 #[derive(Debug)]

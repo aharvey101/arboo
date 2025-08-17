@@ -1,10 +1,11 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 // Test Data Fixtures and Scenarios
 // Provides predefined test data for consistent and comprehensive testing
 
 use anyhow::Result;
-use alloy::primitives::{Address, U256, B256};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Comprehensive test scenario that combines multiple components
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +109,7 @@ pub struct ExpectedOutcomes {
     pub risk_assessment: RiskLevel,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RiskLevel {
     Low,
     Medium,
@@ -121,16 +122,6 @@ pub struct ScenarioCleanup {
     pub reset_pools: bool,
     pub reset_balances: bool,
     pub reset_gas_conditions: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExpectedOutcomes {
-    pub should_detect_opportunity: bool,
-    pub expected_profit_range: Option<(f64, f64)>,
-    pub should_execute_transaction: bool,
-    pub expected_gas_used: Option<u64>,
-    pub max_execution_time_ms: u64,
-    pub risk_assessment: RiskLevel,
 }
 
 /// Predefined test scenarios

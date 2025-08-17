@@ -11,8 +11,9 @@ use alloy::primitives::U256;
 use revm::primitives::{Bytes, B256};
 use log::info;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 #[tokio::test]

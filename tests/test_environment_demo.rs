@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 // Comprehensive Test Environment Demo
 // Demonstrates the complete test infrastructure setup and usage
 
@@ -6,11 +8,15 @@ use log::{info, warn};
 use std::time::Duration;
 
 // Import our test infrastructure
-mod utils;
-mod fixtures;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
+mod fixtures {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mod.rs"));
+}
 
-use utils::{quick_setup, IntegratedTestEnvironment, TestEnvironmentConfig};
-use fixtures::{PredefinedScenarios, ScenarioType};
+use utils::integrated_test_env::{IntegratedTestEnvironment, TestEnvironmentConfig, quick_setup};
+use fixtures::test_scenarios::{PredefinedScenarios, ScenarioType};
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -7,4 +7,4 @@ pub mod integrated_test_env;
 pub mod pool_test_runner;
 
 // Re-export commonly used items
-pub use integrated_test_env::{IntegratedTestEnvironment, TestEnvironmentConfig, quick_setup};
+// Note: Only re-export items that are actually used to avoid warnings

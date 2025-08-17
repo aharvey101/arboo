@@ -1,5 +1,9 @@
-// Pool Test Runner Module
-// Contains all pool-related test functions for the E2E test runner
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+
+// Pool Test Runner - Specialized Pool Testing Infrastructure
+// Provides comprehensive testing utilities for pool data structures and operations
 
 use anyhow::Result;
 use log::info;

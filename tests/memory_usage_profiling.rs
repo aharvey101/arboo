@@ -10,8 +10,9 @@ use log::info;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 /// Profile memory usage during normal operation

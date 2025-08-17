@@ -1,5 +1,7 @@
-// Profit Simulation Accuracy E2E Tests
-// Tests REVM simulation vs actual blockchain state comparison and gas estimation
+#![allow(dead_code)]
+
+// Profit Simulation E2E Tests  
+// Tests profit calculations and simulation accuracy across different market conditions
 
 use anyhow::Result;
 use arbooo::common::logger;
@@ -9,8 +11,9 @@ use alloy::primitives::{U256, Address, Bytes};
 use alloy::rpc::types::{TransactionRequest, BlockTransactionsKind};
 use log::info;
 
-#[path = "utils/mod.rs"]
-mod utils;
+mod utils {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
+}
 use utils::test_env::TestEnvironment;
 
 #[derive(Debug, Clone)]

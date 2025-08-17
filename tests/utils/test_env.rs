@@ -1,5 +1,9 @@
-// Test Environment Utilities
-// Provides common setup and utilities for E2E tests
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+
+// Test Environment Setup Utilities
+// Core test environment management and provider connections
 
 use anyhow::Result;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
