@@ -74,19 +74,21 @@ pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
     let time = std::time::Instant::now();
     // log the runtime
     let ws_client = WsConnect::new(ws_url.clone());
-    let provider = ProviderBuilder::new().on_ws(ws_client).await.unwrap();
+    info!("websocket url: {:?}", ws_url);
+    let provider = ProviderBuilder::new().on_ws(ws_client).await
+        .map_err(|e| anyhow::anyhow!("Failed to create WebSocket provider: {}", e))?;
 
     info!("Time to make provider: {:?}", time.elapsed());
     let latest_block_number = provider
         .get_block_number()
         .await
-        .expect("Error getting block number");
+        .map_err(|e| anyhow::anyhow!("Error getting block number: {}", e))?;
 
     let latest_block = provider
         .get_block(BlockId::latest(), BlockTransactionsKind::Full)
         .await
-        .unwrap()
-        .unwrap();
+        .map_err(|e| anyhow::anyhow!("Error getting latest block: {}", e))?
+        .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?;
     let contract_wallet = PrivateKeySigner::random();
     let contract_wallet_address = contract_wallet.address();
 
@@ -94,7 +96,7 @@ pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
         provider.clone(),
         Some(contract_wallet_address),
         U64::from(latest_block_number),
-    );
+    ).map_err(|e| anyhow::anyhow!("Failed to create EVM simulator: {}", e))?;
 
     info!("Time to make evm: {:?}", time.elapsed());
     // reserves of the target pool to low?

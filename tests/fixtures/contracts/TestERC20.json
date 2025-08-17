@@ -1,0 +1,65 @@
+{
+  "abi": [
+    {
+      "inputs": [
+        {"name": "name", "type": "string"},
+        {"name": "symbol", "type": "string"},
+        {"name": "decimals", "type": "uint8"},
+        {"name": "totalSupply", "type": "uint256"}
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [
+        {"name": "to", "type": "address"},
+        {"name": "amount", "type": "uint256"}
+      ],
+      "name": "mint",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"name": "to", "type": "address"},
+        {"name": "amount", "type": "uint256"}
+      ],
+      "name": "transfer",
+      "outputs": [{"name": "", "type": "bool"}],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"name": "account", "type": "address"}
+      ],
+      "name": "balanceOf",
+      "outputs": [{"name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "totalSupply",
+      "outputs": [{"name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "symbol",
+      "outputs": [{"name": "", "type": "string"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "decimals",
+      "outputs": [{"name": "", "type": "uint8"}],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x608060405234801561001057600080fd5b50604051610a36380380610a3683398101604081905261002f9161012e565b600361003b8582610217565b50600461004884826102d5565b506005805460ff191660ff841617905561006281836103a0565b505050506103b9565b634e487b7160e01b600052604160045260246000fd5b600082601f83011261009157600080fd5b81516001600160401b03808211156100ab576100ab61006a565b604051601f8301601f19908116603f011681019082821181831017156100d3576100d361006a565b816040528381526020925086838588010111156100ef57600080fd5b600091505b8382101561011157858201830151818301840152908201906100f4565b83821115610122576000838301525b5094935050505056"
+}

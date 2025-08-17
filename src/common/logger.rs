@@ -10,7 +10,7 @@ pub fn setup_logger() {
         error: Color::BrightRed,
     };
 
-    fern::Dispatch::new()
+    let result = fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "{}[{}] {}",
@@ -23,6 +23,13 @@ pub fn setup_logger() {
         .level(log::LevelFilter::Error)
         .level_for("arbooo", LevelFilter::Info)
         .level_for("arbooo", LevelFilter::Debug)
-        .apply()
-        .expect("Shouldn't have failed to setup the logger");
+        .apply();
+        
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            // Logger already initialized, which is fine for tests
+            eprintln!("Logger already initialized (this is normal for tests)");
+        }
+    }
 }
