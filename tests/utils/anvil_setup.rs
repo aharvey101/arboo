@@ -54,7 +54,7 @@ impl AnvilInstance {
 
         let mut cmd = Command::new("anvil");
         
-        // Basic configuration (remove --ws-port since it doesn't exist)
+        // Basic configuration with verbose logging
         cmd.arg("--port").arg(port.to_string())
            .arg("--chain-id").arg(config.chain_id.to_string())
            .arg("--accounts").arg(config.accounts.to_string())
@@ -68,16 +68,22 @@ impl AnvilInstance {
         if let Some(fork_url) = &config.fork_url {
             cmd.arg("--fork-url").arg(fork_url);
             
-            info!("📡 Forking from {} at block {:?}", fork_url, config.fork_block_number);
+            if let Some(block) = config.fork_block_number {
+                cmd.arg("--fork-block-number").arg(block.to_string());
+                info!("📡 Forking from {} at specific block {}", fork_url, block);
+            } else {
+                info!("📡 Forking from {} at latest block", fork_url);
+            }
         }
 
         // Debug: print the exact command
-        debug!("🔧 Starting Anvil with command: {:?}", cmd);
+        info!("🔧 Starting Anvil with command: {:?}", cmd);
+        info!("🎯 Anvil will be available at http://127.0.0.1:{} and ws://127.0.0.1:{}", port, port);
 
-        // Start the process
+        // Start the process - inherit stdout/stderr so we can see anvil logs
         let process = cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit()) // Show anvil output directly
+            .stderr(Stdio::inherit()) // Show anvil errors directly
             .spawn()
             .context("Failed to start Anvil process")?;
 
@@ -306,7 +312,7 @@ impl AccountInfo {
 /// Helper function to create a test Anvil instance with mainnet fork
 pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInstance> {
     let fork_url = std::env::var("MAINNET_RPC_URL").ok();
-
+    println!("fork url: {:?}", fork_url);
     let config = AnvilConfig {
         fork_url,
         fork_block_number: block_number,

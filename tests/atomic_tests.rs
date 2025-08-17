@@ -17,6 +17,13 @@ async fn test_atomic_provider_connection() -> Result<()> {
     // Setup test environment
     let test_env = TestEnvironment::new().await?;
     
+    // Log which environment we're using
+    if test_env.is_using_anvil() {
+        info!("🔧 Using local Anvil fork for testing");
+    } else {
+        info!("🌐 Using external RPC provider for testing");
+    }
+    
     // Verify basic connection
     test_env.verify_connection().await?;
     
