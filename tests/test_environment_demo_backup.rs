@@ -1,6 +1,19 @@
 #![allow(unused_imports)]
 
-// Comprehensive Test Environment Demo
+// Comprehensive Test/// Demo 1: Simple test environment with Anvil and test contracts
+async fn demo_simple_environment() -> Result<()> {
+    info!("\n🔧 Demo 1: Simple Test Environment Setup");
+    
+    let _env = quick_setup().await?;
+    
+    info!("📦 Anvil instance started successfully");
+    
+    // Verify environment is working
+    info!("🔗 Provider connection established");
+    
+    info!("✅ Simple environment demo completed");
+    Ok(())
+}mo
 // Demonstrates the complete test infrastructure setup and usage
 
 use anyhow::Result;
@@ -50,12 +63,13 @@ async fn main() -> Result<()> {
 async fn demo_simple_environment() -> Result<()> {
     info!("\n🔧 Demo 1: Simple Test Environment Setup");
     
-    let _env = quick_setup().await?;
+    let env = quick_setup().await?;
     
-    info!("📦 Anvil instance started successfully");
+    // Get some basic info
+    info!("📦 Anvil instance started on port: {}", env.anvil().port());
     
     // Verify environment is working
-    info!("🔗 Provider connection established");
+    info!("� Provider connection established");
     
     info!("✅ Simple environment demo completed");
     Ok(())
@@ -97,7 +111,7 @@ async fn demo_test_scenarios() -> Result<()> {
     
     // Create a simple test scenario
     let scenario = PredefinedScenarios::normal_arbitrage();
-    info!("📋 Running scenario: {}", scenario.name);
+    info!("� Running scenario: {}", scenario.name);
     info!("📄 Description: {}", scenario.description);
     
     // Execute the scenario
@@ -110,7 +124,8 @@ async fn demo_test_scenarios() -> Result<()> {
 
 /// Demo 5: Complete arbitrage test cycle
 async fn demo_complete_arbitrage_cycle() -> Result<()> {
-    info!("\n🔄 Demo 5: Complete Arbitrage Test Cycle");
+    info!("
+🔄 Demo 5: Complete Arbitrage Test Cycle");
     
     let env = quick_setup().await?;
     
