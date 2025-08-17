@@ -305,12 +305,10 @@ impl AccountInfo {
 /// Helper function to create a test Anvil instance with mainnet fork
 pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInstance> {
     let fork_url = std::env::var("MAINNET_RPC_URL").ok();
-    println!("fork url: {:?}", fork_url);
     let config = AnvilConfig {
         fork_url,
         ..Default::default()
     };
-    println!("config: {:?}", config.fork_url);
     AnvilInstance::new(config).await
 }
 
