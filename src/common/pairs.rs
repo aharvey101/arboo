@@ -4,7 +4,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Filter, Log};
 use anyhow::Result;
 use log::info;
-use revm::primitives::{B256, U256};
+use revm::primitives::B256;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -96,23 +96,6 @@ async fn decode_event(log: &Log) -> Option<Event> {
         }
     }
     None
-}
-
-async fn get_pair_data(
-    provider: Arc<RootProvider<PubSubFrontend>>,
-    pairs: HashMap<Address, Event>,
-) -> Result<()> {
-    for pair in pairs {
-        // info!("pair: {pair:?}");
-        let storage = provider
-            .get_storage_at(pair.0, U256::from(2))
-            .await
-            .unwrap();
-
-        // info!("Storage: {storage:?}");
-    }
-
-    Ok(())
 }
 
 fn uniswap_v3_factory_address() -> Address {

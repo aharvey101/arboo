@@ -1,9 +1,9 @@
-pub mod decodeResult;
+pub mod decode_result;
 pub mod logger;
 pub mod logs;
 pub mod pairs;
 pub mod pools;
 pub mod revm;
-pub mod revmInspector;
+pub mod revm_inspector;
 pub mod transaction;
 pub mod utils;

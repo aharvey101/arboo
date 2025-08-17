@@ -1,17 +1,13 @@
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
-use alloy::{
-    network::Ethereum, primitives::U64, pubsub::PubSubFrontend, rpc::client::WsConnect,
-    signers::local::PrivateKeySigner,
-};
+use alloy::providers::ProviderBuilder;
+use alloy::rpc::client::WsConnect;
 use anyhow::Result;
-use arbooo::arbitrage::strategy::{initialize_strategy_pool, process_strategy};
+use arbooo::arbitrage::strategy::initialize_strategy_pool;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
 use arbooo::common::{
     logs::LogEvent,
     pairs::{Event, V2PoolCreated, V3PoolCreated},
-    revm::EvmSimulator,
 };
 use dotenv::dotenv;
 use dotenv::var;
@@ -24,7 +20,6 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast::{self, Sender};
-use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinSet;
 
 #[tokio::main]

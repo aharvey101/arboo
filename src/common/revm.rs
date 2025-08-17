@@ -1,5 +1,5 @@
 use crate::arbitrage::simulation::{arboo_bytecode, get_address, AddressType};
-use crate::common::revmInspector;
+use crate::common::revm_inspector;
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
 use alloy::network::{AnyNetwork, Ethereum};
@@ -128,7 +128,7 @@ impl EvmSimulator {
             None => PrivateKeySigner::random().address(),
         };
         let contract_wallet = PrivateKeySigner::random();
-        let inspector = revmInspector::RevmInspector::new();
+        let _inspector = revm_inspector::RevmInspector::new();
 
         let alloy_db = CacheDB::new(
             AlloyDB::new(provider, BlockId::from(block_number))
@@ -268,7 +268,7 @@ impl EvmSimulator {
         Ok(account)
     }
 
-    pub async fn get_contract(&mut self, code_hash: B256) -> Result<(), Error> {
+    pub async fn get_contract(&mut self, _code_hash: B256) -> Result<(), Error> {
         let new_code_hash =
             B256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")?;
         let contracts = self.evm.context.evm.db.code_by_hash(new_code_hash);
@@ -312,7 +312,7 @@ impl EvmSimulator {
     pub async fn get_erc20_balance(
         &mut self,
         address: Address,
-        token: Address,
+        _token: Address,
         index: U256,
     ) -> U256 {
         self.evm.context.evm.db.storage(address, index).unwrap()

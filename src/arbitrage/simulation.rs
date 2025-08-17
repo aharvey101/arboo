@@ -1,7 +1,7 @@
 use crate::common::revm::{EvmSimulator, Tx};
 use ::log::info;
 use alloy::eips::BlockId;
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
@@ -18,7 +18,7 @@ pub async fn simulation(
     simulator: &mut EvmSimulator,
     provider: &RootProvider<PubSubFrontend>,
 ) -> Result<U256> {
-    let time = std::time::Instant::now();
+    let _time = std::time::Instant::now();
     let latest_block_number = provider.get_block_number().await?;
     info!("got block number: {:?}", latest_block_number);
     let syncying_status = provider.syncing().await?;

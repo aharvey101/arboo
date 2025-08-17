@@ -1,5 +1,5 @@
 use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
-use crate::arbitrage::simulation::{one_ether, simulation};
+use crate::arbitrage::simulation::simulation;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
@@ -25,11 +25,9 @@ use std::{
     io::{self, BufRead},
     path::Path,
     str::FromStr,
-    sync::Arc,
 };
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
-use url::Url;
 
 pub struct StrategyWorkerPool {
     sender: mpsc::Sender<LogEvent>,
