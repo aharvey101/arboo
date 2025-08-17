@@ -61,6 +61,11 @@ async fn main() -> Result<()> {
         "atomic" => test_results.add(run_atomic_tests().await),
         "pool" => test_results.add(run_pool_tests().await),
         "evm" => test_results.add(run_evm_tests().await),
+        "unit" => test_results.add(run_unit_tests().await),
+        "performance" => test_results.add(run_performance_tests().await),
+        "memory" => test_results.add(run_memory_tests().await),
+        "environment" => test_results.add(run_environment_tests().await),
+        "transaction" => test_results.add(run_transaction_tests().await),
         "component" => {
             test_results.add(run_pool_tests().await);
             test_results.add(run_evm_tests().await);
@@ -71,15 +76,20 @@ async fn main() -> Result<()> {
         "stress" => test_results.add(run_edge_case_tests().await),
         "all" => {
             test_results.add(run_atomic_tests().await);
+            test_results.add(run_unit_tests().await);
             test_results.add(run_pool_tests().await);
             test_results.add(run_evm_tests().await);
+            test_results.add(run_environment_tests().await);
+            test_results.add(run_transaction_tests().await);
+            test_results.add(run_performance_tests().await);
+            test_results.add(run_memory_tests().await);
             test_results.add(run_integration_tests().await);
             test_results.add(run_comprehensive_flow_tests().await);
             test_results.add(run_edge_case_tests().await);
         }
         _ => {
             eprintln!("❌ Unknown test: {}", test_name);
-            eprintln!("Available tests: provider, atomic, pool, evm, component, integration, full-flow, edge-cases, stress, all");
+            eprintln!("Available tests: provider, atomic, unit, pool, evm, environment, transaction, performance, memory, component, integration, full-flow, edge-cases, stress, all");
             process::exit(1);
         }
     }
@@ -155,6 +165,26 @@ async fn run_pool_tests() -> TestResult {
         Err(e) => {
             all_passed = false;
             errors.push(format!("Pool discovery tests failed: {}", e));
+        }
+    }
+    
+    // Test 5: Pool Data Tests (file-based)
+    info!("📁 Testing Pool Data Files");
+    match run_pool_data_file_tests().await {
+        Ok(_) => info!("✅ Pool data file tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Pool data file tests failed: {}", e));
+        }
+    }
+    
+    // Test 6: Pool Pairing Tests (file-based)
+    info!("🔗 Testing Pool Pairing Files");
+    match run_pool_pairing_file_tests().await {
+        Ok(_) => info!("✅ Pool pairing file tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Pool pairing file tests failed: {}", e));
         }
     }
     
@@ -1585,6 +1615,445 @@ async fn run_profit_simulation_tests() -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         Err(anyhow::anyhow!("Profit simulation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+// New test category functions for comprehensive coverage
+
+async fn run_unit_tests() -> TestResult {
+    info!("🧪 Running Unit Tests");
+    
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Run atomic tests
+    info!("⚛️ Testing Atomic Components");
+    match run_atomic_component_tests().await {
+        Ok(_) => info!("✅ Atomic component tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Atomic component tests failed: {}", e));
+        }
+    }
+    
+    // Run environment loading tests
+    info!("🌍 Testing Environment Loading");
+    match run_env_loading_tests().await {
+        Ok(_) => info!("✅ Environment loading tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Environment loading tests failed: {}", e));
+        }
+    }
+    
+    // Run log event processing tests
+    info!("📝 Testing Log Event Processing");
+    match run_log_event_processing_tests().await {
+        Ok(_) => info!("✅ Log event processing tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Log event processing tests failed: {}", e));
+        }
+    }
+    
+    // Run test fork check
+    info!("🍴 Testing Fork Functionality");
+    match run_fork_check_tests().await {
+        Ok(_) => info!("✅ Fork functionality tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Fork functionality tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Unit Tests")
+    } else {
+        TestResult::failure("Unit Tests", errors.join("; "))
+    }
+}
+
+async fn run_performance_tests() -> TestResult {
+    info!("⚡ Running Performance Tests");
+    
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Run opportunity detection benchmarks
+    info!("🎯 Testing Opportunity Detection Performance");
+    match run_opportunity_detection_benchmarks().await {
+        Ok(_) => info!("✅ Opportunity detection benchmarks passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Opportunity detection benchmarks failed: {}", e));
+        }
+    }
+    
+    // Run simulation execution benchmarks
+    info!("🔄 Testing Simulation Execution Performance");
+    match run_simulation_execution_benchmarks().await {
+        Ok(_) => info!("✅ Simulation execution benchmarks passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Simulation execution benchmarks failed: {}", e));
+        }
+    }
+    
+    // Run transaction success rate metrics
+    info!("📈 Testing Transaction Success Rate Metrics");
+    match run_transaction_success_rate_tests().await {
+        Ok(_) => info!("✅ Transaction success rate tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Transaction success rate tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Performance Tests")
+    } else {
+        TestResult::failure("Performance Tests", errors.join("; "))
+    }
+}
+
+async fn run_memory_tests() -> TestResult {
+    info!("💾 Running Memory Tests");
+    
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Run memory usage profiling tests
+    info!("📊 Testing Memory Usage Profiling");
+    match run_memory_usage_profiling_tests().await {
+        Ok(_) => info!("✅ Memory usage profiling tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Memory usage profiling tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Memory Tests")
+    } else {
+        TestResult::failure("Memory Tests", errors.join("; "))
+    }
+}
+
+async fn run_environment_tests() -> TestResult {
+    info!("🌐 Running Environment Tests");
+    
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Run test environment demo
+    info!("🎭 Testing Environment Demo");
+    match run_test_environment_demo().await {
+        Ok(_) => info!("✅ Test environment demo passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Test environment demo failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Environment Tests")
+    } else {
+        TestResult::failure("Environment Tests", errors.join("; "))
+    }
+}
+
+async fn run_transaction_tests() -> TestResult {
+    info!("💼 Running Transaction Tests");
+    
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Run transaction creation tests
+    info!("🏗️ Testing Transaction Creation");
+    match run_transaction_creation_tests().await {
+        Ok(_) => info!("✅ Transaction creation tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Transaction creation tests failed: {}", e));
+        }
+    }
+    
+    // Run single swap simulation tests
+    info!("🔄 Testing Single Swap Simulations");
+    match run_single_swap_simulation_tests().await {
+        Ok(_) => info!("✅ Single swap simulation tests passed"),
+        Err(e) => {
+            all_passed = false;
+            errors.push(format!("Single swap simulation tests failed: {}", e));
+        }
+    }
+    
+    if all_passed {
+        TestResult::success("Transaction Tests")
+    } else {
+        TestResult::failure("Transaction Tests", errors.join("; "))
+    }
+}
+
+// Individual test execution functions for new test categories
+
+async fn run_atomic_component_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("⚛️ Running atomic component tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "atomic_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run atomic tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Atomic component tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Atomic tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_env_loading_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🌍 Running environment loading tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "env_loading_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run env loading tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Environment loading tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Environment loading tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_log_event_processing_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("📝 Running log event processing tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "log_event_processing_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run log event processing tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Log event processing tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Log event processing tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_fork_check_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🍴 Running fork check tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "test_fork_check", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run fork check tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Fork check tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Fork check tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_pool_data_file_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("📁 Running pool data file tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "pool_data_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run pool data tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Pool data file tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Pool data tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_pool_pairing_file_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔗 Running pool pairing file tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "pool_pairing_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run pool pairing tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Pool pairing file tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Pool pairing tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_opportunity_detection_benchmarks() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🎯 Running opportunity detection benchmarks");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "opportunity_detection_benchmarks", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run opportunity detection benchmarks: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Opportunity detection benchmarks passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Opportunity detection benchmarks failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_simulation_execution_benchmarks() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔄 Running simulation execution benchmarks");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "simulation_execution_benchmarks", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run simulation execution benchmarks: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Simulation execution benchmarks passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Simulation execution benchmarks failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_transaction_success_rate_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("📈 Running transaction success rate tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "transaction_success_rate_metrics", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run transaction success rate tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Transaction success rate tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Transaction success rate tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_memory_usage_profiling_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("📊 Running memory usage profiling tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "memory_usage_profiling", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run memory usage profiling tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Memory usage profiling tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Memory usage profiling tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_test_environment_demo() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🎭 Running test environment demo");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "test_environment_demo", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run test environment demo: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Test environment demo passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Test environment demo failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_transaction_creation_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🏗️ Running transaction creation tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "transaction_creation_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run transaction creation tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Transaction creation tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Transaction creation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
+    }
+}
+
+async fn run_single_swap_simulation_tests() -> Result<()> {
+    use std::process::Command;
+    
+    info!("🔄 Running single swap simulation tests");
+    
+    let output = Command::new("cargo")
+        .args(&["test", "--test", "single_swap_simulation_tests", "--", "--nocapture"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run single swap simulation tests: {}", e))?;
+    
+    if output.status.success() {
+        info!("✅ Single swap simulation tests passed");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow::anyhow!("Single swap simulation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
     }
 }
 

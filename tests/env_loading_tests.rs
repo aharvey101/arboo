@@ -17,19 +17,17 @@ async fn test_env_loading() -> Result<()> {
     
     info!("📊 Test Configuration:");
     info!("  WS URL: {}", config.ws_url);
-    info!("  Use Local Fork: {}", config.use_local_fork);
     info!("  Fork Block Number: {:?}", config.fork_block_number);
     info!("  Test Timeout: {} seconds", config.test_timeout_secs);
     
     // Verify that we're getting configuration from the .env.test file
-    assert!(!config.ws_url.is_empty(), "WS URL should not be empty");
     assert!(config.test_timeout_secs > 0, "Test timeout should be positive");
     
-    // Check if we're using the expected test URL
-    if config.ws_url == "wss://eth.merkle.io" {
-        info!("✅ Using default test URL from .env.test");
+    // Check configuration values
+    if config.ws_url.is_empty() {
+        info!("✅ Will use local anvil fork");
     } else {
-        info!("ℹ️ Using custom WS URL: {}", config.ws_url);
+        info!("✅ Using configured URL: {}", config.ws_url);
     }
     
     Ok(())
@@ -39,19 +37,19 @@ async fn test_env_loading() -> Result<()> {
 async fn test_env_variable_override() -> Result<()> {
     env_logger::try_init().ok();
     
-    // Set a test environment variable
-    std::env::set_var("TEST_WS_URL", "wss://custom.test.url");
+    // Set a test environment variable for fork block number
+    std::env::set_var("FORK_BLOCK_NUMBER", "12345678");
     
     let config = TestConfig::default();
     
     info!("🔧 Testing environment variable override:");
-    info!("  WS URL: {}", config.ws_url);
+    info!("  Fork Block Number: {:?}", config.fork_block_number);
     
-    // The URL should now be the custom one we set
-    assert_eq!(config.ws_url, "wss://custom.test.url", "Environment variable override should work");
+    // The fork block number should now be the custom one we set
+    assert_eq!(config.fork_block_number, Some(12345678), "Environment variable override should work");
     
     // Clean up
-    std::env::remove_var("TEST_WS_URL");
+    std::env::remove_var("FORK_BLOCK_NUMBER");
     
     Ok(())
 }
