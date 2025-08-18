@@ -3,7 +3,7 @@ use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Filter, Log};
 use anyhow::Result;
-use log::info;
+
 use revm::primitives::B256;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -58,7 +58,7 @@ pub async fn get_pairs(
     // My thoughts are we could just get the data of each uniswap pair and get the product of the two tokens
 
     // get_pair_data(client, result.clone()).await.unwrap();
-    info!("hash map size: {:?}", result.capacity());
+    log::debug!("hash map size: {:?}", result.capacity());
     Ok(result)
 }
 

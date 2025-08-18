@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
     let _strategy_pool = initialize_strategy_pool(sender, ws_url, 16).await?;
     
     while let Some(res) = set.join_next().await {
-        info!("{:?}", res);
+        log::debug!("{:?}", res);
     }
 
     Ok(())

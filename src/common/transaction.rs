@@ -9,7 +9,7 @@ use alloy_primitives::{address, aliases::U24};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
-use log::info;
+
 use reqwest::Url;
 use std::str::FromStr;
 
@@ -41,7 +41,7 @@ pub async fn send_transaction(
 
     let input_as_bytes = revm::primitives::Bytes::from(input);
 
-    info!(
+    log::debug!(
         "Sending transaction with parameters:\n\
         contract_address: {}\n\
         gas_price: {:?}\n\
@@ -71,11 +71,11 @@ pub async fn send_transaction(
         .with_max_priority_fee_per_gas(bribe.ok_or_else(|| anyhow::anyhow!("Priority fee (bribe) is required"))?)
         .with_gas_limit(gas_limit.ok_or_else(|| anyhow::anyhow!("Gas limit is required"))?);
 
-    info!("TX: {:?}", tx);
+    log::debug!("TX: {:?}", tx);
 
     let envelope = tx.build(&wallet).await?;
 
-    info!("Pending TX Hash: {:?}", envelope.tx_hash());
+    log::debug!("Pending TX Hash: {:?}", envelope.tx_hash());
 
     let pending = provider
         .send_tx_envelope(envelope)
@@ -85,7 +85,7 @@ pub async fn send_transaction(
 
     let res = pending.watch().await?;
 
-    info!("Res: {:?}", res);
+    log::debug!("Res: {:?}", res);
     Ok(())
 }
 

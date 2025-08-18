@@ -9,7 +9,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::signers::local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use anyhow::{anyhow, Error, Result};
-use log::info;
+
 use revm::db::{AlloyDB, CacheDB};
 use revm::primitives::{Bytes, Log};
 use revm::{
@@ -249,7 +249,7 @@ impl EvmSimulator {
 
     pub async fn insert_contract(&mut self, data: Bytecode) {
         let code_hash = data.hash_slow();
-        info!("code hash in insert_contract: {:?}", code_hash);
+        log::debug!("code hash in insert_contract: {:?}", code_hash);
         let mut account_info = AccountInfo::new(U256::from(0), 0, code_hash, data);
         self.evm.context.evm.db.insert_contract(&mut account_info);
     }
@@ -276,7 +276,7 @@ impl EvmSimulator {
         let new_code_hash =
             B256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")?;
         let contracts = self.evm.context.evm.db.code_by_hash(new_code_hash);
-        info!("contracts: {:?}", contracts);
+        log::debug!("contracts: {:?}", contracts);
         Ok(())
     }
 
@@ -405,19 +405,19 @@ impl EvmSimulator {
 
         let balance = res[0].clone();
 
-        info!("balance: {:?}", balance);
+        log::debug!("balance: {:?}", balance);
         // decode result
     }
 
     pub async fn get_accounts(&mut self) {
         let accounts = &self.evm.context.evm.db.accounts;
-        info!("Accounts: {:?}", accounts);
+        log::debug!("Accounts: {:?}", accounts);
     }
 
     pub async fn get_db(&mut self) {
         let db = &self.evm.context.evm.db;
-        info!("//////////////////////////////////////////////////////");
-        info!("Logs: {:?}", db);
+        log::debug!("//////////////////////////////////////////////////////");
+        log::debug!("Logs: {:?}", db);
     }
 
     pub async fn load_pool_state(&mut self, pool_address: Address) -> Result<(), Error> {
