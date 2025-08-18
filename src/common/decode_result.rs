@@ -18,7 +18,9 @@ pub enum EVMErrorType {
     StringError(String),
     /// Panic error with a uint256 error code
     PanicError(u64),
-    /// Custom error with raw parameters
+    /// Known custom error with decoded parameters
+    KnownCustomError { name: String, description: String, params: Vec<u8> },
+    /// Unknown custom error with raw parameters
     CustomError(Vec<u8>),
     /// Unknown or malformed error
     Unknown,
@@ -29,10 +31,13 @@ impl fmt::Display for DecodedEVMRevert {
         write!(f, "EVM Revert: ")?;
         match &self.error_type {
             EVMErrorType::StringError(msg) => {
-                write!(f, "Error(\"{}\") [0x{}]", msg, hex::encode(self.selector))
+                write!(f, "{} [0x{}]", msg, hex::encode(self.selector))
             }
             EVMErrorType::PanicError(code) => {
                 write!(f, "Panic({}): {}", code, panic_code_to_message(*code))
+            }
+            EVMErrorType::KnownCustomError { name, description, params: _ } => {
+                write!(f, "{}: {} [0x{}]", name, description, hex::encode(self.selector))
             }
             EVMErrorType::CustomError(data) => write!(
                 f,
@@ -63,6 +68,122 @@ fn panic_code_to_message(code: u64) -> &'static str {
     }
 }
 
+/// Translate common abbreviated DeFi error messages to more descriptive ones
+fn translate_error_message(message: &str) -> String {
+    match message {
+        // Common Uniswap/DEX errors
+        "SPL" => "Slippage Protection: Transaction would exceed maximum slippage tolerance".to_string(),
+        "LOK" => "Locked: Pool or contract is currently locked (possibly during rebalancing or emergency pause)".to_string(),
+        "IIA" => "Insufficient Input Amount: Not enough tokens provided for the swap".to_string(),
+        "IOA" => "Insufficient Output Amount: Swap would not produce enough output tokens".to_string(),
+        "IL" => "Insufficient Liquidity: Pool does not have enough liquidity for this trade size".to_string(),
+        "IP" => "Invalid Path: The token swap path is invalid or contains unsupported pairs".to_string(),
+        "K" => "K Invariant: Uniswap V2 constant product formula violation (x*y=k)".to_string(),
+        "EXPIRED" => "Transaction Expired: Deadline for transaction execution has passed".to_string(),
+        "FORBIDDEN" => "Forbidden: Operation not allowed by the contract or caller lacks permission".to_string(),
+        "IDENTICAL_ADDRESSES" => "Identical Addresses: Cannot create pair with the same token address".to_string(),
+        "PAIR_EXISTS" => "Pair Exists: Trading pair already exists for these tokens".to_string(),
+        "ZERO_ADDRESS" => "Zero Address: Invalid zero address provided where token address expected".to_string(),
+        
+        // Flash loan specific errors
+        "FLASH_LOAN_FAILED" => "Flash Loan Failed: Callback validation or repayment failed".to_string(),
+        "INSUFFICIENT_FLASH_LOAN_BALANCE" => "Insufficient Flash Loan Balance: Not enough balance to repay flash loan".to_string(),
+        
+        // ERC20 errors
+        "TRANSFER_FAILED" => "Transfer Failed: ERC20 token transfer was unsuccessful".to_string(),
+        "APPROVE_FAILED" => "Approval Failed: ERC20 token approval was unsuccessful".to_string(),
+        "INSUFFICIENT_BALANCE" => "Insufficient Balance: Account does not have enough token balance".to_string(),
+        "INSUFFICIENT_ALLOWANCE" => "Insufficient Allowance: Spender allowance is too low for this transfer".to_string(),
+        
+        // Arithmetic errors
+        "OVERFLOW" => "Arithmetic Overflow: Calculation result exceeds maximum value".to_string(),
+        "UNDERFLOW" => "Arithmetic Underflow: Calculation result goes below minimum value".to_string(),
+        "DIV_BY_ZERO" => "Division by Zero: Attempted to divide by zero".to_string(),
+        
+        // Access control errors
+        "NOT_OWNER" => "Not Owner: Only the contract owner can perform this action".to_string(),
+        "UNAUTHORIZED" => "Unauthorized: Caller is not authorized to perform this action".to_string(),
+        "PAUSED" => "Contract Paused: Contract operations are currently paused".to_string(),
+        
+        // If no translation found, return original with context hint
+        _ => {
+            if message.len() <= 5 && message.chars().all(|c| c.is_ascii_uppercase()) {
+                format!("{} (abbreviated error - likely DeFi/DEX related)", message)
+            } else {
+                message.to_string()
+            }
+        }
+    }
+}
+
+/// Decode known custom error selectors
+fn decode_known_custom_error(selector: [u8; 4], data: Vec<u8>) -> Option<EVMErrorType> {
+    match selector {
+        // Common Uniswap V2/V3 errors - this seems to be the most frequent one
+        [0x8b, 0x02, 0x88, 0x3f] => {
+            let mut description = "Uniswap swap calculation failed".to_string();
+            if data.len() >= 68 { // 4 bytes selector + 2 * 32 bytes parameters
+                let param1_bytes = &data[4..36];
+                let param2_bytes = &data[36..68];
+                
+                let param1_formatted = format_u256_bytes(param1_bytes);
+                let param2_formatted = format_u256_bytes(param2_bytes);
+                
+                description.push_str(&format!(" | Input: {} | Output: {}", param1_formatted, param2_formatted));
+            }
+            Some(EVMErrorType::KnownCustomError {
+                name: "SwapCalculationError".to_string(),
+                description,
+                params: data[4..].to_vec(),
+            })
+        },
+        [0x08, 0x1f, 0xf1, 0x2e] => Some(EVMErrorType::KnownCustomError {
+            name: "InsufficientOutputAmount".to_string(),
+            description: "The swap would not produce enough output tokens".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        [0x08, 0x62, 0x2a, 0x8e] => Some(EVMErrorType::KnownCustomError {
+            name: "InsufficientInputAmount".to_string(),
+            description: "Not enough input tokens provided for the swap".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        [0x08, 0x5f, 0xb4, 0x2e] => Some(EVMErrorType::KnownCustomError {
+            name: "InsufficientLiquidity".to_string(),
+            description: "Pool does not have enough liquidity for this trade".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        [0x08, 0x7e, 0x2a, 0x5f] => Some(EVMErrorType::KnownCustomError {
+            name: "InvalidPath".to_string(),
+            description: "The token swap path is invalid".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        [0x4e, 0x48, 0x7b, 0x71] => Some(EVMErrorType::KnownCustomError {
+            name: "Panic".to_string(),
+            description: "Contract execution panicked".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        // Flash loan errors
+        [0x46, 0xb2, 0xa0, 0x21] => Some(EVMErrorType::KnownCustomError {
+            name: "FlashLoanFailed".to_string(),
+            description: "Flash loan callback validation failed".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        // Generic ERC20 errors
+        [0x94, 0x28, 0x0d, 0x62] => Some(EVMErrorType::KnownCustomError {
+            name: "TransferFailed".to_string(),
+            description: "ERC20 token transfer failed".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        [0xa9, 0x05, 0x9c, 0xbb] => Some(EVMErrorType::KnownCustomError {
+            name: "ApprovalFailed".to_string(),
+            description: "ERC20 token approval failed".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        // Add more known selectors as we encounter them
+        _ => None,
+    }
+}
+
 /// Decode an EVM revert error from bytes
 pub fn decode_evm_revert(data: Vec<u8>) -> DecodedEVMRevert {
     // Check if we have enough data for a selector (4 bytes)
@@ -87,6 +208,18 @@ pub fn decode_evm_revert(data: Vec<u8>) -> DecodedEVMRevert {
     if selector == [0x4e, 0x48, 0x7b, 0x71] {
         return decode_panic_error(data);
     }
+
+    // Try to decode known custom errors first
+    if let Some(known_error) = decode_known_custom_error(selector, data.clone()) {
+        return DecodedEVMRevert {
+            selector,
+            error_type: known_error,
+            raw_data: data,
+        };
+    }
+
+    // Log unknown selectors to help improve our decoder
+    log::debug!("Unknown custom error selector: 0x{}, data length: {}", hex::encode(selector), data.len());
 
     // Handle other custom errors
     DecodedEVMRevert {
@@ -140,10 +273,13 @@ fn decode_string_error(data: Vec<u8>) -> DecodedEVMRevert {
     // Extract and convert the string
     let string_bytes = &data[68..68 + length];
     match String::from_utf8(string_bytes.to_vec()) {
-        Ok(message) => DecodedEVMRevert {
-            selector,
-            error_type: EVMErrorType::StringError(message),
-            raw_data: data,
+        Ok(message) => {
+            let translated_message = translate_error_message(&message);
+            DecodedEVMRevert {
+                selector,
+                error_type: EVMErrorType::StringError(translated_message),
+                raw_data: data,
+            }
         },
         Err(_) => DecodedEVMRevert {
             selector,
@@ -191,6 +327,37 @@ fn u256_to_u64(bytes: &[u8]) -> u64 {
     }
 
     result
+}
+
+/// Convert u256 bytes to a more readable format
+fn format_u256_bytes(bytes: &[u8]) -> String {
+    if bytes.len() >= 32 {
+        // Try to interpret as both hex and decimal for better readability
+        let hex_str = hex::encode(bytes);
+        // Check if it's a small number that fits in u64
+        let mut is_small_number = true;
+        for i in 0..24 { // First 24 bytes should be zero for small numbers
+            if bytes[i] != 0 {
+                is_small_number = false;
+                break;
+            }
+        }
+        
+        if is_small_number {
+            let decimal_val = u256_to_u64(bytes);
+            if decimal_val < 1_000_000_000_000_000_000 { // Less than 10^18 (reasonable for token amounts)
+                format!("0x{} ({})", hex_str, decimal_val)
+            } else {
+                // Might be wei amount, show in ether too
+                let ether = decimal_val as f64 / 1e18;
+                format!("0x{} ({} wei = {:.6} ETH)", hex_str, decimal_val, ether)
+            }
+        } else {
+            format!("0x{}", hex_str)
+        }
+    } else {
+        format!("0x{}", hex::encode(bytes))
+    }
 }
 
 /// Utility function to convert hex string to bytes

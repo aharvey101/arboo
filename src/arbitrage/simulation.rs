@@ -86,7 +86,25 @@ pub async fn simulation(
 
     simulator
         .call(new_tx)
-        .inspect_err(|e| error!("Error doing sim {:?}", e))?;
+        .inspect_err(|e| {
+            
+            // Try to decode EVM revert errors
+            let error_str = format!("{:?}", e);
+            if error_str.contains("EVM REVERT:") {
+                // Extract the bytes from the error string
+                // The format is "EVM REVERT: 0x<hex_data> / Gas used: <gas>"
+                if let Some(start) = error_str.find("0x") {
+                    if let Some(end) = error_str[start..].find(" / Gas used:") {
+                        let hex_data = &error_str[start..start + end];
+                        if let Ok(decoded) = crate::common::decode_result::decode_revert_hex(hex_data) {
+                            error!("Decoded EVM error: {}", decoded);
+                        } else {
+                            error!("Failed to decode revert data: {}", hex_data);
+                        }
+                    }
+                }
+            }
+        })?;
 
     let balance = check_weth_balance(
         wallet_address,
