@@ -1,6 +1,8 @@
 use anyhow::Result;
 use log::info;
 use super::reporter::Reporter;
+use std::fs;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
@@ -94,101 +96,113 @@ async fn run_cargo_test_with_verbosity(test_filter: &str, show_details: bool) ->
     }
 }
 
-// Test category definitions - maps categories to test filters
+// Dynamic test category discovery from folder structure
+#[derive(Debug, Clone)]
 pub struct TestCategory {
-    pub name: &'static str,
-    pub filters: &'static [&'static str],
-    pub description: &'static str,
+    pub name: String,
+    pub filters: Vec<String>,
+    pub description: String,
 }
 
-// Define all test categories and their corresponding test filters
-pub const TEST_CATEGORIES: &[TestCategory] = &[
-    TestCategory {
-        name: "atomic",
-        filters: &["atomic_tests"],
-        description: "Basic atomic functionality tests",
-    },
-    TestCategory {
-        name: "unit",
-        filters: &[
-            "arbitrage_calculation",
-            "transaction_creation", 
-            "error_recovery",
-            "profit_simulation",
-            "transaction_execution",
-            "env_loading",
-            "log_event_processing", 
-            "test_fork_check",
-            "single_swap_simulation",
-        ],
-        description: "Unit tests for individual components",
-    },
-    TestCategory {
-        name: "pool",
-        filters: &["pool_data", "pool_pairing"],
-        description: "Pool data and pairing tests",
-    },
-    TestCategory {
-        name: "evm",
-        filters: &["evm_simulator"],
-        description: "EVM simulator and contract tests",
-    },
-    TestCategory {
-        name: "environment", 
-        filters: &["test_environment_demo"],
-        description: "Environment setup and configuration tests",
-    },
-    TestCategory {
-        name: "performance",
-        filters: &[
-            "high_frequency",
-            "mev_competition", 
-            "opportunity_detection",
-            "simulation_execution",
-            "transaction_success_rate",
-        ],
-        description: "Performance benchmarks and optimization tests",
-    },
-    TestCategory {
-        name: "memory",
-        filters: &["memory_usage"],
-        description: "Memory usage profiling tests",
-    },
-    TestCategory {
-        name: "integration",
-        filters: &[
-            "full_arbitrage_cycle",
-            "concurrent_opportunities",
-            "network_disconnection",
-        ],
-        description: "Integration and end-to-end tests",
-    },
-    TestCategory {
-        name: "edge_cases",
-        filters: &[
-            "insufficient_liquidity",
-            "gas_price_spike",
-            "block_reorganization",
-        ],
-        description: "Edge cases and stress tests",
-    },
-    TestCategory {
-        name: "misc",
-        filters: &["logger_tests", "rpc_call_measurement"],
-        description: "Miscellaneous utility tests",
-    },
-];
+// Discover test categories by scanning the tests directory structure
+pub fn discover_test_categories() -> Result<Vec<TestCategory>> {
+    let tests_dir = Path::new("tests");
+    let mut categories = Vec::new();
+    
+    if !tests_dir.exists() {
+        return Err(anyhow::anyhow!("Tests directory not found"));
+    }
+    
+    // Read all entries in the tests directory
+    let entries = fs::read_dir(tests_dir)?;
+    
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        
+        // Skip non-directories and special directories
+        if !path.is_dir() {
+            continue;
+        }
+        
+        let folder_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+        
+        // Skip special directories that aren't test categories
+        if matches!(folder_name, "bin" | "fixtures" | "utils") {
+            continue;
+        }
+        
+        // Discover test files in this category folder
+        let mut filters = Vec::new();
+        if let Ok(test_entries) = fs::read_dir(&path) {
+            for test_entry in test_entries {
+                if let Ok(test_entry) = test_entry {
+                    let test_path = test_entry.path();
+                    if test_path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                        if let Some(file_stem) = test_path.file_stem().and_then(|s| s.to_str()) {
+                            // Extract the base name from test files
+                            // e.g., "arbitrage_calculation_tests.rs" -> "arbitrage_calculation"
+                            let filter_name = if file_stem.ends_with("_tests") {
+                                file_stem.trim_end_matches("_tests")
+                            } else {
+                                file_stem
+                            };
+                            filters.push(filter_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Only add categories that have test files
+        if !filters.is_empty() {
+            let description = generate_category_description(folder_name);
+            categories.push(TestCategory {
+                name: folder_name.to_string(),
+                filters,
+                description,
+            });
+        }
+    }
+    
+    // Sort categories by name for consistent output
+    categories.sort_by(|a, b| a.name.cmp(&b.name));
+    
+    Ok(categories)
+}
+
+// Generate a human-readable description for each category
+fn generate_category_description(category_name: &str) -> String {
+    match category_name {
+        "atomic" => "Basic atomic functionality tests".to_string(),
+        "unit" => "Unit tests for individual components".to_string(),
+        "pool" => "Pool data and pairing tests".to_string(),
+        "evm" => "EVM simulator and contract tests".to_string(),
+        "environment" => "Environment setup and configuration tests".to_string(),
+        "transaction" => "Transaction creation and execution tests".to_string(),
+        "performance" => "Performance benchmarks and optimization tests".to_string(),
+        "memory" => "Memory usage profiling and optimization tests".to_string(),
+        "integration" => "Full system integration tests".to_string(),
+        "edge_cases" => "Edge case and error scenario tests".to_string(),
+        "misc" => "Miscellaneous utility and helper tests".to_string(),
+        _ => format!("{} tests", category_name.replace('_', " ")).to_string(),
+    }
+}
 
 // Generic function to run tests for a specific category
 pub async fn run_test_category(category_name: &str) -> Result<()> {
-    let category = TEST_CATEGORIES
+    let categories = discover_test_categories()?;
+    let category = categories
         .iter()
         .find(|cat| cat.name == category_name)
         .ok_or_else(|| anyhow::anyhow!("Unknown test category: {}", category_name))?;
     
     info!("🧪 Running {} tests: {}", category.name, category.description);
     
-    for filter in category.filters {
+    for filter in &category.filters {
         info!("🔍 Running test filter: {}", filter);
         run_test_by_filter(filter).await?;
     }
@@ -199,9 +213,10 @@ pub async fn run_test_category(category_name: &str) -> Result<()> {
 // Function to run all test categories
 #[allow(dead_code)]
 pub async fn run_all_test_categories() -> Result<()> {
-    for category in TEST_CATEGORIES {
+    let categories = discover_test_categories()?;
+    for category in &categories {
         info!("🧪 Running category: {} - {}", category.name, category.description);
-        for filter in category.filters {
+        for filter in &category.filters {
             run_test_by_filter(filter).await?;
         }
     }
@@ -210,8 +225,29 @@ pub async fn run_all_test_categories() -> Result<()> {
 
 // Get all available test category names
 #[allow(dead_code)]
-pub fn get_available_categories() -> Vec<&'static str> {
-    TEST_CATEGORIES.iter().map(|cat| cat.name).collect()
+pub fn get_available_categories() -> Result<Vec<String>> {
+    let categories = discover_test_categories()?;
+    Ok(categories.iter().map(|cat| cat.name.clone()).collect())
+}
+
+// List all discovered categories with their details
+pub fn list_all_categories() -> Result<()> {
+    let categories = discover_test_categories()?;
+    
+    println!("📁 Discovered Test Categories:");
+    println!();
+    
+    for category in &categories {
+        println!("🏷️  {}", category.name);
+        println!("   📝 {}", category.description);
+        println!("   🧪 Test filters: {}", category.filters.join(", "));
+        println!();
+    }
+    
+    println!("🎯 Usage: cargo run --bin e2e_test_runner <category_name>");
+    println!("   Example: cargo run --bin e2e_test_runner unit");
+    
+    Ok(())
 }
 
 // Environment setup and basic integration tests

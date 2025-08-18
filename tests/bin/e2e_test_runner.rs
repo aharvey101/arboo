@@ -22,22 +22,10 @@ fn print_help() {
     println!("E2E Test Runner");
     println!("Usage: cargo run --bin e2e_test_runner [OPTIONS] [TEST_CATEGORY]");
     println!();
-    println!("Test Categories:");
-    println!("  provider      - Provider connection tests");
-    println!("  atomic        - Atomic/basic functionality tests");
-    println!("  unit          - Unit tests");
-    println!("  pool          - Pool data tests");
-    println!("  evm           - EVM simulator tests");
-    println!("  environment   - Environment configuration tests");
-    println!("  transaction   - Transaction tests");
-    println!("  performance   - Performance benchmarks");
-    println!("  memory        - Memory usage tests");
-    println!("  component     - Component integration tests");
-    println!("  integration   - Integration tests");
-    println!("  full-flow     - Comprehensive flow tests");
-    println!("  edge-cases    - Edge case and stress tests");
-    println!("  stress        - Stress tests");
-    println!("  all           - All tests (default)");
+    println!("Commands:");
+    println!("  list          - List all available test categories");
+    println!("  all           - Run all discovered test categories (default)");
+    println!("  <category>    - Run a specific test category");
     println!();
     println!("Options:");
     println!("  -v, --verbose - Show detailed test output and logs");
@@ -45,9 +33,12 @@ fn print_help() {
     println!("  -h, --help    - Show this help message");
     println!();
     println!("Examples:");
+    println!("  cargo run --bin e2e_test_runner list");
     println!("  cargo run --bin e2e_test_runner unit");
     println!("  cargo run --bin e2e_test_runner --verbose performance");
     println!("  cargo run --bin e2e_test_runner -v all");
+    println!();
+    println!("Note: Test categories are auto-discovered from the tests/ folder structure.");
 }
 
 #[tokio::main]
@@ -112,40 +103,40 @@ async fn main() -> Result<()> {
     e2e_test_runner::individual_tests::set_verbose_mode(verbose);
 
     match test_name {
+        "list" => {
+            e2e_test_runner::individual_tests::list_all_categories()?;
+            return Ok(());
+        }
+        "all" => {
+            // Run all discovered categories
+            let categories = e2e_test_runner::individual_tests::discover_test_categories()?;
+            for category in &categories {
+                if verbose {
+                    info!("Running category: {}", category.name);
+                }
+                e2e_test_runner::individual_tests::run_test_category(&category.name).await?;
+            }
+        }
+        // Special hardcoded categories for backwards compatibility
         "provider" => e2e_test_runner::test_categories::run_provider_connection_test().await?,
-        "atomic" => e2e_test_runner::test_categories::run_atomic_tests().await?,
-        "pool" => e2e_test_runner::test_categories::run_pool_tests().await?,
-        "evm" => e2e_test_runner::test_categories::run_evm_tests().await?,
-        "unit" => e2e_test_runner::test_categories::run_unit_tests().await?,
-        "performance" => e2e_test_runner::test_categories::run_performance_tests().await?,
-        "memory" => e2e_test_runner::test_categories::run_memory_tests().await?,
-        "environment" => e2e_test_runner::test_categories::run_environment_tests().await?,
-        "transaction" => e2e_test_runner::test_categories::run_transaction_tests().await?,
         "component" => {
             e2e_test_runner::test_categories::run_pool_tests().await?;
             e2e_test_runner::test_categories::run_evm_tests().await?;
         }
-        "integration" => e2e_test_runner::test_categories::run_integration_tests().await?,
         "full-flow" => e2e_test_runner::test_categories::run_comprehensive_flow_tests().await?,
-        "edge-cases" => e2e_test_runner::test_categories::run_edge_case_tests().await?,
         "stress" => e2e_test_runner::test_categories::run_edge_case_tests().await?,
-        "all" => {
-            e2e_test_runner::test_categories::run_atomic_tests().await?;
-            e2e_test_runner::test_categories::run_unit_tests().await?;
-            e2e_test_runner::test_categories::run_pool_tests().await?;
-            e2e_test_runner::test_categories::run_evm_tests().await?;
-            e2e_test_runner::test_categories::run_environment_tests().await?;
-            e2e_test_runner::test_categories::run_transaction_tests().await?;
-            e2e_test_runner::test_categories::run_performance_tests().await?;
-            e2e_test_runner::test_categories::run_memory_tests().await?;
-            e2e_test_runner::test_categories::run_integration_tests().await?;
-            e2e_test_runner::test_categories::run_comprehensive_flow_tests().await?;
-            e2e_test_runner::test_categories::run_edge_case_tests().await?;
-        }
-        _ => {
-            eprintln!("❌ Unknown test: {}", test_name);
-            eprintln!("Available tests: provider, atomic, unit, pool, evm, environment, transaction, performance, memory, component, integration, full-flow, edge-cases, stress, all");
-            process::exit(1);
+        category_name => {
+            // Try to run as a discovered category
+            match e2e_test_runner::individual_tests::run_test_category(category_name).await {
+                Ok(_) => {
+                    // Successfully ran discovered category
+                }
+                Err(_) => {
+                    eprintln!("❌ Unknown test category: {}", category_name);
+                    eprintln!("💡 Run 'cargo run --bin e2e_test_runner list' to see available categories");
+                    process::exit(1);
+                }
+            }
         }
     }
 

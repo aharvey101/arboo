@@ -54,17 +54,7 @@ pub async fn run_environment_tests() -> Result<()> {
 }
 
 pub async fn run_transaction_tests() -> Result<()> {
-    // Transaction tests are spread across unit tests
-    let transaction_filters = &[
-        "transaction_creation",
-        "transaction_execution",
-        "single_swap_simulation",
-    ];
-    
-    for filter in transaction_filters {
-        run_test_by_filter(filter).await?;
-    }
-    Ok(())
+    run_test_category("transaction").await
 }
 
 pub async fn run_integration_tests() -> Result<()> {
