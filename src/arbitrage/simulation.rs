@@ -1,5 +1,5 @@
 use crate::common::revm::{EvmSimulator, Tx};
-use ::log::info;
+use ::log::{info, error};
 use alloy::eips::BlockId;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
@@ -86,7 +86,7 @@ pub async fn simulation(
 
     simulator
         .call(new_tx)
-        .inspect_err(|e| info!("Error doing sim {:?}", e))?;
+        .inspect_err(|e| error!("Error doing sim {:?}", e))?;
 
     let balance = check_weth_balance(
         wallet_address,

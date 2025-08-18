@@ -1,5 +1,6 @@
 use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
 use crate::arbitrage::simulation::simulation;
+use crate::common::connection_pool::ConnectionPool;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
@@ -8,7 +9,7 @@ use crate::common::{
 };
 use alloy::eips::BlockId;
 use alloy::network::Ethereum;
-use alloy::providers::{Provider, ProviderBuilder, RootProvider, WsConnect};
+use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy::signers::local::PrivateKeySigner;
@@ -25,153 +26,251 @@ use std::{
     io::{self, BufRead},
     path::Path,
     str::FromStr,
+    sync::Arc,
 };
-use tokio::sync::broadcast::Sender;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast::Sender, mpsc, RwLock};
 
+/// Strategy worker pool for handling arbitrage opportunities efficiently
+/// Uses connection pooling, memory caching, and optimized processing
 pub struct StrategyWorkerPool {
+    #[allow(dead_code)]
     sender: mpsc::Sender<LogEvent>,
+    connection_pool: ConnectionPool,
+    pools_map: Arc<RwLock<HashMap<Address, Event>>>,
 }
-#[allow(clippy::all)]
+
 impl StrategyWorkerPool {
-    pub async fn new(sender: Sender<LogEvent>, ws_url: String) {
-        let mut event_reciever = sender.subscribe();
+    pub async fn new(sender: Sender<LogEvent>, ws_url: String, max_connections: usize) -> Result<Self> {
+        let (tx, _rx) = mpsc::channel::<LogEvent>(1000);
+        let connection_pool = ConnectionPool::new(ws_url, max_connections);
+        
+        // Load pools map once and cache it
+        let pools_map = Arc::new(RwLock::new(Self::load_pools_map().await?));
+        
+        // Use standard spawn with spawn_blocking for CPU-intensive work
+        let pool_clone = connection_pool.clone();
+        let pools_map_clone = pools_map.clone();
+        let mut event_receiver = sender.subscribe();
 
-        let local = tokio::task::LocalSet::new();
-
-        local.spawn_local(async move {
-            while let Ok(res) = event_reciever.recv().await {
-                tokio::task::spawn_local(process_strategy(res, ws_url.clone()));
+        tokio::spawn(async move {
+            info!("Starting optimized strategy worker");
+            while let Ok(log_event) = event_receiver.recv().await {
+                let pool_clone = pool_clone.clone();
+                let pools_map_clone = pools_map_clone.clone();
+                
+                // Use spawn_blocking for CPU-intensive simulation work
+                tokio::task::spawn_blocking(move || {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        if let Err(e) = process_strategy_optimized(log_event, &pool_clone, &pools_map_clone).await {
+                            log::error!("Strategy processing error: {}", e);
+                        }
+                    });
+                });
             }
+            info!("Strategy worker stopped");
         });
-
-        local.await;
+        
+        Ok(Self {
+            sender: tx,
+            connection_pool,
+            pools_map,
+        })
     }
 
-    pub async fn submit_event(&self, event: LogEvent) -> Result<()> {
-        // Send with back-pressure (will wait if channel is full)
-        self.sender.send(event).await?;
+    async fn load_pools_map() -> Result<HashMap<Address, Event>> {
+        let cache_dir = var("CACHE_DIR").unwrap_or_else(|_| "/tmp/arboo-cache".to_string());
+        let cache_path = format!("{}/.cached-pools.csv", cache_dir);
+        
+        let mut pools_map = HashMap::new();
+        let path = Path::new(&cache_path);
+        let file = File::open(path)?;
+        let reader = io::BufReader::new(file);
+
+        for line in reader.lines().skip(1) {
+            let line = line?;
+            let fields: Vec<&str> = line.split(',').collect();
+            if fields.len() < 6 { continue; }
+
+            match fields[2] {
+                "2" => {
+                    let pair_address = Address::from_str(fields[1])
+                        .map_err(|e| anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e))?;
+                    pools_map.insert(
+                        pair_address,
+                        Event::PairCreated(V2PoolCreated {
+                            pair_address,
+                            token0: Address::from_str(fields[3])
+                                .map_err(|e| anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e))?,
+                            token1: Address::from_str(fields[4])
+                                .map_err(|e| anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e))?,
+                            fee: fields[5].parse::<u32>()
+                                .map_err(|e| anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e))?,
+                        }),
+                    );
+                }
+                "3" => {
+                    let pair_address = Address::from_str(fields[1])
+                        .map_err(|e| anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e))?;
+                    pools_map.insert(
+                        pair_address,
+                        Event::PoolCreated(V3PoolCreated {
+                            pair_address,
+                            token0: Address::from_str(fields[3])
+                                .map_err(|e| anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e))?,
+                            token1: Address::from_str(fields[4])
+                                .map_err(|e| anyhow::anyhow!("Invalid V3 token1 address '{}': {}", fields[4], e))?,
+                            fee: fields[5].parse::<u32>()
+                                .map_err(|e| anyhow::anyhow!("Invalid V3 fee '{}': {}", fields[5], e))?,
+                            tick_spacing: 0i32,
+                        }),
+                    );
+                }
+                _ => continue,
+            }
+        }
+        
+        info!("Loaded {} pools into optimized cache", pools_map.len());
+        Ok(pools_map)
+    }
+
+    pub async fn start(&self) -> Result<()> {
+        info!("StrategyWorkerPool started with {} pools cached", 
+               self.pools_map.read().await.len());
         Ok(())
     }
-
-    pub fn try_submit_event(
-        &self,
-        event: LogEvent,
-    ) -> Result<(), mpsc::error::TrySendError<LogEvent>> {
-        // Try to send without waiting
-        self.sender.try_send(event)
-    }
 }
 
-// Usage example in your main code:
-pub async fn initialize_strategy_pool(sender: Sender<LogEvent>, ws_url: String) {
-    StrategyWorkerPool::new(sender, ws_url).await;
+#[derive(Debug)]
+pub struct ArbitrageResult {
+    pub optimal_amount: U256,
+    pub possible_profit: U256,
 }
 
-pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
-    let time = std::time::Instant::now();
-    // log the runtime
-    let ws_client = WsConnect::new(ws_url.clone());
-    info!("websocket url: {:?}", ws_url);
-    let provider = ProviderBuilder::new().on_ws(ws_client).await
-        .map_err(|e| anyhow::anyhow!("Failed to create WebSocket provider: {}", e))?;
+/// Wrapper for local spawning
+async fn process_strategy_optimized_local(
+    message: LogEvent,
+    connection_pool: ConnectionPool,
+    pools_map: Arc<RwLock<HashMap<Address, Event>>>,
+) -> Result<()> {
+    process_strategy_optimized(message, &connection_pool, &pools_map).await
+}
 
-    info!("Time to make provider: {:?}", time.elapsed());
-    let latest_block_number = provider
-        .get_block_number()
-        .await
-        .map_err(|e| anyhow::anyhow!("Error getting block number: {}", e))?;
+/// Main strategy processing with connection pooling and caching optimizations
+pub async fn process_strategy_optimized(
+    message: LogEvent,
+    connection_pool: &ConnectionPool,
+    pools_map: &Arc<RwLock<HashMap<Address, Event>>>,
+) -> Result<()> {
+    let start_time = std::time::Instant::now();
+    
+    // Get pooled provider - much faster than creating new connection
+    let pooled_provider = connection_pool.get_provider().await?;
+    let provider = pooled_provider.provider();
+    
+    info!("Time to get pooled provider: {:?}", start_time.elapsed());
+    
+    let latest_block_number = provider.get_block_number().await?;
 
-    let latest_block = provider
-        .get_block(BlockId::latest(), BlockTransactionsKind::Full)
-        .await
-        .map_err(|e| anyhow::anyhow!("Error getting latest block: {}", e))?
-        .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?;
+    // Use Arc to avoid expensive block cloning
+    let latest_block = Arc::new(
+        provider
+            .get_block(BlockId::latest(), BlockTransactionsKind::Full)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?
+    );
+    
     let contract_wallet = PrivateKeySigner::random();
     let contract_wallet_address = contract_wallet.address();
 
+    // Create EVM simulator with pooled provider
+    let pooled_provider_clone = connection_pool.get_provider().await?;
+    let simulator_provider = pooled_provider_clone.into_provider();
     let mut simulator = EvmSimulator::new(
-        provider.clone(),
+        simulator_provider,
         Some(contract_wallet_address),
         U64::from(latest_block_number),
-    ).map_err(|e| anyhow::anyhow!("Failed to create EVM simulator: {}", e))?;
+    )?;
 
-    info!("Time to make evm: {:?}", time.elapsed());
-    // reserves of the target pool to low?
-    let is_v2_to_v3 = message.pool_variant == 3;
-    // Calculate optimal amount
-    let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
+    info!("Time to create EVM: {:?}", start_time.elapsed());
 
     let block_base_fee = latest_block.header.base_fee_per_gas
         .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?;
-    info!("loading the pools");
-    load_specific_pools(
+
+    // Use cached pools map - no file I/O per request
+    let pools_map_guard = pools_map.read().await;
+    load_specific_pools_optimized(
         &mut simulator,
         message.log_pool_address,
         message.corresponding_pool_address,
-    )
-    .await?;
-    info!("Pools loaded");
-    let time = std::time::Instant::now();
+        &pools_map_guard,
+    ).await?;
+    drop(pools_map_guard); // Release lock immediately
+    
+    info!("Pools loaded in: {:?}", start_time.elapsed());
 
-    setup_evm(&mut simulator, &provider).await?;
+    // Setup EVM state
+    setup_evm_optimized(&mut simulator, provider).await?;
+    info!("Setup EVM in: {:?}", start_time.elapsed());
 
-    info!("Setup evm {:?}", time.elapsed());
-    let optimal_result = find_optimal_amount_v3_to_v2(
+    // Find optimal arbitrage amount
+    let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
+    let optimal_result = find_optimal_amount_optimized(
         message.token0,
         message.token1,
         &mut simulator,
         max_input,
         message.fee,
-        latest_block.clone(),
+        &latest_block,
         message.corresponding_pool_address,
-        &provider,
-    )
-    .await?;
+        provider,
+    ).await?;
 
-    info!("Calculated Optimal Result");
+    info!("Calculated optimal result in: {:?}", start_time.elapsed());
+
+    // Early exit for unprofitable opportunities
     if optimal_result.possible_profit < U256::from(100_000u128) {
-        info!("no profit");
+        info!("Opportunity not profitable ({}), skipping", optimal_result.possible_profit);
         return Ok(());
     }
-    // simulate with optimal amoun in arbooo
+
+    // Check if block is still current
+    let current_block = provider.get_block_number().await.unwrap_or_default();
+    if current_block > latest_block.header.number {
+        info!("Block {} passed (current: {}), opportunity expired", 
+              latest_block.header.number, current_block);
+        return Ok(());
+    }
+
+    // Determine target pool based on variant
+    let is_v2_to_v3 = message.pool_variant == 3;
     let target_pool = if is_v2_to_v3 {
         message.log_pool_address
     } else {
         message.corresponding_pool_address
     };
-    log::debug!(
-        "Tike taken to calculate optimal amount: {:?}",
-        time.elapsed()
-    );
-    info!("Arbitrage opportunity found");
+
     info!(
-        "Creating and sending TX for optimal amount {} to pool {}",
-        optimal_result.optimal_amount, target_pool
+        "🎯 Profitable arbitrage! Profit: {} wei, Amount: {}, Target: {}",
+        optimal_result.possible_profit, optimal_result.optimal_amount, target_pool
     );
 
-    if provider.get_block_number().await.unwrap_or_default() > latest_block.header.number {
-        info!("Block has passed, opportunity has passed");
-    }
-
+    // Create transaction data
     let transaction = create_input_data(
         target_pool,
         message.fee,
         message.token1,
         message.token0,
         optimal_result.optimal_amount,
-    )
-    .await
-    .inspect(|e| info!("Error creating input data: {:?}", e))?;
+    ).await?;
 
     let contract_address = var::<&str>("CONTRACT_ADDRESS")?;
     let contract_address = Address::from_str(&contract_address)?;
 
     let nonce = provider
         .get_transaction_count(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
-        .await
-        .inspect(|e| info!("error getting nonce, {:?}", e))?;
+        .await?;
 
+    // Send transaction asynchronously to avoid blocking
     tokio::spawn(send_transaction(
         contract_address,
         Some(block_base_fee as u128),
@@ -181,210 +280,46 @@ pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
         transaction,
         nonce,
     ));
+
+    info!("⚡ Total processing time: {:?}", start_time.elapsed());
     Ok(())
 }
 
-#[derive(Debug)]
-pub struct ArbitrageResult {
-    pub optimal_amount: U256,
-    pub possible_profit: U256,
-}
-
-// lets do a really slow way to see if it's the binary search that is the problem?
-
-pub async fn find_optimal_amount_v3_to_v2(
-    token_in: Address,
-    token_out: Address,
-    simulator: &mut EvmSimulator,
-    max_input: U256,
-    fee: U24,
-    latest_block: Block,
-    target_pool: Address,
-    provider: &RootProvider<PubSubFrontend, Ethereum>,
-) -> Result<ArbitrageResult> {
-    let mut best_profit = U256::ZERO;
-    let mut optimal_amount = U256::ZERO;
-    let mut left = U256::from(10).pow(U256::from(18)); // 1 token
-    let mut right = max_input;
-
-    while left <= right {
-        let mid = (left + right) / U256::from(2);
-        // Only query once per iteration with mid
-        info!("doing sim with mid: {:?}", mid);
-        let v3_amount_out = simulation(
-            target_pool,
-            token_in,
-            token_out,
-            mid,
-            fee,
-            simulator,
-            provider,
-        )
-        .await
-        .unwrap_or(U256::ZERO);
-
-        // Calculate profit based on mid amount
-        let current_profit = v3_amount_out;
-
-        // Update best profit if better
-        if current_profit > best_profit {
-            best_profit = current_profit;
-            optimal_amount = mid;
-            // If profit is increasing, search upper half
-            left = mid + U256::from(1);
-        } else {
-            // If profit is decreasing, search lower half
-            right = mid - U256::from(1);
-        }
-    }
-    if best_profit == U256::ZERO {
-        return Ok(ArbitrageResult {
-            optimal_amount: U256::ZERO,
-            possible_profit: U256::ZERO,
-        });
-    }
-
-    // convert optimal amount to weth
-
-    alloy::sol! {
-        #[derive(Debug)]
-        function quoteExactInput(
-            bytes memory path,
-            uint256 amountIn
-        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
-    }
-
-    let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
-        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
-    let sim = simulator;
-    let mut path = Vec::new();
-    path.extend_from_slice(token_in.as_slice());
-    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
-    path.extend_from_slice(get_address(AddressType::Weth).as_slice());
-    let path = alloy::primitives::Bytes::from(path);
-
-    let tx_data = quoteExactInputCall {
-        path,
-        amountIn: best_profit,
-    }
-    .abi_encode();
-
-    let tx = Tx {
-        caller: sim.owner,
-        transact_to: get_address(AddressType::V2Quoter),
-        data: tx_data.into(),
-        value: U256::ZERO,
-        gas_price: latest_gas_price,
-        gas_limit: latest_gas_limit,
-    };
-
-    let res = sim.call(tx)?;
-
-    let possible_profit = decode_quote_output_v3(res.output)
-        .map_err(|e| anyhow::anyhow!("Failed to decode V3 quoter output: {}", e))?;
-    log::debug!("possible_profit {possible_profit}");
-    Ok(ArbitrageResult {
-        optimal_amount,
-        possible_profit,
-    })
-}
-// Helper function to decode V3 quoter output
-fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
-    let output = hex::decode(output.to_string().trim_start_matches("0x"))?;
-
-    let number = U256::from_be_slice(&output[0..32]);
-
-    Ok(number)
-}
-
-async fn load_specific_pools(
+async fn load_specific_pools_optimized(
     simulator: &mut EvmSimulator,
     pool_a: Address,
     pool_b: Address,
+    pools_map: &HashMap<Address, Event>,
 ) -> Result<()> {
-    let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new("cache/.cached-pools.csv");
-    let file = File::open(&path)
-        .map_err(|e| anyhow::anyhow!("Error opening cached pools file: {}", e))?;
-    let reader = io::BufReader::new(file);
-
-    let sim = simulator;
-
-    for line in reader.lines().skip(1) {
-        // Skip the header line
-        let line = line
-            .map_err(|e| anyhow::anyhow!("Error reading line from cached pools file: {}", e))?;
-        let fields: Vec<&str> = line.split(',').collect();
-        match fields[2] {
-            "2" => {
-                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
-                pools_map.insert(
-                    pair_address,
-                    Event::PairCreated(V2PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
-                        token0: Address::from_str(fields[3]).unwrap_or_default(),
-                        token1: Address::from_str(fields[4]).unwrap_or_default(),
-                        fee: fields[5].parse::<u32>().unwrap_or_default(),
-                        //block_number: fields[6].parse::<u64>().unwrap_or_default(),
-                    }),
-                );
+    // Load pool A
+    if let Some(pool) = pools_map.get(&pool_a) {
+        match pool {
+            Event::PoolCreated(pool) => {
+                simulator.load_v3_pool_state(pool.pair_address).await?;
             }
-            "3" => {
-                let pair_address = Address::from_str(fields[1]).unwrap_or_default();
-                pools_map.insert(
-                    pair_address,
-                    Event::PoolCreated(V3PoolCreated {
-                        pair_address: Address::from_str(fields[1]).unwrap_or_default(),
-                        token0: Address::from_str(fields[3]).unwrap_or_default(),
-                        token1: Address::from_str(fields[4]).unwrap_or_default(),
-                        fee: fields[5].parse::<u32>().unwrap_or_default(),
-                        tick_spacing: 0i32,
-                    }),
-                );
+            Event::PairCreated(pool) => {
+                simulator.load_v2_pool_state(pool.pair_address).await?;
+                simulator.load_pool_state(pool.pair_address).await?;
             }
-            &_ => continue,
-        };
+        }
     }
-    match pools_map.get(&pool_a) {
-        Some(pool) => match pool {
-            Event::PoolCreated(pool) => {
-                sim.load_v3_pool_state(pool.pair_address)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to load v3 pool state for {}: {}", pool.pair_address, e))?;
-            }
-            Event::PairCreated(pool) => {
-                sim.load_v2_pool_state(pool.pair_address)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to load v2 pool state for {}: {}", pool.pair_address, e))?;
-                sim.load_pool_state(pool.pair_address)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to load basic pool state for {}: {}", pool.pair_address, e))?;
-            }
-        },
-        _ => {}
-    };
 
-    match pools_map.get(&pool_b) {
-        Some(pool) => match pool {
+    // Load pool B
+    if let Some(pool) = pools_map.get(&pool_b) {
+        match pool {
             Event::PoolCreated(pool) => {
-                sim.load_v3_pool_state(pool.pair_address)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to load v3 pool state for {}: {}", pool.pair_address, e))?;
+                simulator.load_v3_pool_state(pool.pair_address).await?;
             }
             Event::PairCreated(pool) => {
-                sim.load_v3_pool_state(pool.pair_address)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to load v3 pool state for {}: {}", pool.pair_address, e))?;
+                simulator.load_v3_pool_state(pool.pair_address).await?;
             }
-        },
-        _ => {}
-    };
+        }
+    }
 
     Ok(())
 }
 
-async fn setup_evm(
+async fn setup_evm_optimized(
     simulator: &mut EvmSimulator,
     provider: &RootProvider<PubSubFrontend, Ethereum>,
 ) -> Result<()> {
@@ -393,32 +328,25 @@ async fn setup_evm(
             BlockId::Number(alloy::eips::BlockNumberOrTag::Latest),
             BlockTransactionsKind::Full,
         )
-        .await
-        .map_err(|e| anyhow::anyhow!("Error getting latest block: {}", e))?
+        .await?
         .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?;
 
     let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
+        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
 
-    // deploy contract:
-
+    // Deploy arbitrage contract
     let contract_address = simulator.contract_address;
-    simulator
-        .deploy_code_at(contract_address, arboo_bytecode())
-        .await;
+    simulator.deploy_code_at(contract_address, arboo_bytecode()).await;
 
-    // set initial eth value;
+    // Fund wallet with ETH
     let initial_eth_balance = U256::from(1_000_000) * U256::from(10).pow(U256::from(18));
-
     let wallet = simulator.owner;
-
     simulator.set_eth_balance(wallet, initial_eth_balance).await;
 
+    // Convert ETH to WETH
     alloy::sol! {
-        function swapEthForWeth(
-            address to,
-            uint256 deadline
-        ) external payable;
+        function swapEthForWeth(address to, uint256 deadline) external payable;
     };
 
     let function_call = swapEthForWethCall {
@@ -426,27 +354,26 @@ async fn setup_evm(
         deadline: U256::from(9999999999_u64),
     };
 
-    let function_call_data = function_call.abi_encode();
-
-    let new_tx = Tx {
+    let eth_to_weth_tx = Tx {
         caller: wallet,
         transact_to: get_address(AddressType::Weth),
-        data: function_call_data.into(),
+        data: function_call.abi_encode().into(),
         value: one_thousand_eth() * U256::from(10),
         gas_limit: latest_gas_limit,
         gas_price: latest_gas_price,
     };
 
-    simulator.call(new_tx)?;
+    simulator.call(eth_to_weth_tx)?;
 
+    // Approve router to spend WETH
     alloy::sol! {
         function approve(address spender, uint256 amount) external returns (bool);
     }
+    
     let approve_data = approveCall {
         spender: get_address(AddressType::V3Router),
-        amount: U256::MAX, // Infinite approval, you can set a specific amount instead
-    }
-    .abi_encode();
+        amount: U256::MAX,
+    }.abi_encode();
 
     let approve_tx = Tx {
         caller: wallet,
@@ -459,4 +386,127 @@ async fn setup_evm(
 
     simulator.call(approve_tx)?;
     Ok(())
+}
+
+async fn find_optimal_amount_optimized(
+    token_in: Address,
+    token_out: Address,
+    simulator: &mut EvmSimulator,
+    max_input: U256,
+    fee: U24,
+    latest_block: &Block,
+    target_pool: Address,
+    provider: &RootProvider<PubSubFrontend, Ethereum>,
+) -> Result<ArbitrageResult> {
+    let mut best_profit = U256::ZERO;
+    let mut optimal_amount = U256::ZERO;
+    let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
+    let mut right = max_input;
+
+    // Binary search for optimal amount
+    while left <= right {
+        let mid = (left + right) / U256::from(2);
+        
+        let v3_amount_out = simulation(
+            target_pool,
+            token_in,
+            token_out,
+            mid,
+            fee,
+            simulator,
+            provider,
+        )
+        .await
+        .unwrap_or(U256::ZERO);
+
+        if v3_amount_out > best_profit {
+            best_profit = v3_amount_out;
+            optimal_amount = mid;
+            left = mid + U256::from(1);
+        } else {
+            right = mid - U256::from(1);
+        }
+    }
+
+    if best_profit == U256::ZERO {
+        return Ok(ArbitrageResult {
+            optimal_amount: U256::ZERO,
+            possible_profit: U256::ZERO,
+        });
+    }
+
+    // Calculate profit in WETH terms
+    alloy::sol! {
+        #[derive(Debug)]
+        function quoteExactInput(
+            bytes memory path,
+            uint256 amountIn
+        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
+    }
+
+    let latest_gas_limit = latest_block.header.gas_limit;
+    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
+        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
+
+    // Create path for token -> WETH conversion
+    let mut path = Vec::new();
+    path.extend_from_slice(token_in.as_slice());
+    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
+    path.extend_from_slice(get_address(AddressType::Weth).as_slice());
+    let path = alloy::primitives::Bytes::from(path);
+
+    let tx_data = quoteExactInputCall {
+        path,
+        amountIn: best_profit,
+    }.abi_encode();
+
+    let quote_tx = Tx {
+        caller: simulator.owner,
+        transact_to: get_address(AddressType::V2Quoter),
+        data: tx_data.into(),
+        value: U256::ZERO,
+        gas_price: latest_gas_price,
+        gas_limit: latest_gas_limit,
+    };
+
+    let result = simulator.call(quote_tx)?;
+    let possible_profit = decode_quote_output_v3(result.output)?;
+
+    Ok(ArbitrageResult {
+        optimal_amount,
+        possible_profit,
+    })
+}
+
+fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
+    let output_str = output.to_string();
+    let hex_str = output_str.trim_start_matches("0x");
+    let output_bytes = hex::decode(hex_str)?;
+    
+    if output_bytes.len() < 32 {
+        return Err(anyhow::anyhow!("Output too short: {} bytes", output_bytes.len()));
+    }
+    
+    let number = U256::from_be_slice(&output_bytes[0..32]);
+    Ok(number)
+}
+
+/// Initialize the strategy pool
+pub async fn initialize_strategy_pool(
+    sender: Sender<LogEvent>, 
+    ws_url: String,
+    max_connections: usize,
+) -> Result<StrategyWorkerPool> {
+    StrategyWorkerPool::new(sender, ws_url, max_connections).await
+}
+
+/// Legacy function for backward compatibility
+pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
+    log::warn!("Using legacy process_strategy - switch to optimized version for better performance");
+    
+    let pool = ConnectionPool::new(ws_url, 1);
+    let pools_map = Arc::new(RwLock::new(
+        StrategyWorkerPool::load_pools_map().await?
+    ));
+    process_strategy_optimized(message, &pool, &pools_map).await
 }
