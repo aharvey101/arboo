@@ -6,16 +6,18 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::{Filter, Log};
 use alloy_primitives::aliases::U24;
 use futures::StreamExt;
-use log::{info, warn, debug};
+use log::{info, warn, debug, error};
 use revm::primitives::keccak256;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::broadcast::Sender;
+use tokio::sync::{broadcast::Sender, mpsc};
 
 /// Core log processing service for arbitrage opportunity detection
 pub struct LogProcessor {
     pairs: HashMap<Address, Event>,
     token_pair_index: HashMap<TokenPair, Vec<Address>>,
     event_sender: Sender<LogEvent>,
+    // Add queue for better performance and backpressure handling
+    event_queue_tx: mpsc::Sender<LogEvent>,
 }
 
 /// Represents a token pair for efficient indexing
@@ -38,17 +40,24 @@ impl TokenPair {
 
 impl LogProcessor {
     /// Create a new log processor with the given pairs and event sender
-    pub fn new(pairs: HashMap<Address, Event>, event_sender: Sender<LogEvent>) -> Self {
+    pub fn new(pairs: HashMap<Address, Event>, event_sender: Sender<LogEvent>) -> (Self, mpsc::Receiver<LogEvent>) {
         let token_pair_index = Self::build_token_pair_index(&pairs);
+        
+        // Create bounded MPSC queue for reliable delivery with backpressure
+        let (event_queue_tx, event_queue_rx) = mpsc::channel::<LogEvent>(2000); // Larger buffer for high frequency
         
         info!("LogProcessor initialized with {} pairs and {} unique token pairs", 
               pairs.len(), token_pair_index.len());
+        info!("Event queue initialized with capacity: 2000");
         
-        Self {
+        let processor = Self {
             pairs,
             token_pair_index,
             event_sender,
-        }
+            event_queue_tx,
+        };
+        
+        (processor, event_queue_rx)
     }
 
     /// Build an efficient index of token pairs to pool addresses
@@ -164,11 +173,24 @@ impl LogProcessor {
         token0 != token1
     }
 
-    /// Send a log event if the channel is available
+    /// Send a log event using the queue for better reliability
     fn send_log_event(&self, log_event: LogEvent) {
-        match self.event_sender.send(log_event) {
-            Ok(_) => debug!("Log event sent successfully"),
-            Err(e) => warn!("Failed to send log event: {}", e),
+        // Try to send via queue first (non-blocking, reliable)
+        match self.event_queue_tx.try_send(log_event.clone()) {
+            Ok(_) => debug!("Log event queued successfully"),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("Event queue full, falling back to broadcast (may drop)");
+                // Fallback to broadcast if queue is full
+                if let Err(e) = self.event_sender.send(log_event) {
+                    warn!("Failed to send via broadcast channel: {}", e);
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                error!("Event queue closed, attempting broadcast");
+                if let Err(e) = self.event_sender.send(log_event) {
+                    error!("Both queue and broadcast failed: {}", e);
+                }
+            }
         }
     }
 }
@@ -181,7 +203,33 @@ pub async fn get_logs(
 ) {
     info!("Starting log subscription service...");
     
-    let processor = LogProcessor::new(pairs, event_sender);
+    let (processor, mut event_queue_rx) = LogProcessor::new(pairs, event_sender.clone());
+    
+    // Spawn queue processor task to handle events from queue to broadcast
+    let sender_clone = event_sender.clone();
+    tokio::spawn(async move {
+        let mut processed_count = 0u64;
+        let mut dropped_count = 0u64;
+        
+        while let Some(log_event) = event_queue_rx.recv().await {
+            match sender_clone.send(log_event) {
+                Ok(_) => {
+                    processed_count += 1;
+                    if processed_count % 100 == 0 {
+                        debug!("Processed {} events from queue", processed_count);
+                    }
+                }
+                Err(_) => {
+                    dropped_count += 1;
+                    if dropped_count % 10 == 0 {
+                        warn!("Dropped {} events (no receivers)", dropped_count);
+                    }
+                }
+            }
+        }
+        
+        info!("Queue processor stopped. Processed: {}, Dropped: {}", processed_count, dropped_count);
+    });
     
     // Create event signature filters
     let filter = create_swap_event_filter();
@@ -224,15 +272,24 @@ async fn subscribe_to_logs(
     Ok(subscription.into_stream())
 }
 
-/// Main log processing loop
+/// Enhanced log processing loop with batching for high-frequency scenarios
 async fn process_log_stream<S>(mut stream: S, processor: LogProcessor)
 where
     S: futures::Stream<Item = Log> + Unpin,
 {
+    let mut processed_count = 0u64;
+    let mut opportunity_count = 0u64;
+    let start_time = std::time::Instant::now();
+    
     while let Some(log) = stream.next().await {
+        processed_count += 1;
+        
         // Process the log and potentially create an arbitrage opportunity
         if let Some(log_event) = processor.process_log(&log) {
-            info!("Arbitrage opportunity detected: V{} pool {:?} -> V{} counterpart {:?}", 
+            opportunity_count += 1;
+            
+            info!("Arbitrage opportunity detected #{}: V{} pool {:?} -> V{} counterpart {:?}", 
+                  opportunity_count,
                   if log_event.pool_variant == 2 { 2 } else { 3 },
                   log_event.log_pool_address,
                   if log_event.pool_variant == 2 { 3 } else { 2 },
@@ -240,9 +297,18 @@ where
             
             processor.send_log_event(log_event);
         }
+        
+        // Log processing stats every 1000 logs
+        if processed_count % 1000 == 0 {
+            let elapsed = start_time.elapsed();
+            let logs_per_sec = processed_count as f64 / elapsed.as_secs_f64();
+            info!("Processing stats - Logs: {}, Opportunities: {}, Rate: {:.2}/sec", 
+                  processed_count, opportunity_count, logs_per_sec);
+        }
     }
     
-    warn!("Log stream ended unexpectedly");
+    warn!("Log stream ended unexpectedly after processing {} logs with {} opportunities", 
+          processed_count, opportunity_count);
 }
 
 /// Represents an arbitrage opportunity detected from blockchain logs

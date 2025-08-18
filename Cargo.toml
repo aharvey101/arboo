@@ -80,6 +80,10 @@ rand = "0.8"
 name = "e2e_test_runner"
 path = "tests/bin/e2e_test_runner.rs"
 
+[[bin]]
+name = "default"
+path = "src/main.rs"
+
 [dev-dependencies]
 tokio-test = "0.4"
 wiremock = "0.5"

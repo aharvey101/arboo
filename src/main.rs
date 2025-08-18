@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::task::JoinSet;
+use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -109,8 +110,30 @@ async fn main() -> Result<()> {
     info!("Spawning optimized EVM strategy with {} worker threads", 16);
     let _strategy_pool = initialize_strategy_pool(sender, ws_url, 16).await?;
     
-    while let Some(res) = set.join_next().await {
-        log::debug!("{:?}", res);
+    // Add graceful shutdown handling
+    info!("Arbitrage bot started. Press Ctrl+C to shutdown gracefully.");
+    
+    tokio::select! {
+        // Wait for tasks to complete
+        _ = async {
+            while let Some(res) = set.join_next().await {
+                log::debug!("{:?}", res);
+                if res.is_err() {
+                    log::error!("Task failed: {:?}", res);
+                }
+            }
+        } => {
+            info!("All tasks completed");
+        }
+        // Wait for Ctrl+C signal
+        _ = signal::ctrl_c() => {
+            info!("Received Ctrl+C, shutting down gracefully...");
+            set.abort_all(); // Abort all spawned tasks
+            
+            // Give tasks a moment to cleanup
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            info!("Shutdown complete");
+        }
     }
 
     Ok(())
