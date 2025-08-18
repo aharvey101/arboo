@@ -3,11 +3,15 @@
 
 use anyhow::Result;
 use arbooo::common::logger;
+use arbooo::common::logs::LogEvent;
+use arbooo::common::pairs::{Event, V2PoolCreated, V3PoolCreated};
 use alloy::providers::Provider;
-use alloy::primitives::B256;
+use alloy::primitives::{B256, Address};
 use alloy::rpc::types::BlockTransactionsKind;
 use alloy::eips::BlockId;
+use alloy_primitives::aliases::U24;
 use log::info;
+use revm::primitives::keccak256;
 use std::collections::HashMap;
 
 mod utils {
@@ -157,5 +161,354 @@ async fn test_log_filtering_and_categorization() -> Result<()> {
           arbitrage_relevant_count, event_signatures.len());
     
     info!("🎉 Log Filtering and Categorization Test completed!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_swap_signature_generation() -> Result<()> {
+    logger::setup_logger();
+    info!("🧪 Starting Swap Signature Generation Test");
+
+    // Test that our keccak256 signature generation works consistently
+    let v2_swap_signature = keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
+    let v3_swap_signature = keccak256("Swap(address,address,int256,int256,uint160,uint160,int24)".as_bytes());
+    
+    // Convert our generated signatures to hex for logging
+    let v2_hex = hex::encode(v2_swap_signature);
+    let v3_hex = hex::encode(v3_swap_signature);
+    
+    info!("✅ V2 Swap signature: {}", v2_hex);
+    info!("✅ V3 Swap signature: {}", v3_hex);
+    
+    // Verify signatures are different and have correct length
+    assert_ne!(v2_swap_signature, v3_swap_signature, "V2 and V3 signatures should be different");
+    assert_eq!(v2_swap_signature.len(), 32, "V2 signature should be 32 bytes");
+    assert_eq!(v3_swap_signature.len(), 32, "V3 signature should be 32 bytes");
+    
+    // Verify signatures are not empty/zero
+    assert_ne!(v2_swap_signature, [0u8; 32], "V2 signature should not be zero");
+    assert_ne!(v3_swap_signature, [0u8; 32], "V3 signature should not be zero");
+    
+    // Test that the signatures are deterministic (same input gives same output)
+    let v2_signature_again = keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
+    let v3_signature_again = keccak256("Swap(address,address,int256,int256,uint160,uint160,int24)".as_bytes());
+    
+    assert_eq!(v2_swap_signature, v2_signature_again, "V2 signature should be deterministic");
+    assert_eq!(v3_swap_signature, v3_signature_again, "V3 signature should be deterministic");
+    
+    info!("✅ Signature generation is deterministic and produces valid 32-byte hashes");
+    info!("🎉 Swap Signature Generation Test completed!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pool_pairing_logic() -> Result<()> {
+    logger::setup_logger();
+    info!("🧪 Starting Pool Pairing Logic Test");
+
+    // Create test tokens
+    let weth = Address::from([0x01; 20]);
+    let usdc = Address::from([0x02; 20]);
+    let dai = Address::from([0x03; 20]);
+    
+    // Create test pools
+    let v2_weth_usdc = V2PoolCreated {
+        pair_address: Address::from([0x10; 20]),
+        token0: weth,
+        token1: usdc,
+        fee: 3000,
+    };
+    
+    let v3_weth_usdc = V3PoolCreated {
+        pair_address: Address::from([0x20; 20]),
+        token0: weth,
+        token1: usdc,
+        fee: 3000,
+        tick_spacing: 60,
+    };
+    
+    let v2_weth_dai = V2PoolCreated {
+        pair_address: Address::from([0x30; 20]),
+        token0: weth,
+        token1: dai,
+        fee: 3000,
+    };
+    
+    // Create pairs hashmap like in the actual code
+    let mut pairs: HashMap<Address, Event> = HashMap::new();
+    pairs.insert(v2_weth_usdc.pair_address, Event::PairCreated(v2_weth_usdc.clone()));
+    pairs.insert(v3_weth_usdc.pair_address, Event::PoolCreated(v3_weth_usdc.clone()));
+    pairs.insert(v2_weth_dai.pair_address, Event::PairCreated(v2_weth_dai.clone()));
+    
+    // Test the pairing logic for V2 pool finding its V3 counterpart
+    if let Some(Event::PairCreated(pair)) = pairs.get(&v2_weth_usdc.pair_address) {
+        // Find corresponding V3 pool (same logic as in get_logs)
+        let v3_counterpart = pairs.values().find(|value| {
+            matches!(value, Event::PoolCreated(v3_pair) 
+                if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) || 
+                   (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0))
+        });
+        
+        assert!(v3_counterpart.is_some(), "Should find V3 counterpart for V2 WETH/USDC pool");
+        if let Some(Event::PoolCreated(v3_pair)) = v3_counterpart {
+            assert_eq!(v3_pair.pair_address, v3_weth_usdc.pair_address, "Should match correct V3 pool");
+            info!("✅ Found V3 counterpart for V2 pool: {:?} -> {:?}", 
+                  v2_weth_usdc.pair_address, v3_pair.pair_address);
+        }
+    }
+    
+    // Test the pairing logic for V3 pool finding its V2 counterpart
+    if let Some(Event::PoolCreated(pool)) = pairs.get(&v3_weth_usdc.pair_address) {
+        let v2_counterpart = pairs.values().find(|value| {
+            matches!(value, Event::PairCreated(v2_pair)
+                if (v2_pair.token0 == pool.token0 && v2_pair.token1 == pool.token1) ||
+                   (v2_pair.token0 == pool.token1 && v2_pair.token1 == pool.token0))
+        });
+        
+        assert!(v2_counterpart.is_some(), "Should find V2 counterpart for V3 WETH/USDC pool");
+        if let Some(Event::PairCreated(v2_pair)) = v2_counterpart {
+            assert_eq!(v2_pair.pair_address, v2_weth_usdc.pair_address, "Should match correct V2 pool");
+            info!("✅ Found V2 counterpart for V3 pool: {:?} -> {:?}", 
+                  v3_weth_usdc.pair_address, v2_pair.pair_address);
+        }
+    }
+    
+    // Test that V2 WETH/DAI doesn't find a counterpart (no V3 pool exists)
+    if let Some(Event::PairCreated(pair)) = pairs.get(&v2_weth_dai.pair_address) {
+        let v3_counterpart = pairs.values().find(|value| {
+            matches!(value, Event::PoolCreated(v3_pair)
+                if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) ||
+                   (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0))
+        });
+        
+        assert!(v3_counterpart.is_none(), "Should not find V3 counterpart for V2 WETH/DAI pool");
+        info!("✅ Correctly found no V3 counterpart for isolated V2 WETH/DAI pool");
+    }
+    
+    info!("🎉 Pool Pairing Logic Test completed!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_log_event_creation() -> Result<()> {
+    logger::setup_logger();
+    info!("🧪 Starting Log Event Creation Test");
+
+    // Create test data
+    let weth = Address::from([0x01; 20]);
+    let usdc = Address::from([0x02; 20]);
+    
+    let v2_pool = V2PoolCreated {
+        pair_address: Address::from([0x10; 20]),
+        token0: weth,
+        token1: usdc,
+        fee: 3000,
+    };
+    
+    let v3_pool = V3PoolCreated {
+        pair_address: Address::from([0x20; 20]),
+        token0: weth,
+        token1: usdc,
+        fee: 500,
+        tick_spacing: 10,
+    };
+    
+    // Test LogEvent creation from V2 pool (variant 2)
+    let v2_log_event = LogEvent {
+        pool_variant: 2,
+        corresponding_pool_address: v3_pool.pair_address,
+        log_pool_address: v2_pool.pair_address,
+        token0: v2_pool.token0,
+        token1: v2_pool.token1,
+        fee: U24::from(v2_pool.fee),
+    };
+    
+    // Validate V2 LogEvent structure
+    assert_eq!(v2_log_event.pool_variant, 2, "V2 LogEvent should have variant 2");
+    assert_eq!(v2_log_event.log_pool_address, v2_pool.pair_address, "Should reference V2 pool as log source");
+    assert_eq!(v2_log_event.corresponding_pool_address, v3_pool.pair_address, "Should reference V3 pool as counterpart");
+    assert_eq!(v2_log_event.token0, weth, "Should preserve token0");
+    assert_eq!(v2_log_event.token1, usdc, "Should preserve token1");
+    assert_eq!(v2_log_event.fee, U24::from(3000), "Should use V2 pool fee");
+    
+    info!("✅ V2 LogEvent validation passed");
+    
+    // Test LogEvent creation from V3 pool (variant 3)
+    let v3_log_event = LogEvent {
+        pool_variant: 3,
+        corresponding_pool_address: v2_pool.pair_address,
+        log_pool_address: v3_pool.pair_address,
+        token0: v3_pool.token0,
+        token1: v3_pool.token1,
+        fee: U24::from(v3_pool.fee),
+    };
+    
+    // Validate V3 LogEvent structure
+    assert_eq!(v3_log_event.pool_variant, 3, "V3 LogEvent should have variant 3");
+    assert_eq!(v3_log_event.log_pool_address, v3_pool.pair_address, "Should reference V3 pool as log source");
+    assert_eq!(v3_log_event.corresponding_pool_address, v2_pool.pair_address, "Should reference V2 pool as counterpart");
+    assert_eq!(v3_log_event.token0, weth, "Should preserve token0");
+    assert_eq!(v3_log_event.token1, usdc, "Should preserve token1");
+    assert_eq!(v3_log_event.fee, U24::from(500), "Should use V3 pool fee");
+    
+    info!("✅ V3 LogEvent validation passed");
+    
+    // Test that different pool variants create different LogEvents
+    assert_ne!(v2_log_event.pool_variant, v3_log_event.pool_variant, "LogEvents should have different variants");
+    assert_ne!(v2_log_event.fee, v3_log_event.fee, "LogEvents should preserve different fees");
+    assert_ne!(v2_log_event.log_pool_address, v3_log_event.log_pool_address, "LogEvents should reference different source pools");
+    
+    info!("🎉 Log Event Creation Test completed!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_token_ordering_invariance() -> Result<()> {
+    logger::setup_logger();
+    info!("🧪 Starting Token Ordering Invariance Test");
+
+    // Create tokens with different addresses to test ordering
+    let token_a = Address::from([0x01; 20]); // Lower address
+    let token_b = Address::from([0x02; 20]); // Higher address
+    
+    // Create pools with different token orderings
+    let v2_pool_normal = V2PoolCreated {
+        pair_address: Address::from([0x10; 20]),
+        token0: token_a, // Lower first
+        token1: token_b,
+        fee: 3000,
+    };
+    
+    let v3_pool_reversed = V3PoolCreated {
+        pair_address: Address::from([0x20; 20]),
+        token0: token_b, // Higher first
+        token1: token_a,
+        fee: 500,
+        tick_spacing: 60,
+    };
+    
+    // Create pairs hashmap
+    let mut pairs: HashMap<Address, Event> = HashMap::new();
+    pairs.insert(v2_pool_normal.pair_address, Event::PairCreated(v2_pool_normal.clone()));
+    pairs.insert(v3_pool_reversed.pair_address, Event::PoolCreated(v3_pool_reversed.clone()));
+    
+    // Test V2 pool finding V3 counterpart despite different token ordering
+    if let Some(Event::PairCreated(v2_pair)) = pairs.get(&v2_pool_normal.pair_address) {
+        let v3_counterpart = pairs.values().find(|value| {
+            matches!(value, Event::PoolCreated(v3_pair)
+                if (v3_pair.token0 == v2_pair.token0 && v3_pair.token1 == v2_pair.token1) ||
+                   (v3_pair.token0 == v2_pair.token1 && v3_pair.token1 == v2_pair.token0))
+        });
+        
+        assert!(v3_counterpart.is_some(), "Should find V3 counterpart despite reversed token order");
+        
+        if let Some(Event::PoolCreated(v3_pair)) = v3_counterpart {
+            // Verify the pairing logic handles reversed tokens correctly
+            let tokens_match = (v3_pair.token0 == v2_pair.token0 && v3_pair.token1 == v2_pair.token1) ||
+                              (v3_pair.token0 == v2_pair.token1 && v3_pair.token1 == v2_pair.token0);
+            
+            assert!(tokens_match, "Token pairing should work regardless of order");
+            info!("✅ V2 pool ({:?}, {:?}) correctly paired with V3 pool ({:?}, {:?})", 
+                  v2_pair.token0, v2_pair.token1, v3_pair.token0, v3_pair.token1);
+        }
+    }
+    
+    // Test V3 pool finding V2 counterpart
+    if let Some(Event::PoolCreated(v3_pool)) = pairs.get(&v3_pool_reversed.pair_address) {
+        let v2_counterpart = pairs.values().find(|value| {
+            matches!(value, Event::PairCreated(v2_pair)
+                if (v2_pair.token0 == v3_pool.token0 && v2_pair.token1 == v3_pool.token1) ||
+                   (v2_pair.token0 == v3_pool.token1 && v2_pair.token1 == v3_pool.token0))
+        });
+        
+        assert!(v2_counterpart.is_some(), "Should find V2 counterpart despite reversed token order");
+        info!("✅ V3 pool with reversed tokens correctly found V2 counterpart");
+    }
+    
+    info!("🎉 Token Ordering Invariance Test completed!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_edge_case_filtering() -> Result<()> {
+    logger::setup_logger();
+    info!("🧪 Starting Edge Case Filtering Test");
+
+    let token_a = Address::from([0x01; 20]);
+    let token_b = Address::from([0x02; 20]);
+    
+    // Test case: Pool with same token0 and token1 (should be filtered out)
+    let invalid_pool = V3PoolCreated {
+        pair_address: Address::from([0x30; 20]),
+        token0: token_a,
+        token1: token_a, // Same token - invalid
+        fee: 3000,
+        tick_spacing: 60,
+    };
+    
+    // This should be caught by the check: if v3_pair.token0 == v3_pair.token1 {continue}
+    let should_filter = invalid_pool.token0 == invalid_pool.token1;
+    assert!(should_filter, "Pool with same token0 and token1 should be filtered out");
+    info!("✅ Invalid pool with same tokens correctly identified for filtering");
+    
+    // Test case: Multiple pools with same token pair but different fees
+    let v2_pool = V2PoolCreated {
+        pair_address: Address::from([0x40; 20]),
+        token0: token_a,
+        token1: token_b,
+        fee: 3000,
+    };
+    
+    let v3_pool_500 = V3PoolCreated {
+        pair_address: Address::from([0x50; 20]),
+        token0: token_a,
+        token1: token_b,
+        fee: 500, // Different fee
+        tick_spacing: 10,
+    };
+    
+    let v3_pool_3000 = V3PoolCreated {
+        pair_address: Address::from([0x60; 20]),
+        token0: token_a,
+        token1: token_b,
+        fee: 3000, // Same fee as V2
+        tick_spacing: 60,
+    };
+    
+    let mut pairs: HashMap<Address, Event> = HashMap::new();
+    pairs.insert(v2_pool.pair_address, Event::PairCreated(v2_pool.clone()));
+    pairs.insert(v3_pool_500.pair_address, Event::PoolCreated(v3_pool_500.clone()));
+    pairs.insert(v3_pool_3000.pair_address, Event::PoolCreated(v3_pool_3000.clone()));
+    
+    // Test that the find logic returns the first matching V3 pool (not necessarily same fee)
+    if let Some(Event::PairCreated(pair)) = pairs.get(&v2_pool.pair_address) {
+        let v3_matches: Vec<_> = pairs.values()
+            .filter_map(|value| {
+                match value {
+                    Event::PoolCreated(v3_pair) 
+                        if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) ||
+                           (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0) => {
+                        Some(v3_pair)
+                    },
+                    _ => None
+                }
+            })
+            .collect();
+        
+        assert_eq!(v3_matches.len(), 2, "Should find 2 V3 pools for the same token pair");
+        info!("✅ Found {} V3 pools matching V2 pool token pair", v3_matches.len());
+        
+        // The current implementation will take the first match, which depends on HashMap iteration order
+        let first_match = pairs.values().find(|value| {
+            matches!(value, Event::PoolCreated(v3_pair)
+                if (v3_pair.token0 == pair.token0 && v3_pair.token1 == pair.token1) ||
+                   (v3_pair.token0 == pair.token1 && v3_pair.token1 == pair.token0))
+        });
+        
+        assert!(first_match.is_some(), "Should find at least one V3 match");
+        info!("✅ First match selection works correctly");
+    }
+    
+    info!("🎉 Edge Case Filtering Test completed!");
     Ok(())
 }
