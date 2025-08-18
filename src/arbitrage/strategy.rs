@@ -1,5 +1,5 @@
 use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
-use crate::arbitrage::simulation::simulation;
+use crate::arbitrage::simulation::{simulation, simulation_with_logging};
 use crate::common::connection_pool::ConnectionPool;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
@@ -181,6 +181,9 @@ pub async fn process_strategy_optimized(
 ) -> Result<()> {
     let start_time = std::time::Instant::now();
     
+    log::info!("🔍 Starting arbitrage analysis for pool: {} (variant: {})", 
+               message.log_pool_address, message.pool_variant);
+    
     // Get pooled provider - much faster than creating new connection
     let pooled_provider = connection_pool.get_provider().await?;
     let provider = pooled_provider.provider();
@@ -247,15 +250,16 @@ pub async fn process_strategy_optimized(
 
     // Early exit for unprofitable opportunities
     if optimal_result.possible_profit < U256::from(100_000u128) {
-        log::debug!("Opportunity not profitable ({}), skipping", optimal_result.possible_profit);
+        log::info!("❌ Arbitrage analysis complete - Not profitable ({}), skipping. Duration: {:?}", 
+                   optimal_result.possible_profit, start_time.elapsed());
         return Ok(());
     }
 
     // Check if block is still current
     let current_block = provider.get_block_number().await.unwrap_or_default();
     if current_block > latest_block.header.number {
-        log::debug!("Block {} passed (current: {}), opportunity expired", 
-              latest_block.header.number, current_block);
+        log::info!("⏰ Arbitrage analysis complete - Block expired ({} > {}), opportunity missed. Duration: {:?}", 
+                   current_block, latest_block.header.number, start_time.elapsed());
         return Ok(());
     }
 
@@ -271,6 +275,9 @@ pub async fn process_strategy_optimized(
         "🎯 Profitable arbitrage! Profit: {} wei, Amount: {}, Target: {}",
         optimal_result.possible_profit, optimal_result.optimal_amount, target_pool
     );
+
+    log::info!("📊 Arbitrage opportunity details - Token0: {}, Token1: {}, Fee: {}", 
+               message.token0, message.token1, message.fee);
 
     // Create transaction data
     let transaction = create_input_data(
@@ -299,7 +306,7 @@ pub async fn process_strategy_optimized(
         nonce,
     ));
 
-    log::debug!("⚡ Total processing time: {:?}", start_time.elapsed());
+    log::info!("✅ Arbitrage analysis complete - Transaction submitted. Total duration: {:?}", start_time.elapsed());
     Ok(())
 }
 
