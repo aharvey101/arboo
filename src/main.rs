@@ -29,13 +29,17 @@ async fn main() -> Result<()> {
     info!("Logger setup");
     let ws_url = var::<&str>("WS_URL")
         .map_err(|e| anyhow::anyhow!("WS_URL environment variable not set: {}", e))?;
+    let cache_dir = var("CACHE_DIR")
+        .unwrap_or_else(|_| "/tmp/arboo-cache".to_string());
+    
     let ws_client = WsConnect::new(ws_url.clone());
 
     let provider = ProviderBuilder::new().on_ws(ws_client).await
         .map_err(|e| anyhow::anyhow!("Failed to create WebSocket provider: {}", e))?;
     let provider = Arc::new(provider);
 
-    if !Path::new("/Users/alexander/cache/.cached-pools.csv").try_exists()? {
+    let cache_path = format!("{}/.cached-pools.csv", cache_dir);
+    if !Path::new(&cache_path).try_exists()? {
         info!("Cache doesn't exist, crawling blocks for pools");
         pools::load_all_pools(ws_url.clone(), 100_000, 50_000)
             .await
@@ -49,7 +53,7 @@ async fn main() -> Result<()> {
     // 1. Get all pools
 
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new("/Users/alexander/cache/.cached-pools.csv");
+    let path = Path::new(&cache_path);
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
     // id,address,version,token0,oken1,fee,block_number,timestamp
