@@ -18,7 +18,26 @@ pub async fn simulation(
     simulator: &mut EvmSimulator,
     provider: &RootProvider<PubSubFrontend>,
 ) -> Result<U256> {
-    let _time = std::time::Instant::now();
+    simulation_with_logging(target_pool, token_a, token_b, amount, fee, simulator, provider, false).await
+}
+
+pub async fn simulation_with_logging(
+    target_pool: Address,
+    token_a: Address,
+    token_b: Address,
+    amount: U256,
+    fee: U24,
+    simulator: &mut EvmSimulator,
+    provider: &RootProvider<PubSubFrontend>,
+    enable_info_logging: bool,
+) -> Result<U256> {
+    let simulation_start = std::time::Instant::now();
+    
+    if enable_info_logging {
+        log::info!("🚀 Starting simulation - Pool: {}, Amount: {} wei, Fee: {}", 
+                   target_pool, amount, fee);
+    }
+    
     let latest_block_number = provider.get_block_number().await?;
     log::debug!("got block number: {:?}", latest_block_number);
     let syncying_status = provider.syncing().await?;
@@ -117,6 +136,12 @@ pub async fn simulation(
     .inspect_err(|e| log::debug!("Error checking weth balance {e}",))?;
 
     let profit = balance - weth_balance;
+    
+    let simulation_duration = simulation_start.elapsed();
+    if enable_info_logging {
+        log::info!("✅ Simulation complete - Profit: {} wei, Duration: {:?}", 
+                   profit, simulation_duration);
+    }
 
     Ok(profit)
 }
