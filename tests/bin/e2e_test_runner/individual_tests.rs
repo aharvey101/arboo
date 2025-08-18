@@ -17,21 +17,21 @@ fn is_verbose_mode() -> bool {
     VERBOSE_MODE.get().copied().unwrap_or(false)
 }
 
-// Helper function to run cargo test with default verbosity
-pub async fn run_cargo_test_with_output(test_name: &str) -> Result<()> {
-    run_cargo_test_with_verbosity(test_name, is_verbose_mode()).await
+// Helper function to run cargo test with default verbosity  
+pub async fn run_cargo_test_with_output(test_filter: &str) -> Result<()> {
+    run_cargo_test_with_verbosity(test_filter, is_verbose_mode()).await
 }
 
 // Core function that handles both verbose and quiet modes
-async fn run_cargo_test_with_verbosity(test_name: &str, show_details: bool) -> Result<()> {
+async fn run_cargo_test_with_verbosity(test_filter: &str, show_details: bool) -> Result<()> {
     if show_details {
-        info!("🧪 Running test file: {}", test_name);
+        info!("🧪 Running test filter: {}", test_filter);
     }
     
     if show_details {
         // Verbose mode - pipe output directly to terminal
         let mut cmd = Command::new("cargo");
-        cmd.args(&["test", "--test", test_name, "--", "--nocapture"])
+        cmd.args(&["test", test_filter, "--", "--nocapture"])
            .stdout(Stdio::inherit())
            .stderr(Stdio::inherit());
         
@@ -39,16 +39,16 @@ async fn run_cargo_test_with_verbosity(test_name: &str, show_details: bool) -> R
             .map_err(|e| anyhow::anyhow!("Failed to execute cargo test: {}", e))?;
         
         if status.success() {
-            info!("✅ {} completed successfully", test_name);
+            info!("✅ {} completed successfully", test_filter);
             Ok(())
         } else {
-            info!("❌ {} failed with exit code: {:?}", test_name, status.code());
+            info!("❌ {} failed with exit code: {:?}", test_filter, status.code());
             Err(anyhow::anyhow!("Test failed with exit code: {:?}", status.code()))
         }
     } else {
         // Quiet mode - capture and parse output
         let output = Command::new("cargo")
-            .args(&["test", "--test", test_name, "--", "--nocapture"])
+            .args(&["test", test_filter, "--", "--nocapture"])
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
         
@@ -68,7 +68,7 @@ async fn run_cargo_test_with_verbosity(test_name: &str, show_details: bool) -> R
         } else {
             // Show error summary in verbose mode
             if show_details {
-                info!("❌ {} failed:", test_name);
+                info!("❌ {} failed:", test_filter);
                 if let Some(error_line) = stderr.lines().chain(stdout.lines())
                     .find(|line| line.contains("error:") || line.contains("FAILED")) {
                     info!("  ❌ {}", error_line.trim());
@@ -97,53 +97,53 @@ pub async fn test_integrated_environment() -> Result<()> {
 
 // Comprehensive flow test functions
 pub async fn run_full_arbitrage_cycle_test() -> Result<()> {
-    run_cargo_test_with_output("full_arbitrage_cycle_tests").await
+    run_cargo_test_with_output("full_arbitrage_cycle").await
 }
 
 pub async fn run_concurrent_opportunities_test() -> Result<()> {
-    run_cargo_test_with_output("concurrent_opportunities_tests").await
+    run_cargo_test_with_output("concurrent_opportunities").await
 }
 
 pub async fn run_high_frequency_test() -> Result<()> {
-    run_cargo_test_with_output("high_frequency_tests").await
+    run_cargo_test_with_output("high_frequency").await
 }
 
 pub async fn run_error_recovery_test() -> Result<()> {
-    run_cargo_test_with_output("error_recovery_tests").await
+    run_cargo_test_with_output("error_recovery").await
 }
 
 // Edge case and stress test functions
 pub async fn run_network_disconnection_test() -> Result<()> {
-    run_cargo_test_with_output("network_disconnection_tests").await
+    run_cargo_test_with_output("network_disconnection").await
 }
 
 pub async fn run_gas_price_spike_test() -> Result<()> {
-    run_cargo_test_with_output("gas_price_spike_tests").await
+    run_cargo_test_with_output("gas_price_spike").await
 }
 
 pub async fn run_insufficient_liquidity_test() -> Result<()> {
-    run_cargo_test_with_output("insufficient_liquidity_tests").await
+    run_cargo_test_with_output("insufficient_liquidity").await
 }
 
 pub async fn run_block_reorganization_test() -> Result<()> {
-    run_cargo_test_with_output("block_reorganization_tests").await
+    run_cargo_test_with_output("block_reorganization").await
 }
 
 pub async fn run_mev_competition_test() -> Result<()> {
-    run_cargo_test_with_output("mev_competition_tests").await
+    run_cargo_test_with_output("mev_competition").await
 }
 
 // EVM simulator test functions
 pub async fn run_evm_initialization_test() -> Result<()> {
-    run_cargo_test_with_output("evm_simulator_tests").await
+    run_cargo_test_with_output("evm_simulator").await
 }
 
 pub async fn run_transaction_execution_test() -> Result<()> {
-    run_cargo_test_with_output("evm_simulator_tests").await
+    run_cargo_test_with_output("evm_simulator").await
 }
 
 pub async fn run_contract_deployment_test() -> Result<()> {
-    run_cargo_test_with_output("evm_simulator_tests").await
+    run_cargo_test_with_output("evm_simulator").await
 }
 
 pub async fn run_balance_management_test() -> Result<()> {
@@ -368,15 +368,15 @@ pub async fn run_multi_component_integration_test() -> Result<()> {
 
 // Profit calculation and validation functions
 pub async fn run_profit_calculation_tests() -> Result<()> {
-    run_cargo_test_with_output("arbitrage_calculation_tests").await
+    run_cargo_test_with_output("arbitrage_calculation").await
 }
 
 pub async fn run_transaction_execution_tests() -> Result<()> {
-    run_cargo_test_with_output("transaction_execution_tests").await
+    run_cargo_test_with_output("transaction_execution").await
 }
 
 pub async fn run_profit_simulation_tests() -> Result<()> {
-    run_cargo_test_with_output("profit_simulation_tests").await
+    run_cargo_test_with_output("profit_simulation").await
 }
 
 // Unit test functions
@@ -385,11 +385,11 @@ pub async fn run_atomic_component_tests() -> Result<()> {
 }
 
 pub async fn run_environment_loading_test() -> Result<()> {
-    run_cargo_test_with_output("env_loading_tests").await
+    run_cargo_test_with_output("env_loading").await
 }
 
 pub async fn run_log_event_processing_tests() -> Result<()> {
-    run_cargo_test_with_output("log_event_processing_tests").await
+    run_cargo_test_with_output("log_event_processing").await
 }
 
 pub async fn run_fork_check_tests() -> Result<()> {
@@ -398,29 +398,29 @@ pub async fn run_fork_check_tests() -> Result<()> {
 
 // Pool test functions
 pub async fn run_pool_data_file_tests() -> Result<()> {
-    run_cargo_test_with_output("pool_data_tests").await
+    run_cargo_test_with_output("pool_data").await
 }
 
 pub async fn run_pool_pairing_file_tests() -> Result<()> {
-    run_cargo_test_with_output("pool_pairing_tests").await
+    run_cargo_test_with_output("pool_pairing").await
 }
 
 // Performance test functions
 pub async fn run_opportunity_detection_benchmarks() -> Result<()> {
-    run_cargo_test_with_output("opportunity_detection_benchmarks").await
+    run_cargo_test_with_output("opportunity_detection").await
 }
 
 pub async fn run_simulation_execution_benchmarks() -> Result<()> {
-    run_cargo_test_with_output("simulation_execution_benchmarks").await
+    run_cargo_test_with_output("simulation_execution").await
 }
 
 pub async fn run_transaction_success_rate_metrics() -> Result<()> {
-    run_cargo_test_with_output("transaction_success_rate_metrics").await
+    run_cargo_test_with_output("transaction_success_rate").await
 }
 
 // Memory test functions
 pub async fn run_memory_usage_profiling() -> Result<()> {
-    run_cargo_test_with_output("memory_usage_profiling").await
+    run_cargo_test_with_output("memory_usage").await
 }
 
 // Environment test functions
@@ -430,13 +430,13 @@ pub async fn run_test_environment_demo() -> Result<()> {
 
 // Transaction test functions
 pub async fn run_transaction_creation_tests() -> Result<()> {
-    run_cargo_test_with_output("transaction_creation_tests").await
+    run_cargo_test_with_output("transaction_creation").await
 }
 
 pub async fn run_single_swap_simulation_tests() -> Result<()> {
-    run_cargo_test_with_output("single_swap_simulation_tests").await
+    run_cargo_test_with_output("single_swap_simulation").await
 }
 
 pub async fn run_gas_estimation_validation_test() -> Result<()> {
-    run_cargo_test_with_output("profit_simulation_tests").await
+    run_cargo_test_with_output("profit_simulation").await
 }

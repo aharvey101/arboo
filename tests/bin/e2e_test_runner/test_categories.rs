@@ -106,17 +106,17 @@ pub async fn run_unit_tests() -> Result<()> {
     // Run cargo test based unit tests
     reporter.should("Unit Tests Suite", "run arbitrage calculation tests")
         .assert_async(|| async {
-            run_cargo_test_with_output("arbitrage_calculation_tests").await
+            run_cargo_test_with_output("arbitrage_calculation").await
         }).await?;
     
     reporter.should("Unit Tests Suite", "run transaction creation tests")
         .assert_async(|| async {
-            run_cargo_test_with_output("transaction_creation_tests").await
+            run_cargo_test_with_output("transaction_creation").await
         }).await?;
     
     reporter.should("Unit Tests Suite", "run error recovery tests")
         .assert_async(|| async {
-            run_cargo_test_with_output("error_recovery_tests").await
+            run_cargo_test_with_output("error_recovery").await
         }).await?;
         
     // Additional unit test functions
