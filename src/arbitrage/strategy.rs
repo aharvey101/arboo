@@ -146,14 +146,6 @@ pub struct ArbitrageResult {
     pub possible_profit: U256,
 }
 
-/// Wrapper for local spawning
-async fn process_strategy_optimized_local(
-    message: LogEvent,
-    connection_pool: ConnectionPool,
-    pools_map: Arc<RwLock<HashMap<Address, Event>>>,
-) -> Result<()> {
-    process_strategy_optimized(message, &connection_pool, &pools_map).await
-}
 
 /// Main strategy processing with connection pooling and caching optimizations
 pub async fn process_strategy_optimized(

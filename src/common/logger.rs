@@ -1,5 +1,5 @@
 use fern::colors::{Color, ColoredLevelConfig};
-use log::{Level, LevelFilter};
+use log::LevelFilter;
 use std::env;
 
 pub fn setup_logger() {
@@ -11,18 +11,18 @@ pub fn setup_logger() {
         error: Color::BrightRed,
     };
 
-    // Parse the RUST_LOG environment variable to determine the exact log level to show
-    let target_level = env::var("RUST_LOG")
+    // Parse the RUST_LOG environment variable to determine the log level filter
+    let target_level_filter = env::var("RUST_LOG")
         .ok()
         .and_then(|level_str| match level_str.to_lowercase().as_str() {
-            "trace" => Some(Level::Trace),
-            "debug" => Some(Level::Debug),
-            "info" => Some(Level::Info),
-            "warn" => Some(Level::Warn),
-            "error" => Some(Level::Error),
+            "trace" => Some(LevelFilter::Trace),
+            "debug" => Some(LevelFilter::Debug),
+            "info" => Some(LevelFilter::Info),
+            "warn" => Some(LevelFilter::Warn),
+            "error" => Some(LevelFilter::Error),
             _ => None,
         })
-        .unwrap_or(Level::Info); // Default to Info if RUST_LOG is not set or invalid
+        .unwrap_or(LevelFilter::Info); // Default to Info if RUST_LOG is not set or invalid
 
     let result = fern::Dispatch::new()
         .format(move |out, message, record| {
@@ -34,11 +34,7 @@ pub fn setup_logger() {
             ))
         })
         .chain(std::io::stdout())
-        .level(LevelFilter::Trace) // Allow all levels to pass through to the filter
-        .filter(move |metadata| {
-            // Only show logs that match the exact target level
-            metadata.level() == target_level
-        })
+        .level(target_level_filter) // Use hierarchical filtering (shows target level and higher priority levels)
         .apply();
         
     match result {
