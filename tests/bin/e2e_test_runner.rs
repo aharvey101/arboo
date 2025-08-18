@@ -11,14 +11,14 @@ mod e2e_test_runner {
     pub mod test_categories;
     pub mod individual_tests;
     pub mod test_environment;
-    pub mod jest_style_reporter;
+    pub mod reporter;
     
     pub use test_result::{TestResult, TestResults};
     pub use test_environment::*;
-    pub use jest_style_reporter::*;
+    pub use reporter::*;
 }
 
-use e2e_test_runner::{TestResults, setup_test_logger, JestStyleReporter};
+use e2e_test_runner::{TestResults, setup_test_logger, Reporter};
 use e2e_test_runner::test_categories::*;
 
 #[tokio::main]
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     info!("🧪 Starting E2E Test Runner");
 
     // Create a Jest-style reporter for the overall test run
-    let overall_reporter = JestStyleReporter::new();
+    let overall_reporter = Reporter::new();
     overall_reporter.start_suite("E2E Test Runner - All Test Suites");
 
     // Parse command line arguments for specific test selection

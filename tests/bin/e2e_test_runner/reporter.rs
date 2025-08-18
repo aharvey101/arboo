@@ -18,11 +18,11 @@ pub struct TestSuite {
     pub end_time: Option<chrono::DateTime<chrono::Local>>,
 }
 
-pub struct JestStyleReporter {
+pub struct Reporter {
     suites: Arc<Mutex<HashMap<String, TestSuite>>>,
 }
 
-impl JestStyleReporter {
+impl Reporter {
     pub fn new() -> Self {
         Self {
             suites: Arc::new(Mutex::new(HashMap::new())),

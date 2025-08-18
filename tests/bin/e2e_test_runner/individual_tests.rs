@@ -1,10 +1,10 @@
 use anyhow::Result;
 use log::info;
-use super::jest_style_reporter::JestStyleReporter;
+use super::reporter::Reporter;
 
 // Environment setup and basic integration tests
 pub async fn test_integrated_environment() -> Result<()> {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Integrated Environment Setup");
     
     reporter.should("Integrated Environment Setup", "create integrated test environment")
@@ -22,7 +22,7 @@ pub async fn test_integrated_environment() -> Result<()> {
 
 // Comprehensive flow test functions
 pub async fn run_full_arbitrage_cycle_test() -> Result<()> {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Full Arbitrage Cycle Test");
     
     reporter.should("Full Arbitrage Cycle Test", "execute cargo test for full_arbitrage_cycle_tests")
@@ -50,7 +50,7 @@ pub async fn run_full_arbitrage_cycle_test() -> Result<()> {
 }
 
 pub async fn run_concurrent_opportunities_test() -> Result<()> {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Concurrent Opportunities Test");
     
     reporter.should("Concurrent Opportunities Test", "execute cargo test for concurrent_opportunities_tests")
@@ -78,7 +78,7 @@ pub async fn run_concurrent_opportunities_test() -> Result<()> {
 }
 
 pub async fn run_high_frequency_test() -> Result<()> {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("High-Frequency Test");
     
     reporter.should("High-Frequency Test", "execute cargo test for high_frequency_tests")

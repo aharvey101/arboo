@@ -1,10 +1,10 @@
 use log::info;
 use super::test_result::TestResult;
 use super::individual_tests::*;
-use super::jest_style_reporter::JestStyleReporter;
+use super::reporter::Reporter;
 
 pub async fn run_provider_connection_test() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Provider Connection Test");
     info!("🔗 Running Provider Connection Test");
     
@@ -24,7 +24,7 @@ pub async fn run_provider_connection_test() -> TestResult {
 }
 
 pub async fn run_atomic_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Atomic Tests Suite");
     info!("⚛️  Running Atomic Tests");
     
@@ -45,7 +45,7 @@ pub async fn run_atomic_tests() -> TestResult {
 }
 
 pub async fn run_pool_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Pool Data Tests Suite");
     info!("🏊 Running Pool Data Tests");
     
@@ -82,7 +82,7 @@ pub async fn run_pool_tests() -> TestResult {
 }
 
 pub async fn run_evm_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("EVM Simulator Tests Suite");
     info!("🔧 Running EVM Simulator Tests");
     
@@ -139,7 +139,7 @@ pub async fn run_evm_tests() -> TestResult {
 }
 
 pub async fn run_unit_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Unit Tests Suite");
     info!("🧪 Running Unit Tests");
     
@@ -166,7 +166,7 @@ pub async fn run_unit_tests() -> TestResult {
 }
 
 pub async fn run_performance_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Performance Tests Suite");
     info!("🚀 Running Performance Tests");
     
@@ -203,7 +203,7 @@ pub async fn run_performance_tests() -> TestResult {
 }
 
 pub async fn run_memory_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Memory Usage Tests Suite");
     info!("💾 Running Memory Usage Tests");
     
@@ -223,7 +223,7 @@ pub async fn run_memory_tests() -> TestResult {
 }
 
 pub async fn run_environment_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Environment Tests Suite");
     info!("🌍 Running Environment Tests");
     
@@ -243,7 +243,7 @@ pub async fn run_environment_tests() -> TestResult {
 }
 
 pub async fn run_transaction_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Transaction Tests Suite");
     info!("💳 Running Transaction Tests");
     
@@ -280,7 +280,7 @@ pub async fn run_transaction_tests() -> TestResult {
 }
 
 pub async fn run_integration_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Integration Tests Suite");
     info!("🔧 Running Integration Tests");
     
@@ -387,7 +387,7 @@ pub async fn run_integration_tests() -> TestResult {
 }
 
 pub async fn run_comprehensive_flow_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Comprehensive Flow Tests Suite");
     
     let mut all_passed = true;
@@ -458,7 +458,7 @@ pub async fn run_comprehensive_flow_tests() -> TestResult {
 }
 
 pub async fn run_edge_case_tests() -> TestResult {
-    let reporter = JestStyleReporter::new();
+    let reporter = Reporter::new();
     reporter.start_suite("Edge Case & Stress Tests Suite");
     
     let mut all_passed = true;
