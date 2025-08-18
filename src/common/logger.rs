@@ -1,5 +1,5 @@
 use fern::colors::{Color, ColoredLevelConfig};
-use log::LevelFilter;
+use log::{Level, LevelFilter};
 use std::env;
 
 pub fn setup_logger() {
@@ -11,18 +11,10 @@ pub fn setup_logger() {
         error: Color::BrightRed,
     };
 
-    // Parse the RUST_LOG environment variable to determine the log level filter
-    let target_level_filter = env::var("RUST_LOG")
-        .ok()
-        .and_then(|level_str| match level_str.to_lowercase().as_str() {
-            "trace" => Some(LevelFilter::Trace),
-            "debug" => Some(LevelFilter::Debug),
-            "info" => Some(LevelFilter::Info),
-            "warn" => Some(LevelFilter::Warn),
-            "error" => Some(LevelFilter::Error),
-            _ => None,
-        })
-        .unwrap_or(LevelFilter::Info); // Default to Info if RUST_LOG is not set or invalid
+    // Get the target level from environment variable
+    let target_level = env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info".to_string())
+        .to_lowercase();
 
     let result = fern::Dispatch::new()
         .format(move |out, message, record| {
@@ -34,7 +26,25 @@ pub fn setup_logger() {
             ))
         })
         .chain(std::io::stdout())
-        .level(target_level_filter) // Use hierarchical filtering (shows target level and higher priority levels)
+        .level(LevelFilter::Trace) // Allow all levels, we'll filter with custom logic
+        .filter(move |metadata| {
+            let level = metadata.level();
+            
+            // Custom hierarchy: info is highest priority (most restrictive)
+            // info: shows only info
+            // warn: shows warn + info
+            // debug: shows debug + warn + info  
+            // error: shows error + debug + warn + info
+            // trace: shows trace + error + debug + warn + info
+            match target_level.as_str() {
+                "info" => level == Level::Info,
+                "warn" => matches!(level, Level::Warn | Level::Info),
+                "debug" => matches!(level, Level::Debug | Level::Warn | Level::Info),
+                "error" => matches!(level, Level::Error | Level::Debug | Level::Warn | Level::Info),
+                "trace" => matches!(level, Level::Trace | Level::Error | Level::Debug | Level::Warn | Level::Info),
+                _ => true, // Default: show all
+            }
+        })
         .apply();
         
     match result {
