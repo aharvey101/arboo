@@ -1,73 +1,108 @@
 use anyhow::Result;
 use log::info;
+use super::jest_style_reporter::JestStyleReporter;
 
 // Environment setup and basic integration tests
 pub async fn test_integrated_environment() -> Result<()> {
-    info!("  🏗️  Creating integrated test environment...");
+    let reporter = JestStyleReporter::new();
+    reporter.start_suite("Integrated Environment Setup");
     
-    // For now, just simulate a successful environment setup
-    // This would normally use the utils::integrated_test_env module
-    info!("  ✅ Test environment simulation completed");
+    reporter.should("Integrated Environment Setup", "create integrated test environment")
+        .assert_async(|| async {
+            info!("  🏗️  Creating integrated test environment...");
+            // For now, just simulate a successful environment setup
+            // This would normally use the utils::integrated_test_env module
+            info!("  ✅ Test environment simulation completed");
+            Ok(())
+        }).await?;
     
+    reporter.end_suite("Integrated Environment Setup");
     Ok(())
 }
 
 // Comprehensive flow test functions
 pub async fn run_full_arbitrage_cycle_test() -> Result<()> {
-    use std::process::Command;
+    let reporter = JestStyleReporter::new();
+    reporter.start_suite("Full Arbitrage Cycle Test");
     
-    info!("🔄 Running full arbitrage cycle test");
+    reporter.should("Full Arbitrage Cycle Test", "execute cargo test for full_arbitrage_cycle_tests")
+        .assert_async(|| async {
+            use std::process::Command;
+            
+            info!("🔄 Running full arbitrage cycle test");
+            
+            let output = Command::new("cargo")
+                .args(&["test", "--test", "full_arbitrage_cycle_tests", "--", "--nocapture"])
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+            
+            if output.status.success() {
+                info!("✅ Full arbitrage cycle test passed");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!("Test failed: {}", stderr))
+            }
+        }).await?;
     
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "full_arbitrage_cycle_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        info!("✅ Full arbitrage cycle test passed");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    reporter.end_suite("Full Arbitrage Cycle Test");
+    Ok(())
 }
 
 pub async fn run_concurrent_opportunities_test() -> Result<()> {
-    use std::process::Command;
+    let reporter = JestStyleReporter::new();
+    reporter.start_suite("Concurrent Opportunities Test");
     
-    info!("🔄 Running concurrent opportunities test");
+    reporter.should("Concurrent Opportunities Test", "execute cargo test for concurrent_opportunities_tests")
+        .assert_async(|| async {
+            use std::process::Command;
+            
+            info!("🔄 Running concurrent opportunities test");
+            
+            let output = Command::new("cargo")
+                .args(&["test", "--test", "concurrent_opportunities_tests", "--", "--nocapture"])
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+            
+            if output.status.success() {
+                info!("✅ Concurrent opportunities test passed");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!("Test failed: {}", stderr))
+            }
+        }).await?;
     
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "concurrent_opportunities_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        info!("✅ Concurrent opportunities test passed");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    reporter.end_suite("Concurrent Opportunities Test");
+    Ok(())
 }
 
 pub async fn run_high_frequency_test() -> Result<()> {
-    use std::process::Command;
+    let reporter = JestStyleReporter::new();
+    reporter.start_suite("High-Frequency Test");
     
-    info!("⚡ Running high-frequency test");
+    reporter.should("High-Frequency Test", "execute cargo test for high_frequency_tests")
+        .assert_async(|| async {
+            use std::process::Command;
+            
+            info!("⚡ Running high-frequency test");
+            
+            let output = Command::new("cargo")
+                .args(&["test", "--test", "high_frequency_tests", "--", "--nocapture"])
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+            
+            if output.status.success() {
+                info!("✅ High-frequency test passed");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!("Test failed: {}", stderr))
+            }
+        }).await?;
     
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "high_frequency_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        info!("✅ High-frequency test passed");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    reporter.end_suite("High-Frequency Test");
+    Ok(())
 }
 
 pub async fn run_error_recovery_test() -> Result<()> {

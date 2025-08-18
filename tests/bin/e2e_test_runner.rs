@@ -11,12 +11,14 @@ mod e2e_test_runner {
     pub mod test_categories;
     pub mod individual_tests;
     pub mod test_environment;
+    pub mod jest_style_reporter;
     
     pub use test_result::{TestResult, TestResults};
     pub use test_environment::*;
+    pub use jest_style_reporter::*;
 }
 
-use e2e_test_runner::{TestResults, setup_test_logger};
+use e2e_test_runner::{TestResults, setup_test_logger, JestStyleReporter};
 use e2e_test_runner::test_categories::*;
 
 #[tokio::main]
@@ -24,6 +26,10 @@ async fn main() -> Result<()> {
     // Setup our dedicated test logger
     setup_test_logger();
     info!("🧪 Starting E2E Test Runner");
+
+    // Create a Jest-style reporter for the overall test run
+    let overall_reporter = JestStyleReporter::new();
+    overall_reporter.start_suite("E2E Test Runner - All Test Suites");
 
     // Parse command line arguments for specific test selection
     let args: Vec<String> = std::env::args().collect();
@@ -69,7 +75,19 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Print test summary
+    // Print test summary with Jest-style reporting
+    overall_reporter.should("E2E Test Runner - All Test Suites", "execute all selected test categories")
+        .assert(|| {
+            if test_results.has_failures() {
+                Err(anyhow::anyhow!("Some test categories failed"))
+            } else {
+                Ok(())
+            }
+        })?;
+    
+    overall_reporter.end_suite("E2E Test Runner - All Test Suites");
+    
+    // Print traditional summary as well
     test_results.print_summary();
 
     if test_results.has_failures() {
