@@ -90,11 +90,15 @@ impl RevmInspector {
         // Summarize calls
         report.push_str("\n=== Calls Summary ===\n");
         for (i, call) in self.calls.iter().enumerate() {
+            let address_str = call.address
+                .map(|addr| hex::encode(addr.to_string()))
+                .unwrap_or_else(|| "None".to_string());
+            
             report.push_str(&format!(
                 "Call #{}: {} -> {} (), value: {}, gas: {}/{}, success: {}\n",
                 i,
                 hex::encode(call.caller.to_string()),
-                hex::encode(call.address.unwrap()),
+                address_str,
                 //format!("{:?}", call.kind),
                 call.value,
                 call.gas_used.unwrap_or(0),

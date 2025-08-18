@@ -432,7 +432,10 @@ fn get_memory_estimate() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     
     let mut hasher = DefaultHasher::new();
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().hash(&mut hasher);
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| std::time::Duration::from_secs(0));
+    duration.as_nanos().hash(&mut hasher);
     let base = hasher.finish() % 100; // Random component 0-99MB
     
     // Base memory usage simulation (50-150MB range)

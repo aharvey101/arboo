@@ -186,7 +186,7 @@ impl EvmSimulator {
     pub fn _call(&mut self, tx: Tx, commit: bool) -> Result<TxResult> {
         self.evm.context.evm.env.tx.caller = tx.caller;
         self.evm.context.evm.env.tx.transact_to = TransactTo::Call(tx.transact_to);
-        self.evm.context.evm.env.tx.data = tx.data.clone();
+        self.evm.context.evm.env.tx.data = tx.data; // Remove unnecessary clone
         self.evm.context.evm.env.tx.value = tx.value;
         self.evm.context.evm.env.tx.gas_price = tx.gas_price;
         self.evm.context.evm.env.tx.gas_limit = tx.gas_limit;
@@ -255,14 +255,14 @@ impl EvmSimulator {
     }
 
     pub async fn deploy(&mut self, bytecode: Bytecode) {
-        let code_hash = bytecode.clone().hash_slow();
-        let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode.clone());
+        let code_hash = bytecode.hash_slow();
+        let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode);
         self.insert_account_info(self.owner, contract_info).await;
     }
 
     pub async fn deploy_code_at(&mut self, target: Address, bytecode: Bytecode) {
-        let code_hash = bytecode.clone().hash_slow();
-        let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode.clone());
+        let code_hash = bytecode.hash_slow();
+        let contract_info = AccountInfo::new(U256::MAX, 0, code_hash, bytecode);
         self.insert_account_info(target, contract_info).await;
     }
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
