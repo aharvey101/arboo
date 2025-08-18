@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, info};
+use log::info;
 use super::reporter::Reporter;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -17,7 +17,22 @@ fn is_verbose_mode() -> bool {
     VERBOSE_MODE.get().copied().unwrap_or(false)
 }
 
+// Generic test runner that can run tests by filter pattern
+pub async fn run_test_by_filter(test_filter: &str) -> Result<()> {
+    run_cargo_test_with_verbosity(test_filter, is_verbose_mode()).await
+}
+
+// Generic test runner that can run multiple test filters
+#[allow(dead_code)]
+pub async fn run_tests_by_filters(test_filters: &[&str]) -> Result<()> {
+    for filter in test_filters {
+        run_test_by_filter(filter).await?;
+    }
+    Ok(())
+}
+
 // Helper function to run cargo test with default verbosity  
+#[allow(dead_code)]
 pub async fn run_cargo_test_with_output(test_filter: &str) -> Result<()> {
     run_cargo_test_with_verbosity(test_filter, is_verbose_mode()).await
 }
@@ -79,6 +94,126 @@ async fn run_cargo_test_with_verbosity(test_filter: &str, show_details: bool) ->
     }
 }
 
+// Test category definitions - maps categories to test filters
+pub struct TestCategory {
+    pub name: &'static str,
+    pub filters: &'static [&'static str],
+    pub description: &'static str,
+}
+
+// Define all test categories and their corresponding test filters
+pub const TEST_CATEGORIES: &[TestCategory] = &[
+    TestCategory {
+        name: "atomic",
+        filters: &["atomic_tests"],
+        description: "Basic atomic functionality tests",
+    },
+    TestCategory {
+        name: "unit",
+        filters: &[
+            "arbitrage_calculation",
+            "transaction_creation", 
+            "error_recovery",
+            "profit_simulation",
+            "transaction_execution",
+            "env_loading",
+            "log_event_processing", 
+            "test_fork_check",
+            "single_swap_simulation",
+        ],
+        description: "Unit tests for individual components",
+    },
+    TestCategory {
+        name: "pool",
+        filters: &["pool_data", "pool_pairing"],
+        description: "Pool data and pairing tests",
+    },
+    TestCategory {
+        name: "evm",
+        filters: &["evm_simulator"],
+        description: "EVM simulator and contract tests",
+    },
+    TestCategory {
+        name: "environment", 
+        filters: &["test_environment_demo"],
+        description: "Environment setup and configuration tests",
+    },
+    TestCategory {
+        name: "performance",
+        filters: &[
+            "high_frequency",
+            "mev_competition", 
+            "opportunity_detection",
+            "simulation_execution",
+            "transaction_success_rate",
+        ],
+        description: "Performance benchmarks and optimization tests",
+    },
+    TestCategory {
+        name: "memory",
+        filters: &["memory_usage"],
+        description: "Memory usage profiling tests",
+    },
+    TestCategory {
+        name: "integration",
+        filters: &[
+            "full_arbitrage_cycle",
+            "concurrent_opportunities",
+            "network_disconnection",
+        ],
+        description: "Integration and end-to-end tests",
+    },
+    TestCategory {
+        name: "edge_cases",
+        filters: &[
+            "insufficient_liquidity",
+            "gas_price_spike",
+            "block_reorganization",
+        ],
+        description: "Edge cases and stress tests",
+    },
+    TestCategory {
+        name: "misc",
+        filters: &["logger_tests", "rpc_call_measurement"],
+        description: "Miscellaneous utility tests",
+    },
+];
+
+// Generic function to run tests for a specific category
+pub async fn run_test_category(category_name: &str) -> Result<()> {
+    let category = TEST_CATEGORIES
+        .iter()
+        .find(|cat| cat.name == category_name)
+        .ok_or_else(|| anyhow::anyhow!("Unknown test category: {}", category_name))?;
+    
+    info!("🧪 Running {} tests: {}", category.name, category.description);
+    
+    for filter in category.filters {
+        info!("🔍 Running test filter: {}", filter);
+        run_test_by_filter(filter).await?;
+    }
+    
+    Ok(())
+}
+
+// Function to run all test categories
+#[allow(dead_code)]
+pub async fn run_all_test_categories() -> Result<()> {
+    for category in TEST_CATEGORIES {
+        info!("🧪 Running category: {} - {}", category.name, category.description);
+        for filter in category.filters {
+            run_test_by_filter(filter).await?;
+        }
+    }
+    Ok(())
+}
+
+// Get all available test category names
+#[allow(dead_code)]
+pub fn get_available_categories() -> Vec<&'static str> {
+    TEST_CATEGORIES.iter().map(|cat| cat.name).collect()
+}
+
 // Environment setup and basic integration tests
 pub async fn test_integrated_environment() -> Result<()> {
     let reporter = Reporter::new();
@@ -93,350 +228,4 @@ pub async fn test_integrated_environment() -> Result<()> {
     
     reporter.end_suite("Integrated Environment Setup");
     Ok(())
-}
-
-// Comprehensive flow test functions
-pub async fn run_full_arbitrage_cycle_test() -> Result<()> {
-    run_cargo_test_with_output("full_arbitrage_cycle").await
-}
-
-pub async fn run_concurrent_opportunities_test() -> Result<()> {
-    run_cargo_test_with_output("concurrent_opportunities").await
-}
-
-pub async fn run_high_frequency_test() -> Result<()> {
-    run_cargo_test_with_output("high_frequency").await
-}
-
-pub async fn run_error_recovery_test() -> Result<()> {
-    run_cargo_test_with_output("error_recovery").await
-}
-
-// Edge case and stress test functions
-pub async fn run_network_disconnection_test() -> Result<()> {
-    run_cargo_test_with_output("network_disconnection").await
-}
-
-pub async fn run_gas_price_spike_test() -> Result<()> {
-    run_cargo_test_with_output("gas_price_spike").await
-}
-
-pub async fn run_insufficient_liquidity_test() -> Result<()> {
-    run_cargo_test_with_output("insufficient_liquidity").await
-}
-
-pub async fn run_block_reorganization_test() -> Result<()> {
-    run_cargo_test_with_output("block_reorganization").await
-}
-
-pub async fn run_mev_competition_test() -> Result<()> {
-    run_cargo_test_with_output("mev_competition").await
-}
-
-// EVM simulator test functions
-pub async fn run_evm_initialization_test() -> Result<()> {
-    run_cargo_test_with_output("evm_simulator").await
-}
-
-pub async fn run_transaction_execution_test() -> Result<()> {
-    run_cargo_test_with_output("evm_simulator").await
-}
-
-pub async fn run_contract_deployment_test() -> Result<()> {
-    run_cargo_test_with_output("evm_simulator").await
-}
-
-pub async fn run_balance_management_test() -> Result<()> {
-    
-    // Simplified version without utils dependency
-    Ok(())
-}
-
-pub async fn run_pool_state_loading_test() -> Result<()> {
-    
-    // Test that we can access the simulator functions needed for pool state loading
-    use arbooo::common::revm::{Tx, VictimTx};
-    use alloy::primitives::{U256, Address};
-    use revm::primitives::Bytes;
-    use alloy::signers::local::PrivateKeySigner;
-    
-    // Test creating transaction structures for pool interactions
-    let pool_address = PrivateKeySigner::random().address();
-    let caller_address = PrivateKeySigner::random().address();
-    
-    let _pool_tx = Tx {
-        caller: caller_address,
-        transact_to: pool_address,
-        data: Bytes::new(),
-        value: U256::ZERO,
-        gas_price: U256::from(20_000_000_000u128),
-        gas_limit: 500_000,
-    };
-    
-    // Test VictimTx to Tx conversion
-    let victim_tx = VictimTx {
-        tx_hash: revm::primitives::B256::ZERO,
-        from: caller_address,
-        to: pool_address,
-        data: Bytes::new(),
-        value: U256::ZERO,
-        gas_price: U256::from(20_000_000_000u128),
-        gas_limit: Some(500_000),
-    };
-    
-    let converted_tx = Tx::from(victim_tx);
-    assert_eq!(converted_tx.caller, caller_address, "Converted transaction should preserve caller");
-    assert_eq!(converted_tx.transact_to, pool_address, "Converted transaction should preserve target");
-    assert_eq!(converted_tx.gas_limit, 500_000, "Converted transaction should preserve gas limit");
-    
-    // Test pool address parsing
-    use std::str::FromStr;
-    let _v3_pool_address = Address::from_str("0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640")
-        .map_err(|e| anyhow::anyhow!("Failed to parse V3 pool address: {}", e))?;
-    
-    let _v2_pool_address = Address::from_str("0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc")
-        .map_err(|e| anyhow::anyhow!("Failed to parse V2 pool address: {}", e))?;
-    
-    Ok(())
-}
-
-pub async fn run_block_environment_test() -> Result<()> {
-    
-    // Simplified version without utils dependency
-    Ok(())
-}
-
-// Integration test functions
-pub async fn run_e2e_arbitrage_pipeline_test() -> Result<()> {
-    
-    // Simplified version without utils dependency
-    Ok(())
-}
-
-pub async fn run_pool_strategy_integration_test() -> Result<()> {
-    use arbooo::common::{logs::LogEvent, pairs::{Event, V2PoolCreated, V3PoolCreated}};
-    use alloy::primitives::Address;
-    use alloy_primitives::aliases::U24;
-    use std::collections::HashMap;
-    use std::str::FromStr;
-    
-    
-    // Step 1: Create mock pool data structure (simulating loaded pools)
-    let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    
-    let v2_pool_address = Address::from_str("0xB4e16d0168e52d35cacd2c6185b44281ec28c9dc").unwrap();
-    let v3_pool_address = Address::from_str("0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640").unwrap();
-    
-    let weth = Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
-    let usdc = Address::from_str("0xA0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2").unwrap();
-    
-    // Add V2 pool
-    pools_map.insert(
-        v2_pool_address,
-        Event::PairCreated(V2PoolCreated {
-            pair_address: v2_pool_address,
-            token0: usdc,
-            token1: weth,
-            fee: 3000,
-        }),
-    );
-    
-    // Add V3 pool
-    pools_map.insert(
-        v3_pool_address,
-        Event::PoolCreated(V3PoolCreated {
-            pair_address: v3_pool_address,
-            token0: usdc,
-            token1: weth,
-            fee: 3000,
-            tick_spacing: 60,
-        }),
-    );
-    
-    debug!("Created {} mock pools", pools_map.len());
-    
-    // Step 2: Test arbitrage opportunity identification
-    let mut arbitrage_opportunities = Vec::new();
-    
-    // Find pools with the same token pairs
-    let mut token_pairs = HashMap::new();
-    for (address, event) in &pools_map {
-        let (token0, token1) = match event {
-            Event::PairCreated(pool) => (pool.token0, pool.token1),
-            Event::PoolCreated(pool) => (pool.token0, pool.token1),
-        };
-        
-        let pair_key = if token0 < token1 { (token0, token1) } else { (token1, token0) };
-        token_pairs.entry(pair_key).or_insert_with(Vec::new).push((*address, event.clone()));
-    }
-    
-    // Identify arbitrage opportunities (pairs with both V2 and V3)
-    for ((token0, token1), pools) in token_pairs {
-        let has_v2 = pools.iter().any(|(_, event)| matches!(event, Event::PairCreated(_)));
-        let has_v3 = pools.iter().any(|(_, event)| matches!(event, Event::PoolCreated(_)));
-        
-        if has_v2 && has_v3 {
-            arbitrage_opportunities.push((token0, token1, pools));
-            debug!("Found arbitrage opportunity: {:?} - {:?}", token0, token1);
-        }
-    }
-    
-    assert!(!arbitrage_opportunities.is_empty(), "Should find at least one arbitrage opportunity");
-    debug!("Identified {} opportunities", arbitrage_opportunities.len());
-    
-    // Step 3: Test LogEvent creation from pool data
-    let (token0, token1, pools) = &arbitrage_opportunities[0];
-    let v3_pool = pools.iter()
-        .find(|(_, event)| matches!(event, Event::PoolCreated(_)))
-        .expect("Should have V3 pool");
-    let v2_pool = pools.iter()
-        .find(|(_, event)| matches!(event, Event::PairCreated(_)))
-        .expect("Should have V2 pool");
-    
-    let log_event = LogEvent {
-        log_pool_address: v3_pool.0,
-        corresponding_pool_address: v2_pool.0,
-        pool_variant: 3,
-        token0: *token0,
-        token1: *token1,
-        fee: U24::from(3000u32),
-    };
-    
-    assert_eq!(log_event.log_pool_address, v3_pool.0, "LogEvent should reference correct V3 pool");
-    assert_eq!(log_event.corresponding_pool_address, v2_pool.0, "LogEvent should reference correct V2 pool");
-    debug!("Created LogEvent from pool data");
-    
-    // Step 4: Test strategy message processing pipeline readiness
-    
-    // Verify the LogEvent has all required fields for strategy processing
-    assert_ne!(log_event.token0, Address::ZERO, "LogEvent token0 should be valid");
-    assert_ne!(log_event.token1, Address::ZERO, "LogEvent token1 should be valid");
-    assert!(log_event.fee > U24::ZERO, "LogEvent fee should be positive");
-    
-    Ok(())
-}
-
-// Additional integration test functions (continuing from the original)
-pub async fn run_evm_pool_state_integration_test() -> Result<()> {
-    
-    // Simplified version without utils dependency
-    Ok(())
-}
-
-pub async fn run_provider_pipeline_integration_test() -> Result<()> {
-    
-    // Simplified version without utils dependency
-    Ok(())
-}
-
-pub async fn run_strategy_processing_integration_test() -> Result<()> {
-    use arbooo::common::logs::LogEvent;
-    use alloy::primitives::Address;
-    use alloy_primitives::aliases::U24;
-    use std::str::FromStr;
-    use tokio::sync::broadcast;
-    use tokio::time::{timeout, Duration};
-    
-    
-    let (sender, mut receiver) = broadcast::channel(16);
-    
-    let test_event = LogEvent {
-        log_pool_address: Address::from_str("0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640").unwrap(),
-        corresponding_pool_address: Address::from_str("0xB4e16d0168e52d35cacd2c6185b44281ec28c9dc").unwrap(),
-        pool_variant: 3,
-        token0: Address::from_str("0xA0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2").unwrap(),
-        token1: Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
-        fee: U24::from(3000u32),
-    };
-    
-    // Test message broadcasting
-    let send_result = sender.send(test_event.clone());
-    assert!(send_result.is_ok(), "Message broadcasting should succeed");
-    
-    // Test message receiving
-    let received_message = timeout(Duration::from_secs(1), receiver.recv()).await??;
-    assert_eq!(received_message.log_pool_address, test_event.log_pool_address);
-    
-    Ok(())
-}
-
-pub async fn run_multi_component_integration_test() -> Result<()> {
-    
-    // Simplified version without utils dependency
-    Ok(())
-}
-
-// Profit calculation and validation functions
-pub async fn run_profit_calculation_tests() -> Result<()> {
-    run_cargo_test_with_output("arbitrage_calculation").await
-}
-
-pub async fn run_transaction_execution_tests() -> Result<()> {
-    run_cargo_test_with_output("transaction_execution").await
-}
-
-pub async fn run_profit_simulation_tests() -> Result<()> {
-    run_cargo_test_with_output("profit_simulation").await
-}
-
-// Unit test functions
-pub async fn run_atomic_component_tests() -> Result<()> {
-    run_cargo_test_with_output("atomic_tests").await
-}
-
-pub async fn run_environment_loading_test() -> Result<()> {
-    run_cargo_test_with_output("env_loading").await
-}
-
-pub async fn run_log_event_processing_tests() -> Result<()> {
-    run_cargo_test_with_output("log_event_processing").await
-}
-
-pub async fn run_fork_check_tests() -> Result<()> {
-    run_cargo_test_with_output("test_fork_check").await
-}
-
-// Pool test functions
-pub async fn run_pool_data_file_tests() -> Result<()> {
-    run_cargo_test_with_output("pool_data").await
-}
-
-pub async fn run_pool_pairing_file_tests() -> Result<()> {
-    run_cargo_test_with_output("pool_pairing").await
-}
-
-// Performance test functions
-pub async fn run_opportunity_detection_benchmarks() -> Result<()> {
-    run_cargo_test_with_output("opportunity_detection").await
-}
-
-pub async fn run_simulation_execution_benchmarks() -> Result<()> {
-    run_cargo_test_with_output("simulation_execution").await
-}
-
-pub async fn run_transaction_success_rate_metrics() -> Result<()> {
-    run_cargo_test_with_output("transaction_success_rate").await
-}
-
-// Memory test functions
-pub async fn run_memory_usage_profiling() -> Result<()> {
-    run_cargo_test_with_output("memory_usage").await
-}
-
-// Environment test functions
-pub async fn run_test_environment_demo() -> Result<()> {
-    run_cargo_test_with_output("test_environment_demo").await
-}
-
-// Transaction test functions
-pub async fn run_transaction_creation_tests() -> Result<()> {
-    run_cargo_test_with_output("transaction_creation").await
-}
-
-pub async fn run_single_swap_simulation_tests() -> Result<()> {
-    run_cargo_test_with_output("single_swap_simulation").await
-}
-
-pub async fn run_gas_estimation_validation_test() -> Result<()> {
-    run_cargo_test_with_output("profit_simulation").await
 }
