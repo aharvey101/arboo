@@ -167,7 +167,7 @@ pub async fn process_strategy_optimized(
     let pooled_provider = connection_pool.get_provider().await?;
     let provider = pooled_provider.provider();
     
-    info!("Time to get pooled provider: {:?}", start_time.elapsed());
+    log::debug!("Time to get pooled provider: {:?}", start_time.elapsed());
     
     let latest_block_number = provider.get_block_number().await?;
 
@@ -191,7 +191,7 @@ pub async fn process_strategy_optimized(
         U64::from(latest_block_number),
     )?;
 
-    info!("Time to create EVM: {:?}", start_time.elapsed());
+    log::debug!("Time to create EVM: {:?}", start_time.elapsed());
 
     let block_base_fee = latest_block.header.base_fee_per_gas
         .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?;
@@ -206,11 +206,11 @@ pub async fn process_strategy_optimized(
     ).await?;
     drop(pools_map_guard); // Release lock immediately
     
-    info!("Pools loaded in: {:?}", start_time.elapsed());
+    log::debug!("Pools loaded in: {:?}", start_time.elapsed());
 
     // Setup EVM state
     setup_evm_optimized(&mut simulator, provider).await?;
-    info!("Setup EVM in: {:?}", start_time.elapsed());
+    log::debug!("Setup EVM in: {:?}", start_time.elapsed());
 
     // Find optimal arbitrage amount
     let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
@@ -225,18 +225,18 @@ pub async fn process_strategy_optimized(
         provider,
     ).await?;
 
-    info!("Calculated optimal result in: {:?}", start_time.elapsed());
+    log::debug!("Calculated optimal result in: {:?}", start_time.elapsed());
 
     // Early exit for unprofitable opportunities
     if optimal_result.possible_profit < U256::from(100_000u128) {
-        info!("Opportunity not profitable ({}), skipping", optimal_result.possible_profit);
+        log::debug!("Opportunity not profitable ({}), skipping", optimal_result.possible_profit);
         return Ok(());
     }
 
     // Check if block is still current
     let current_block = provider.get_block_number().await.unwrap_or_default();
     if current_block > latest_block.header.number {
-        info!("Block {} passed (current: {}), opportunity expired", 
+        log::debug!("Block {} passed (current: {}), opportunity expired", 
               latest_block.header.number, current_block);
         return Ok(());
     }
@@ -281,7 +281,7 @@ pub async fn process_strategy_optimized(
         nonce,
     ));
 
-    info!("⚡ Total processing time: {:?}", start_time.elapsed());
+    log::debug!("⚡ Total processing time: {:?}", start_time.elapsed());
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use log::info;
+
 use revm::interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs,
     InstructionResult, Interpreter,
@@ -169,7 +169,7 @@ impl RevmInspector {
                 change_str
             ));
         }
-        info!("REPORT: {:?}", report);
+        log::debug!("REPORT: {:?}", report);
         report
     }
 }

@@ -163,7 +163,7 @@ pub async fn load_all_pools(
             pools.push(pool);
         }
     } else {
-        info!("Writing");
+        log::debug!("Writing");
         writer.write_record([
             "id", "address", "version", "token0", "token1", "fee",
             //"block_number",
@@ -208,7 +208,7 @@ pub async fn load_all_pools(
         block_range.push((start_idx, end_idx));
         blocks_processed += chunk;
     }
-    info!("Block range: {:?}", block_range);
+    log::debug!("Block range: {:?}", block_range);
 
     let pb = ProgressBar::new(block_range.len() as u64);
     pb.set_style(
@@ -242,7 +242,7 @@ pub async fn load_all_pools(
         pb.inc(1);
     }
 
-    info!("amount of pools before liquidity test: {:?}", pools.len());
+    log::debug!("amount of pools before liquidity test: {:?}", pools.len());
 
     //    let (evm, caller_address) = create_evm(provider.clone()).await;
     //let evm = Arc::new(tokio::sync::Mutex::new(evm));
@@ -290,7 +290,7 @@ pub async fn load_all_pools(
         }
     }
     writer.flush()?;
-    info!("Added {:?} new pools", added);
+    log::debug!("Added {:?} new pools", added);
 
     Ok((pools, last_id))
 }

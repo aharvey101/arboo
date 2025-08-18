@@ -1,5 +1,5 @@
 use crate::common::revm::{EvmSimulator, Tx};
-use ::log::{info, error};
+use ::log::error;
 use alloy::eips::BlockId;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
@@ -20,16 +20,16 @@ pub async fn simulation(
 ) -> Result<U256> {
     let _time = std::time::Instant::now();
     let latest_block_number = provider.get_block_number().await?;
-    info!("got block number: {:?}", latest_block_number);
+    log::debug!("got block number: {:?}", latest_block_number);
     let syncying_status = provider.syncing().await?;
-    info!("Syncing status: {:?}", syncying_status);
+    log::debug!("Syncing status: {:?}", syncying_status);
     let block_id = BlockId::from_str(latest_block_number.to_string().as_str())
         .map_err(|e| anyhow::anyhow!("Invalid block number format: {}", e))?;
     let latest_block = provider
         .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
         .await?
         .ok_or(anyhow::Error::msg("Error getting block"))?;
-    info!(
+    log::debug!(
         "latest block timestamp: {:?}",
         latest_block.header.timestamp
     );
@@ -46,7 +46,7 @@ pub async fn simulation(
         None,
     )
     .await
-    .inspect_err(|e| info!("Error getting weth balance {:?}", e))?;
+    .inspect_err(|e| log::debug!("Error getting weth balance {:?}", e))?;
 
     log::debug!("Initial Weth Balance: {:?}", weth_balance);
 
@@ -96,7 +96,7 @@ pub async fn simulation(
         Some(wallet_address),
     )
     .await
-    .inspect_err(|e| info!("Error checking weth balance {e}",))?;
+    .inspect_err(|e| log::debug!("Error checking weth balance {e}",))?;
 
     let profit = balance - weth_balance;
 
@@ -200,7 +200,7 @@ pub async fn check_weth_balance(
 
     let result = simulator
         .call(new_tx)
-        .inspect_err(|e| info!("There was an error {e}"))?;
+        .inspect_err(|e| log::debug!("There was an error {e}"))?;
 
     let balance = U256::from_be_slice(&result.output);
 
