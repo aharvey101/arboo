@@ -18,13 +18,15 @@ fn is_verbose_mode() -> bool {
 }
 
 // Helper function to run cargo test with default verbosity
-async fn run_cargo_test_with_output(test_name: &str) -> Result<()> {
+pub async fn run_cargo_test_with_output(test_name: &str) -> Result<()> {
     run_cargo_test_with_verbosity(test_name, is_verbose_mode()).await
 }
 
 // Core function that handles both verbose and quiet modes
 async fn run_cargo_test_with_verbosity(test_name: &str, show_details: bool) -> Result<()> {
-    info!("🧪 Running test file: {}", test_name);
+    if show_details {
+        info!("🧪 Running test file: {}", test_name);
+    }
     
     if show_details {
         // Verbose mode - pipe output directly to terminal
@@ -54,19 +56,23 @@ async fn run_cargo_test_with_verbosity(test_name: &str, show_details: bool) -> R
         let stderr = String::from_utf8_lossy(&output.stderr);
         
         if output.status.success() {
-            // Parse and display just the summary
-            if let Some(result_line) = stdout.lines().find(|line| line.contains("test result:")) {
-                info!("  📊 {}", result_line.trim());
-            } else {
-                info!("  ✅ completed successfully");
+            // Parse and display just the summary in verbose mode
+            if show_details {
+                if let Some(result_line) = stdout.lines().find(|line| line.contains("test result:")) {
+                    info!("  📊 {}", result_line.trim());
+                } else {
+                    info!("  ✅ completed successfully");
+                }
             }
             Ok(())
         } else {
-            // Show error summary
-            info!("❌ {} failed:", test_name);
-            if let Some(error_line) = stderr.lines().chain(stdout.lines())
-                .find(|line| line.contains("error:") || line.contains("FAILED")) {
-                info!("  ❌ {}", error_line.trim());
+            // Show error summary in verbose mode
+            if show_details {
+                info!("❌ {} failed:", test_name);
+                if let Some(error_line) = stderr.lines().chain(stdout.lines())
+                    .find(|line| line.contains("error:") || line.contains("FAILED")) {
+                    info!("  ❌ {}", error_line.trim());
+                }
             }
             Err(anyhow::anyhow!("Test failed"))
         }
