@@ -93,9 +93,15 @@ async fn test_atomic_block_data_integrity() -> Result<()> {
     // Test block data makes sense
     info!("🔍 Validating block data integrity...");
     
-    // Block number should be reasonable (mainnet is > 18M as of 2023)
-    if block_info.number < 10_000_000 {
-        return Err(anyhow::anyhow!("Block number seems too low: {}", block_info.number));
+    // Block number should be reasonable - for mainnet > 18M, for local fork >= 0
+    if test_env.is_using_anvil() {
+        info!("🔧 Using Anvil - block number {} is valid for local fork", block_info.number);
+        // For local anvil, block 0 is the starting point and is perfectly valid
+    } else {
+        // For mainnet/live network, expect higher block numbers  
+        if block_info.number < 10_000_000 {
+            return Err(anyhow::anyhow!("Block number seems too low for live network: {}", block_info.number));
+        }
     }
     
     // Gas limit should be reasonable

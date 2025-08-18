@@ -1,409 +1,345 @@
-use log::info;
-use super::test_result::TestResult;
 use super::individual_tests::*;
+use super::reporter::Reporter;
+use anyhow::Result;
 
-pub async fn run_provider_connection_test() -> TestResult {
-    info!("🔗 Running Provider Connection Test");
-    match test_integrated_environment().await {
-        Ok(_) => TestResult::success("Provider Connection"),
-        Err(e) => TestResult::failure("Provider Connection", format!("{}", e)),
-    }
+pub async fn run_provider_connection_test() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Provider Connection Test");
+    
+    let result = reporter.should("Provider Connection Test", "establish provider connection and validate environment")
+        .assert_async(|| async {
+            test_integrated_environment().await
+        }).await;
+        
+    reporter.end_suite("Provider Connection Test");
+    result
 }
 
-pub async fn run_atomic_tests() -> TestResult {
-    info!("⚛️  Running Atomic Tests");
+pub async fn run_atomic_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Atomic Tests Suite");
     
     // Run the most basic test - integrated test environment setup
-    match test_integrated_environment().await {
-        Ok(_) => TestResult::success("Atomic Tests"),
-        Err(e) => TestResult::failure("Atomic Tests", format!("{}", e)),
-    }
+    let result = reporter.should("Atomic Tests Suite", "run integrated test environment setup")
+        .assert_async(|| async {
+            test_integrated_environment().await
+        }).await;
+        
+    reporter.end_suite("Atomic Tests Suite");
+    result
 }
 
-pub async fn run_pool_tests() -> TestResult {
-    info!("🏊 Running Pool Data Tests");
+pub async fn run_pool_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Pool Data Tests Suite");
     
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+    // Test 1: Pool State Loading
+    reporter.should("Pool Data Tests Suite", "load pool state")
+        .assert_async(|| async {
+            run_pool_state_loading_test().await
+        }).await?;
     
-    // Test 5: Pool Data Tests (file-based)
-    info!("📁 Testing Pool Data Files");
-    match run_pool_data_file_tests().await {
-        Ok(_) => info!("✅ Pool data file tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Pool data file tests failed: {}", e));
-        }
-    }
+    // Test 2: Pool Data File Tests
+    reporter.should("Pool Data Tests Suite", "run pool data file tests")
+        .assert_async(|| async {
+            run_pool_data_file_tests().await
+        }).await?;
+        
+    // Test 3: Pool Pairing File Tests
+    reporter.should("Pool Data Tests Suite", "run pool pairing file tests")
+        .assert_async(|| async {
+            run_pool_pairing_file_tests().await
+        }).await?;
+        
+    // Test 4: Pool Strategy Integration
+    reporter.should("Pool Data Tests Suite", "run pool strategy integration test")
+        .assert_async(|| async {
+            run_pool_strategy_integration_test().await
+        }).await?;
+        
+    // Test 5: EVM Pool State Integration
+    reporter.should("Pool Data Tests Suite", "run EVM pool state integration test")
+        .assert_async(|| async {
+            run_evm_pool_state_integration_test().await
+        }).await?;
     
-    // Test 6: Pool Pairing Tests (file-based)
-    info!("🔗 Testing Pool Pairing Files");
-    match run_pool_pairing_file_tests().await {
-        Ok(_) => info!("✅ Pool pairing file tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Pool pairing file tests failed: {}", e));
-        }
-    }
-    
-    if all_passed {
-        TestResult::success("Pool Data Tests")
-    } else {
-        TestResult::failure("Pool Data Tests", errors.join("; "))
-    }
+    reporter.end_suite("Pool Data Tests Suite");
+    Ok(())
 }
 
-pub async fn run_evm_tests() -> TestResult {
-    info!("🔧 Running EVM Simulator Tests");
-    
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+pub async fn run_evm_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("EVM Simulator Tests Suite");
     
     // Test 1: EVM Simulator Initialization
-    info!("🏗️ Testing EVM Simulator Initialization");
-    match run_evm_initialization_test().await {
-        Ok(_) => info!("✅ EVM initialization tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("EVM initialization tests failed: {}", e));
-        }
-    }
+    reporter.should("EVM Simulator Tests Suite", "initialize EVM simulator")
+        .assert_async(|| async {
+            run_evm_initialization_test().await
+        }).await?;
     
     // Test 2: Transaction Execution
-    info!("🔄 Testing Transaction Execution");
-    match run_transaction_execution_test().await {
-        Ok(_) => info!("✅ Transaction execution tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Transaction execution tests failed: {}", e));
-        }
-    }
+    reporter.should("EVM Simulator Tests Suite", "execute transactions in EVM")
+        .assert_async(|| async {
+            run_transaction_execution_test().await
+        }).await?;
     
     // Test 3: Contract Deployment and Interaction  
-    info!("📦 Testing Contract Deployment and Interaction");
-    match run_contract_deployment_test().await {
-        Ok(_) => info!("✅ Contract deployment tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Contract deployment tests failed: {}", e));
-        }
-    }
+    reporter.should("EVM Simulator Tests Suite", "deploy and interact with contracts")
+        .assert_async(|| async {
+            run_contract_deployment_test().await
+        }).await?;
     
     // Test 4: Account Balance Management
-    info!("💰 Testing Account Balance Management");
-    match run_balance_management_test().await {
-        Ok(_) => info!("✅ Balance management tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Balance management tests failed: {}", e));
-        }
-    }
-    
-    // Test 5: Pool State Loading
-    info!("🏊 Testing Pool State Loading");
-    match run_pool_state_loading_test().await {
-        Ok(_) => info!("✅ Pool state loading tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Pool state loading tests failed: {}", e));
-        }
-    }
-    
-    // Test 6: Block Environment Manipulation
-    info!("🔧 Testing Block Environment Manipulation");
-    match run_block_environment_test().await {
-        Ok(_) => info!("✅ Block environment tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Block environment tests failed: {}", e));
-        }
-    }
-    
-    if all_passed {
-        TestResult::success("EVM Simulator Tests")
-    } else {
-        TestResult::failure("EVM Simulator Tests", errors.join("; "))
-    }
+    reporter.should("EVM Simulator Tests Suite", "manage account balances")
+        .assert_async(|| async {
+            run_balance_management_test().await
+        }).await?;
+
+    reporter.end_suite("EVM Simulator Tests Suite");
+    Ok(())
 }
 
-pub async fn run_unit_tests() -> TestResult {
-    info!("🧪 Running Unit Tests");
+pub async fn run_unit_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Unit Tests Suite");
     
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+    // Run cargo test based unit tests
+    reporter.should("Unit Tests Suite", "run arbitrage calculation tests")
+        .assert_async(|| async {
+            run_cargo_test_with_output("arbitrage_calculation_tests").await
+        }).await?;
     
-    // Test environment loading
-    info!("🔄 Testing Environment Loading");
-    match run_environment_loading_test().await {
-        Ok(_) => info!("✅ Environment loading tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Environment loading tests failed: {}", e));
-        }
-    }
+    reporter.should("Unit Tests Suite", "run transaction creation tests")
+        .assert_async(|| async {
+            run_cargo_test_with_output("transaction_creation_tests").await
+        }).await?;
     
-    if all_passed {
-        TestResult::success("Unit Tests")
-    } else {
-        TestResult::failure("Unit Tests", errors.join("; "))
-    }
+    reporter.should("Unit Tests Suite", "run error recovery tests")
+        .assert_async(|| async {
+            run_cargo_test_with_output("error_recovery_tests").await
+        }).await?;
+        
+    // Additional unit test functions
+    reporter.should("Unit Tests Suite", "run profit calculation tests")
+        .assert_async(|| async {
+            run_profit_calculation_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run transaction execution tests")
+        .assert_async(|| async {
+            run_transaction_execution_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run profit simulation tests")
+        .assert_async(|| async {
+            run_profit_simulation_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run atomic component tests")
+        .assert_async(|| async {
+            run_atomic_component_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run environment loading test")
+        .assert_async(|| async {
+            run_environment_loading_test().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run log event processing tests")
+        .assert_async(|| async {
+            run_log_event_processing_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run fork check tests")
+        .assert_async(|| async {
+            run_fork_check_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run single swap simulation tests")
+        .assert_async(|| async {
+            run_single_swap_simulation_tests().await
+        }).await?;
+        
+    reporter.should("Unit Tests Suite", "run gas estimation validation test")
+        .assert_async(|| async {
+            run_gas_estimation_validation_test().await
+        }).await?;
+
+    reporter.end_suite("Unit Tests Suite");
+    Ok(())
 }
 
-pub async fn run_performance_tests() -> TestResult {
-    info!("🚀 Running Performance Tests");
+pub async fn run_performance_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Performance Tests Suite");
     
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+    // Run performance test functions
+    reporter.should("Performance Tests Suite", "run high frequency tests")
+        .assert_async(|| async {
+            run_high_frequency_test().await
+        }).await?;
     
-    // Test opportunity detection benchmarks
-    info!("🔍 Testing Opportunity Detection Benchmarks");
-    match run_opportunity_detection_benchmarks().await {
-        Ok(_) => info!("✅ Opportunity detection benchmarks passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Opportunity detection benchmarks failed: {}", e));
-        }
-    }
-    
-    // Test simulation execution benchmarks
-    info!("⚡ Testing Simulation Execution Benchmarks");
-    match run_simulation_execution_benchmarks().await {
-        Ok(_) => info!("✅ Simulation execution benchmarks passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Simulation execution benchmarks failed: {}", e));
-        }
-    }
-    
-    if all_passed {
-        TestResult::success("Performance Tests")
-    } else {
-        TestResult::failure("Performance Tests", errors.join("; "))
-    }
+    reporter.should("Performance Tests Suite", "run MEV competition tests")
+        .assert_async(|| async {
+            run_mev_competition_test().await
+        }).await?;
+        
+    // Performance benchmarks
+    reporter.should("Performance Tests Suite", "run opportunity detection benchmarks")
+        .assert_async(|| async {
+            run_opportunity_detection_benchmarks().await
+        }).await?;
+        
+    reporter.should("Performance Tests Suite", "run simulation execution benchmarks")
+        .assert_async(|| async {
+            run_simulation_execution_benchmarks().await
+        }).await?;
+        
+    reporter.should("Performance Tests Suite", "run transaction success rate metrics")
+        .assert_async(|| async {
+            run_transaction_success_rate_metrics().await
+        }).await?;
+
+    reporter.end_suite("Performance Tests Suite");
+    Ok(())
 }
 
-pub async fn run_memory_tests() -> TestResult {
-    info!("💾 Running Memory Usage Tests");
+pub async fn run_memory_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Memory Usage Tests");
     
-    match run_memory_usage_profiling().await {
-        Ok(_) => TestResult::success("Memory Usage Tests"),
-        Err(e) => TestResult::failure("Memory Usage Tests", format!("{}", e)),
-    }
+    let result = reporter.should("Memory Usage Tests", "profile memory usage under different conditions")
+        .assert_async(|| async {
+            run_memory_usage_profiling().await
+        }).await;
+        
+    reporter.end_suite("Memory Usage Tests");
+    result
 }
 
-pub async fn run_environment_tests() -> TestResult {
-    info!("🌍 Running Environment Tests");
+pub async fn run_environment_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Environment Tests");
     
-    match run_environment_loading_test().await {
-        Ok(_) => TestResult::success("Environment Tests"),
-        Err(e) => TestResult::failure("Environment Tests", format!("{}", e)),
-    }
+    // Run environment tests  
+    reporter.should("Environment Tests", "run block environment test")
+        .assert_async(|| async {
+            run_block_environment_test().await
+        }).await?;
+        
+    reporter.should("Environment Tests", "run test environment demo")
+        .assert_async(|| async {
+            run_test_environment_demo().await
+        }).await?;
+    
+    reporter.end_suite("Environment Tests");
+    Ok(())
 }
 
-pub async fn run_transaction_tests() -> TestResult {
-    info!("💳 Running Transaction Tests");
+pub async fn run_transaction_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Transaction Tests");
     
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+    // Run transaction execution test
+    reporter.should("Transaction Tests", "execute transaction tests")
+        .assert_async(|| async {
+            run_transaction_execution_test().await
+        }).await?;
+        
+    reporter.should("Transaction Tests", "run transaction creation tests")
+        .assert_async(|| async {
+            run_transaction_creation_tests().await
+        }).await?;
     
-    // Test transaction creation
-    info!("🔨 Testing Transaction Creation");
-    match run_transaction_creation_tests().await {
-        Ok(_) => info!("✅ Transaction creation tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Transaction creation tests failed: {}", e));
-        }
-    }
-    
-    // Test transaction success rate metrics
-    info!("📊 Testing Transaction Success Rate Metrics");
-    match run_transaction_success_rate_metrics().await {
-        Ok(_) => info!("✅ Transaction success rate metrics tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Transaction success rate metrics tests failed: {}", e));
-        }
-    }
-    
-    if all_passed {
-        TestResult::success("Transaction Tests")
-    } else {
-        TestResult::failure("Transaction Tests", errors.join("; "))
-    }
+    reporter.end_suite("Transaction Tests");
+    Ok(())
 }
 
-pub async fn run_integration_tests() -> TestResult {
-    info!("🔧 Running Integration Tests");
+pub async fn run_integration_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Integration Tests");
     
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+    // Run integration tests
+    reporter.should("Integration Tests", "run full arbitrage cycle test")
+        .assert_async(|| async {
+            run_full_arbitrage_cycle_test().await
+        }).await?;
+        
+    reporter.should("Integration Tests", "run concurrent opportunities test")
+        .assert_async(|| async {
+            run_concurrent_opportunities_test().await
+        }).await?;
+        
+    reporter.should("Integration Tests", "run network disconnection test")
+        .assert_async(|| async {
+            run_network_disconnection_test().await
+        }).await?;
+        
+    // More integration tests
+    reporter.should("Integration Tests", "run E2E arbitrage pipeline test")
+        .assert_async(|| async {
+            run_e2e_arbitrage_pipeline_test().await
+        }).await?;
+        
+    reporter.should("Integration Tests", "run provider pipeline integration test")
+        .assert_async(|| async {
+            run_provider_pipeline_integration_test().await
+        }).await?;
+        
+    reporter.should("Integration Tests", "run strategy processing integration test")
+        .assert_async(|| async {
+            run_strategy_processing_integration_test().await
+        }).await?;
+        
+    reporter.should("Integration Tests", "run multi component integration test")
+        .assert_async(|| async {
+            run_multi_component_integration_test().await
+        }).await?;
     
-    // Test 1: End-to-End Arbitrage Pipeline
-    info!("🔄 Testing End-to-End Arbitrage Pipeline Integration");
-    match run_e2e_arbitrage_pipeline_test().await {
-        Ok(_) => info!("✅ E2E arbitrage pipeline tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("E2E arbitrage pipeline tests failed: {}", e));
-        }
-    }
-    
-    // Test 2: Pool Discovery and Strategy Integration  
-    info!("🏊 Testing Pool Discovery and Strategy Integration");
-    match run_pool_strategy_integration_test().await {
-        Ok(_) => info!("✅ Pool strategy integration tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Pool strategy integration tests failed: {}", e));
-        }
-    }
-    
-    // Test 3: EVM Simulator Pool State Integration
-    info!("🔧 Testing EVM Simulator with Pool State Integration");
-    match run_evm_pool_state_integration_test().await {
-        Ok(_) => info!("✅ EVM pool state integration tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("EVM pool state integration tests failed: {}", e));
-        }
-    }
-    
-    // Test 4: Provider and Data Pipeline Integration
-    info!("📡 Testing Provider and Data Pipeline Integration");
-    match run_provider_pipeline_integration_test().await {
-        Ok(_) => info!("✅ Provider pipeline integration tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Provider pipeline integration tests failed: {}", e));
-        }
-    }
-    
-    // Test 5: Strategy Processing Pipeline Integration
-    info!("⚡ Testing Strategy Processing Pipeline Integration");
-    match run_strategy_processing_integration_test().await {
-        Ok(_) => info!("✅ Strategy processing integration tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Strategy processing integration tests failed: {}", e));
-        }
-    }
-    
-    // Test 6: Multi-Component System Integration
-    info!("🌐 Testing Multi-Component System Integration");
-    match run_multi_component_integration_test().await {
-        Ok(_) => info!("✅ Multi-component integration tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Multi-component integration tests failed: {}", e));
-        }
-    }
-
-    // Test 7: Arbitrage Calculation and Profit Validation
-    info!("💰 Testing Arbitrage Calculation and Profit Validation");
-    match run_profit_calculation_tests().await {
-        Ok(_) => info!("✅ Profit calculation tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Profit calculation tests failed: {}", e));
-        }
-    }
-
-    // Test 8: Transaction Execution and Profit Extraction
-    info!("🚀 Testing Transaction Execution and Profit Extraction");
-    match run_transaction_execution_tests().await {
-        Ok(_) => info!("✅ Transaction execution tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Transaction execution tests failed: {}", e));
-        }
-    }
-
-    // Test 9: Profit Simulation Accuracy
-    info!("🎯 Testing Profit Simulation Accuracy");
-    match run_profit_simulation_tests().await {
-        Ok(_) => info!("✅ Profit simulation tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Profit simulation tests failed: {}", e));
-        }
-    }
-    
-    if all_passed {
-        TestResult::success("Integration Tests")
-    } else {
-        TestResult::failure("Integration Tests", errors.join("; "))
-    }
+    reporter.end_suite("Integration Tests");
+    Ok(())
 }
 
-pub async fn run_comprehensive_flow_tests() -> TestResult {
-    info!("🔄 Starting comprehensive flow test suite");
+pub async fn run_comprehensive_flow_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Comprehensive Flow Tests");
     
-    // Simplified comprehensive test - just demonstrate the modular structure works
-    info!("✅ Comprehensive flow test simulation completed");
-    TestResult::success("comprehensive_flow")
+    // Run all major test categories for full coverage
+    run_pool_tests().await?;
+    run_evm_tests().await?;
+    run_unit_tests().await?;
+    run_performance_tests().await?;
+    run_integration_tests().await?;
+    
+    reporter.end_suite("Comprehensive Flow Tests");
+    Ok(())
 }
 
-pub async fn run_edge_case_tests() -> TestResult {
-    info!("🔬 Running Edge Case & Stress Tests");
+pub async fn run_edge_case_tests() -> Result<()> {
+    let reporter = Reporter::new();
+    reporter.start_suite("Edge Case Tests");
     
-    // Run all edge case test categories
-    let mut all_passed = true;
-    let mut errors = Vec::new();
+    // Run edge case scenarios
+    reporter.should("Edge Case Tests", "run insufficient liquidity test")
+        .assert_async(|| async {
+            run_insufficient_liquidity_test().await
+        }).await?;
+        
+    reporter.should("Edge Case Tests", "run gas price spike test")
+        .assert_async(|| async {
+            run_gas_price_spike_test().await
+        }).await?;
+        
+    reporter.should("Edge Case Tests", "run block reorganization test")
+        .assert_async(|| async {
+            run_block_reorganization_test().await
+        }).await?;
+        
+    reporter.should("Edge Case Tests", "run error recovery test")
+        .assert_async(|| async {
+            run_error_recovery_test().await
+        }).await?;
     
-    // Test network disconnection scenarios
-    info!("🌐 Testing Network Disconnection Scenarios");
-    match run_network_disconnection_test().await {
-        Ok(_) => info!("✅ Network disconnection tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Network disconnection tests failed: {}", e));
-        }
-    }
-    
-    // Test gas price spike scenarios
-    info!("⛽ Testing Gas Price Spike Scenarios");
-    match run_gas_price_spike_test().await {
-        Ok(_) => info!("✅ Gas price spike tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Gas price spike tests failed: {}", e));
-        }
-    }
-    
-    // Test insufficient liquidity scenarios
-    info!("💧 Testing Insufficient Liquidity Scenarios");
-    match run_insufficient_liquidity_test().await {
-        Ok(_) => info!("✅ Insufficient liquidity tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Insufficient liquidity tests failed: {}", e));
-        }
-    }
-    
-    // Test block reorganization scenarios
-    info!("🔄 Testing Block Reorganization Scenarios");
-    match run_block_reorganization_test().await {
-        Ok(_) => info!("✅ Block reorganization tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("Block reorganization tests failed: {}", e));
-        }
-    }
-    
-    // Test MEV competition scenarios
-    info!("🏆 Testing MEV Competition Scenarios");
-    match run_mev_competition_test().await {
-        Ok(_) => info!("✅ MEV competition tests passed"),
-        Err(e) => {
-            all_passed = false;
-            errors.push(format!("MEV competition tests failed: {}", e));
-        }
-    }
-    
-    if all_passed {
-        TestResult::success("Edge Case & Stress Tests")
-    } else {
-        TestResult::failure("Edge Case & Stress Tests", errors.join("; "))
-    }
+    reporter.end_suite("Edge Case Tests");
+    Ok(())
 }
