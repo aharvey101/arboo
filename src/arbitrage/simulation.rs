@@ -38,34 +38,72 @@ pub async fn simulation_with_logging(
                    target_pool, amount, fee);
     }
     
-    let latest_block_number = provider.get_block_number().await?;
-    log::debug!("got block number: {:?}", latest_block_number);
-    let syncying_status = provider.syncing().await?;
-    log::debug!("Syncing status: {:?}", syncying_status);
-    let block_id = BlockId::from_str(latest_block_number.to_string().as_str())
-        .map_err(|e| anyhow::anyhow!("Invalid block number format: {}", e))?;
-    let latest_block = provider
-        .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
-        .await?
-        .ok_or(anyhow::Error::msg("Error getting block"))?;
-    log::debug!(
-        "latest block timestamp: {:?}",
-        latest_block.header.timestamp
-    );
-    let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+    // Cache block data to avoid repeated network calls
+    use std::sync::Mutex;
+    use std::sync::LazyLock;
+    
+    static CACHED_BLOCK_DATA: LazyLock<Mutex<Option<(u64, u64, U256, u64, std::time::Instant)>>> = LazyLock::new(|| {
+        Mutex::new(None)
+    });
+    
+    let (latest_gas_limit, latest_gas_price) = {
+        let mut cache = CACHED_BLOCK_DATA.lock().unwrap();
+        
+        // Use cached data if less than 12 seconds old (one block)
+        if let Some((_, _, gas_price, gas_limit, cached_at)) = cache.as_ref() {
+            if cached_at.elapsed().as_secs() < 12 {
+                log::debug!("Using cached block data, age: {:?}", cached_at.elapsed());
+                (*gas_limit, *gas_price)
+            } else {
+                // Refresh cache
+                let latest_block_number = provider.get_block_number().await?;
+                log::debug!("got block number: {:?}", latest_block_number);
+                
+                let block_id = BlockId::from_str(latest_block_number.to_string().as_str())
+                    .map_err(|e| anyhow::anyhow!("Invalid block number format: {}", e))?;
+                let latest_block = provider
+                    .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
+                    .await?
+                    .ok_or(anyhow::Error::msg("Error getting block"))?;
+                
+                let gas_limit = latest_block.header.gas_limit;
+                let gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+                let timestamp = latest_block.header.timestamp;
+                
+                *cache = Some((latest_block_number, timestamp, gas_price, gas_limit, std::time::Instant::now()));
+                
+                log::debug!("Refreshed block cache in: {:?}", simulation_start.elapsed());
+                (gas_limit, gas_price)
+            }
+        } else {
+            // Initialize cache
+            let latest_block_number = provider.get_block_number().await?;
+            let block_id = BlockId::from_str(latest_block_number.to_string().as_str())
+                .map_err(|e| anyhow::anyhow!("Invalid block number format: {}", e))?;
+            let latest_block = provider
+                .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
+                .await?
+                .ok_or(anyhow::Error::msg("Error getting block"))?;
+            
+            let gas_limit = latest_block.header.gas_limit;
+            let gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
+            let timestamp = latest_block.header.timestamp;
+            
+            *cache = Some((latest_block_number, timestamp, gas_price, gas_limit, std::time::Instant::now()));
+            
+            (gas_limit, gas_price)
+        }
+    };
 
     let wallet_address = simulator.owner;
 
-    let weth_balance = check_weth_balance(
+    // Fast initial balance check
+    let weth_balance = check_weth_balance_optimized(
         wallet_address,
         simulator,
         &latest_gas_limit,
         &latest_gas_price,
-        None,
-    )
-    .await
-    .inspect_err(|e| log::debug!("Error getting weth balance {:?}", e))?;
+    ).await.inspect_err(|e| log::debug!("Error getting weth balance {:?}", e))?;
 
     log::debug!("Initial Weth Balance: {:?}", weth_balance);
 
@@ -87,13 +125,13 @@ pub async fn simulation_with_logging(
         tokenOut: token_b,
         amountIn: amount,
     };
-    //info!("flash swap function args: {:?}", function_call);
+    
     let function_call_data = function_call.abi_encode();
 
     let caller = simulator.owner;
     let contract_address = simulator.contract_address;
 
-    // Note: create the transaction
+    // Create the transaction
     let new_tx = Tx {
         caller,
         transact_to: contract_address,
@@ -106,12 +144,8 @@ pub async fn simulation_with_logging(
     simulator
         .call(new_tx)
         .inspect_err(|e| {
-            
-            // Try to decode EVM revert errors
             let error_str = format!("{:?}", e);
             if error_str.contains("EVM REVERT:") {
-                // Extract the bytes from the error string
-                // The format is "EVM REVERT: 0x<hex_data> / Gas used: <gas>"
                 if let Some(start) = error_str.find("0x") {
                     if let Some(end) = error_str[start..].find(" / Gas used:") {
                         let hex_data = &error_str[start..start + end];
@@ -125,15 +159,13 @@ pub async fn simulation_with_logging(
             }
         })?;
 
-    let balance = check_weth_balance(
+    // Fast final balance check
+    let balance = check_weth_balance_optimized(
         wallet_address,
         simulator,
         &latest_gas_limit,
         &latest_gas_price,
-        Some(wallet_address),
-    )
-    .await
-    .inspect_err(|e| log::debug!("Error checking weth balance {e}",))?;
+    ).await.inspect_err(|e| log::debug!("Error checking weth balance {e}",))?;
 
     let profit = balance - weth_balance;
     
@@ -144,6 +176,35 @@ pub async fn simulation_with_logging(
     }
 
     Ok(profit)
+}
+
+// Optimized balance check function
+async fn check_weth_balance_optimized(
+    wallet_address: Address,
+    simulator: &mut EvmSimulator,
+    latest_gas_limit: &u64,
+    latest_gas_price: &U256,
+) -> Result<U256, anyhow::Error> {
+    alloy::sol! {
+        function balanceOf(address account) external view returns (uint256);
+    }
+
+    let new_tx = Tx {
+        caller: wallet_address,
+        transact_to: get_address(AddressType::Weth),
+        data: balanceOfCall { account: wallet_address }.abi_encode().into(),
+        value: U256::ZERO,
+        gas_limit: *latest_gas_limit,
+        gas_price: *latest_gas_price,
+    };
+
+    let result = simulator
+        .call(new_tx)
+        .inspect_err(|e| log::debug!("There was an error {e}"))?;
+
+    let balance = U256::from_be_slice(&result.output);
+
+    Ok(balance)
 }
 
 pub fn one_ether() -> U256 {
