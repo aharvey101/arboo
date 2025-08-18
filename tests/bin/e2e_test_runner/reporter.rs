@@ -117,7 +117,6 @@ pub struct AssertionBuilder {
 
 impl AssertionBuilder {
     fn new(suite_name: &str, description: &str, suites: Arc<Mutex<HashMap<String, TestSuite>>>) -> Self {
-        println!("    ○ {}", description);
         Self {
             suite_name: suite_name.to_string(),
             description: description.to_string(),
