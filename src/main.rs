@@ -106,10 +106,9 @@ async fn main() -> Result<()> {
     // 2. Listen for logs on pools
     set.spawn(logs::get_logs(provider.clone(), pools_map, sender.clone()));
 
-    //let simulator: Arc<TokioMutex<EvmSimulator<'_>>> = Arc::new(TokioMutex::new(simulator));
-
-    info!("Spawning evm");
-    initialize_strategy_pool(sender, ws_url).await;
+    info!("Spawning optimized EVM strategy with {} worker threads", 16);
+    let _strategy_pool = initialize_strategy_pool(sender, ws_url, 16).await?;
+    
     while let Some(res) = set.join_next().await {
         info!("{:?}", res);
     }
