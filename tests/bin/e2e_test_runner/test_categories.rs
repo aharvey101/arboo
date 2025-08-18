@@ -66,6 +66,15 @@ pub async fn run_pool_tests() -> TestResult {
         errors.push(format!("Pool pairing file tests failed: {}", e));
     }
     
+    // Test 7: Pool State Loading Test
+    if let Err(e) = reporter.should("Pool Data Tests Suite", "validate pool state loading mechanisms")
+        .assert_async(|| async {
+            run_pool_state_loading_test().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Pool state loading tests failed: {}", e));
+    }
+    
     reporter.end_suite("Pool Data Tests Suite");
     
     if all_passed {
@@ -143,6 +152,33 @@ pub async fn run_unit_tests() -> TestResult {
         errors.push(format!("Environment loading tests failed: {}", e));
     }
 
+    // Test atomic component functionality
+    if let Err(e) = reporter.should("Unit Tests Suite", "validate atomic component functionality")
+        .assert_async(|| async {
+            run_atomic_component_tests().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Atomic component tests failed: {}", e));
+    }
+
+    // Test log event processing
+    if let Err(e) = reporter.should("Unit Tests Suite", "process and validate log events")
+        .assert_async(|| async {
+            run_log_event_processing_tests().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Log event processing tests failed: {}", e));
+    }
+
+    // Test fork check functionality
+    if let Err(e) = reporter.should("Unit Tests Suite", "validate blockchain fork detection")
+        .assert_async(|| async {
+            run_fork_check_tests().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Fork check tests failed: {}", e));
+    }
+
     reporter.end_suite("Unit Tests Suite");
     
     if all_passed {
@@ -177,6 +213,24 @@ pub async fn run_performance_tests() -> TestResult {
         errors.push(format!("Simulation execution benchmarks failed: {}", e));
     }
 
+    // Test high frequency trading scenarios
+    if let Err(e) = reporter.should("Performance Tests Suite", "validate high frequency trading performance")
+        .assert_async(|| async {
+            run_high_frequency_test().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("High frequency tests failed: {}", e));
+    }
+
+    // Test concurrent opportunities handling
+    if let Err(e) = reporter.should("Performance Tests Suite", "handle concurrent arbitrage opportunities")
+        .assert_async(|| async {
+            run_concurrent_opportunities_test().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Concurrent opportunities tests failed: {}", e));
+    }
+
     reporter.end_suite("Performance Tests Suite");
     
     if all_passed {
@@ -209,18 +263,33 @@ pub async fn run_environment_tests() -> TestResult {
     let reporter = Reporter::new();
     reporter.start_suite("Environment Tests Suite");
     
-    match reporter.should("Environment Tests Suite", "load and validate environment configuration")
+    let mut all_passed = true;
+    let mut errors = Vec::new();
+    
+    // Test environment loading
+    if let Err(e) = reporter.should("Environment Tests Suite", "load and validate environment configuration")
         .assert_async(|| async {
             run_environment_loading_test().await
         }).await {
-        Ok(_) => {
-            reporter.end_suite("Environment Tests Suite");
-            TestResult::success("Environment Tests")
-        },
-        Err(e) => {
-            reporter.end_suite("Environment Tests Suite");
-            TestResult::failure("Environment Tests", format!("{}", e))
-        },
+        all_passed = false;
+        errors.push(format!("Environment loading tests failed: {}", e));
+    }
+    
+    // Test block environment setup
+    if let Err(e) = reporter.should("Environment Tests Suite", "validate block environment configuration")
+        .assert_async(|| async {
+            run_block_environment_test().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Block environment tests failed: {}", e));
+    }
+
+    reporter.end_suite("Environment Tests Suite");
+    
+    if all_passed {
+        TestResult::success("Environment Tests")
+    } else {
+        TestResult::failure("Environment Tests", errors.join("; "))
     }
 }
 
@@ -247,6 +316,15 @@ pub async fn run_transaction_tests() -> TestResult {
         }).await {
         all_passed = false;
         errors.push(format!("Transaction success rate metrics tests failed: {}", e));
+    }
+
+    // Test gas estimation validation
+    if let Err(e) = reporter.should("Transaction Tests Suite", "validate gas estimation accuracy")
+        .assert_async(|| async {
+            run_gas_estimation_validation_test().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Gas estimation validation tests failed: {}", e));
     }
 
     reporter.end_suite("Transaction Tests Suite");
@@ -344,6 +422,24 @@ pub async fn run_integration_tests() -> TestResult {
         }).await {
         all_passed = false;
         errors.push(format!("Profit simulation tests failed: {}", e));
+    }
+
+    // Test 10: Test Environment Demo
+    if let Err(e) = reporter.should("Integration Tests Suite", "demonstrate test environment functionality")
+        .assert_async(|| async {
+            run_test_environment_demo().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Test environment demo failed: {}", e));
+    }
+
+    // Test 11: Single Swap Simulation
+    if let Err(e) = reporter.should("Integration Tests Suite", "simulate single swap transactions")
+        .assert_async(|| async {
+            run_single_swap_simulation_tests().await
+        }).await {
+        all_passed = false;
+        errors.push(format!("Single swap simulation tests failed: {}", e));
     }
 
     reporter.end_suite("Integration Tests Suite");

@@ -36,7 +36,13 @@ async fn test_log_event_structure_validation() -> Result<()> {
         // Test block has required fields for log processing
         assert_ne!(block.header.hash, B256::ZERO, "Block should have valid hash");
         assert!(block.header.timestamp > 0, "Block should have valid timestamp");
-        assert!(block.header.number > 0, "Block should have valid number");
+        
+        // For Anvil, block 0 is valid; for live networks, expect > 0
+        if test_env.is_using_anvil() {
+            info!("🔧 Using Anvil - block number {} is valid for local fork", block.header.number);
+        } else {
+            assert!(block.header.number > 0, "Block should have valid number for live network");
+        }
         
         info!("✅ Block validation: hash={:?}, timestamp={}, transactions={}", 
               block.header.hash, 

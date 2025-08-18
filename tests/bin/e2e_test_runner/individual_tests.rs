@@ -1,6 +1,77 @@
 use anyhow::Result;
-use log::debug;
+use log::{debug, info};
 use super::reporter::Reporter;
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
+
+// Global flag for verbose mode
+static VERBOSE_MODE: OnceLock<bool> = OnceLock::new();
+
+// Set verbose mode (called from main)
+pub fn set_verbose_mode(verbose: bool) {
+    VERBOSE_MODE.set(verbose).ok();
+}
+
+// Get current verbose mode
+fn is_verbose_mode() -> bool {
+    VERBOSE_MODE.get().copied().unwrap_or(false)
+}
+
+// Helper function to run cargo test with default verbosity
+async fn run_cargo_test_with_output(test_name: &str) -> Result<()> {
+    run_cargo_test_with_verbosity(test_name, is_verbose_mode()).await
+}
+
+// Core function that handles both verbose and quiet modes
+async fn run_cargo_test_with_verbosity(test_name: &str, show_details: bool) -> Result<()> {
+    info!("🧪 Running test file: {}", test_name);
+    
+    if show_details {
+        // Verbose mode - pipe output directly to terminal
+        let mut cmd = Command::new("cargo");
+        cmd.args(&["test", "--test", test_name, "--", "--nocapture"])
+           .stdout(Stdio::inherit())
+           .stderr(Stdio::inherit());
+        
+        let status = cmd.status()
+            .map_err(|e| anyhow::anyhow!("Failed to execute cargo test: {}", e))?;
+        
+        if status.success() {
+            info!("✅ {} completed successfully", test_name);
+            Ok(())
+        } else {
+            info!("❌ {} failed with exit code: {:?}", test_name, status.code());
+            Err(anyhow::anyhow!("Test failed with exit code: {:?}", status.code()))
+        }
+    } else {
+        // Quiet mode - capture and parse output
+        let output = Command::new("cargo")
+            .args(&["test", "--test", test_name, "--", "--nocapture"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        
+        if output.status.success() {
+            // Parse and display just the summary
+            if let Some(result_line) = stdout.lines().find(|line| line.contains("test result:")) {
+                info!("  📊 {}", result_line.trim());
+            } else {
+                info!("  ✅ completed successfully");
+            }
+            Ok(())
+        } else {
+            // Show error summary
+            info!("❌ {} failed:", test_name);
+            if let Some(error_line) = stderr.lines().chain(stdout.lines())
+                .find(|line| line.contains("error:") || line.contains("FAILED")) {
+                info!("  ❌ {}", error_line.trim());
+            }
+            Err(anyhow::anyhow!("Test failed"))
+        }
+    }
+}
 
 // Environment setup and basic integration tests
 pub async fn test_integrated_environment() -> Result<()> {
@@ -20,236 +91,53 @@ pub async fn test_integrated_environment() -> Result<()> {
 
 // Comprehensive flow test functions
 pub async fn run_full_arbitrage_cycle_test() -> Result<()> {
-    let reporter = Reporter::new();
-    reporter.start_suite("Full Arbitrage Cycle Test");
-    
-    reporter.should("Full Arbitrage Cycle Test", "execute cargo test for full_arbitrage_cycle_tests")
-        .assert_async(|| async {
-            use std::process::Command;
-            
-            
-            let output = Command::new("cargo")
-                .args(&["test", "--test", "full_arbitrage_cycle_tests", "--", "--nocapture"])
-                .output()
-                .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-            
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!("Test failed: {}", stderr))
-            }
-        }).await?;
-    
-    reporter.end_suite("Full Arbitrage Cycle Test");
-    Ok(())
+    run_cargo_test_with_output("full_arbitrage_cycle_tests").await
 }
 
 pub async fn run_concurrent_opportunities_test() -> Result<()> {
-    let reporter = Reporter::new();
-    reporter.start_suite("Concurrent Opportunities Test");
-    
-    reporter.should("Concurrent Opportunities Test", "execute cargo test for concurrent_opportunities_tests")
-        .assert_async(|| async {
-            use std::process::Command;
-            
-            
-            let output = Command::new("cargo")
-                .args(&["test", "--test", "concurrent_opportunities_tests", "--", "--nocapture"])
-                .output()
-                .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-            
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!("Test failed: {}", stderr))
-            }
-        }).await?;
-    
-    reporter.end_suite("Concurrent Opportunities Test");
-    Ok(())
+    run_cargo_test_with_output("concurrent_opportunities_tests").await
 }
 
 pub async fn run_high_frequency_test() -> Result<()> {
-    let reporter = Reporter::new();
-    reporter.start_suite("High-Frequency Test");
-    
-    reporter.should("High-Frequency Test", "execute cargo test for high_frequency_tests")
-        .assert_async(|| async {
-            use std::process::Command;
-            
-            
-            let output = Command::new("cargo")
-                .args(&["test", "--test", "high_frequency_tests", "--", "--nocapture"])
-                .output()
-                .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-            
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!("Test failed: {}", stderr))
-            }
-        }).await?;
-    
-    reporter.end_suite("High-Frequency Test");
-    Ok(())
+    run_cargo_test_with_output("high_frequency_tests").await
 }
 
 pub async fn run_error_recovery_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "error_recovery_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("error_recovery_tests").await
 }
 
 // Edge case and stress test functions
 pub async fn run_network_disconnection_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "network_disconnection_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("network_disconnection_tests").await
 }
 
 pub async fn run_gas_price_spike_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "gas_price_spike_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("gas_price_spike_tests").await
 }
 
 pub async fn run_insufficient_liquidity_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "insufficient_liquidity_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("insufficient_liquidity_tests").await
 }
 
 pub async fn run_block_reorganization_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "block_reorganization_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("block_reorganization_tests").await
 }
 
 pub async fn run_mev_competition_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "mev_competition_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("mev_competition_tests").await
 }
 
 // EVM simulator test functions
 pub async fn run_evm_initialization_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "evm_simulator_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("evm_simulator_tests").await
 }
 
 pub async fn run_transaction_execution_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "evm_simulator_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("evm_simulator_tests").await
 }
 
 pub async fn run_contract_deployment_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "evm_simulator_tests", "--", "--nocapture"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run test: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Test failed: {}", stderr))
-    }
+    run_cargo_test_with_output("evm_simulator_tests").await
 }
 
 pub async fn run_balance_management_test() -> Result<()> {
@@ -474,296 +362,75 @@ pub async fn run_multi_component_integration_test() -> Result<()> {
 
 // Profit calculation and validation functions
 pub async fn run_profit_calculation_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "arbitrage_calculation_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Arbitrage calculation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("arbitrage_calculation_tests").await
 }
 
 pub async fn run_transaction_execution_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "transaction_execution_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Transaction execution tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("transaction_execution_tests").await
 }
 
 pub async fn run_profit_simulation_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "profit_simulation_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Profit simulation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("profit_simulation_tests").await
 }
 
 // Unit test functions
 pub async fn run_atomic_component_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "atomic_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Atomic tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("atomic_tests").await
 }
 
 pub async fn run_environment_loading_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "env_loading_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Environment loading tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("env_loading_tests").await
 }
 
 pub async fn run_log_event_processing_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "log_event_processing_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Log event processing tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("log_event_processing_tests").await
 }
 
 pub async fn run_fork_check_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "test_fork_check", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Fork check tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("test_fork_check").await
 }
 
 // Pool test functions
 pub async fn run_pool_data_file_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "pool_data_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Pool data tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("pool_data_tests").await
 }
 
 pub async fn run_pool_pairing_file_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "pool_pairing_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Pool pairing tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("pool_pairing_tests").await
 }
 
 // Performance test functions
 pub async fn run_opportunity_detection_benchmarks() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "opportunity_detection_benchmarks", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Opportunity detection benchmarks failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("opportunity_detection_benchmarks").await
 }
 
 pub async fn run_simulation_execution_benchmarks() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "simulation_execution_benchmarks", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Simulation execution benchmarks failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("simulation_execution_benchmarks").await
 }
 
 pub async fn run_transaction_success_rate_metrics() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "transaction_success_rate_metrics", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Transaction success rate metrics failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("transaction_success_rate_metrics").await
 }
 
 // Memory test functions
 pub async fn run_memory_usage_profiling() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "memory_usage_profiling", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Memory usage profiling failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("memory_usage_profiling").await
 }
 
 // Environment test functions
 pub async fn run_test_environment_demo() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "test_environment_demo", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Test environment demo failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("test_environment_demo").await
 }
 
 // Transaction test functions
 pub async fn run_transaction_creation_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "transaction_creation_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Transaction creation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("transaction_creation_tests").await
 }
 
 pub async fn run_single_swap_simulation_tests() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "--test", "single_swap_simulation_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Single swap simulation tests failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("single_swap_simulation_tests").await
 }
 
 pub async fn run_gas_estimation_validation_test() -> Result<()> {
-    use std::process::Command;
-    
-    
-    let output = Command::new("cargo")
-        .args(&["test", "test_gas_estimation_validation", "--test", "profit_simulation_tests", "--", "--nocapture"])
-        .output()?;
-    
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(anyhow::anyhow!("Gas estimation validation test failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr))
-    }
+    run_cargo_test_with_output("profit_simulation_tests").await
 }
