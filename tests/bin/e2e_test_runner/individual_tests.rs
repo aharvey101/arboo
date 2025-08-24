@@ -24,21 +24,6 @@ pub async fn run_test_by_filter(test_filter: &str) -> Result<()> {
     run_cargo_test_with_verbosity(test_filter, is_verbose_mode()).await
 }
 
-// Generic test runner that can run multiple test filters
-#[allow(dead_code)]
-pub async fn run_tests_by_filters(test_filters: &[&str]) -> Result<()> {
-    for filter in test_filters {
-        run_test_by_filter(filter).await?;
-    }
-    Ok(())
-}
-
-// Helper function to run cargo test with default verbosity  
-#[allow(dead_code)]
-pub async fn run_cargo_test_with_output(test_filter: &str) -> Result<()> {
-    run_cargo_test_with_verbosity(test_filter, is_verbose_mode()).await
-}
-
 // Core function that handles both verbose and quiet modes
 async fn run_cargo_test_with_verbosity(test_filter: &str, show_details: bool) -> Result<()> {
     if show_details {
@@ -208,26 +193,6 @@ pub async fn run_test_category(category_name: &str) -> Result<()> {
     }
     
     Ok(())
-}
-
-// Function to run all test categories
-#[allow(dead_code)]
-pub async fn run_all_test_categories() -> Result<()> {
-    let categories = discover_test_categories()?;
-    for category in &categories {
-        info!("🧪 Running category: {} - {}", category.name, category.description);
-        for filter in &category.filters {
-            run_test_by_filter(filter).await?;
-        }
-    }
-    Ok(())
-}
-
-// Get all available test category names
-#[allow(dead_code)]
-pub fn get_available_categories() -> Result<Vec<String>> {
-    let categories = discover_test_categories()?;
-    Ok(categories.iter().map(|cat| cat.name.clone()).collect())
 }
 
 // List all discovered categories with their details

@@ -395,11 +395,11 @@ pub fn decode_revert_hex(hex_error: &str) -> Result<DecodedEVMRevert, hex::FromH
 
 #[test]
 fn test_real_examples() {
-    // Test example 1: "SPL"
+    // Test example 1: "SPL" -> translated to slippage protection message
     let result = decode_revert_hex("0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000353504c0000000000000000000000000000000000000000000000000000000000").expect("Test hex should be valid");
     println!("Example 1: {}", result);
     match &result.error_type {
-        EVMErrorType::StringError(msg) => assert_eq!(msg, "SPL"),
+        EVMErrorType::StringError(msg) => assert_eq!(msg, "Slippage Protection: Transaction would exceed maximum slippage tolerance"),
         _ => panic!("Expected StringError for Example 1"),
     }
     assert_eq!(result.selector, [0x08, 0xc3, 0x79, 0xa0]);

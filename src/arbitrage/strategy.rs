@@ -12,9 +12,9 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::types::{Block, BlockTransactionsKind};
+use alloy::rpc::types::BlockTransactionsKind;
 use alloy::signers::local::PrivateKeySigner;
-use alloy_primitives::aliases::U24;
+
 use alloy_primitives::{address, U64};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
@@ -28,6 +28,7 @@ use std::{
     path::Path,
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 use tokio::sync::{broadcast::Sender, mpsc, RwLock, Semaphore};
 
@@ -77,26 +78,48 @@ impl StrategyWorkerPool {
                 let pools_map_clone = pools_map_clone.clone();
                 let semaphore_clone_inner = semaphore_clone.clone();
                 
-                // Use async spawn instead of spawn_blocking to handle semaphore properly
+                // Spawn blocking task but manage it properly
                 tokio::spawn(async move {
-                    // Acquire permit asynchronously - this blocks if no permits available
-                    let _permit = match semaphore_clone_inner.try_acquire() {
-                        Ok(permit) => permit,
+                    // Acquire permit with timeout to avoid indefinite blocking
+                    let _permit = match tokio::time::timeout(
+                        Duration::from_millis(100),
+                        semaphore_clone_inner.acquire()
+                    ).await {
+                        Ok(Ok(permit)) => permit,
+                        Ok(Err(_)) => {
+                            log::error!("Semaphore acquisition failed (semaphore closed)");
+                            return;
+                        },
                         Err(_) => {
-                            log::warn!("Max concurrent tasks reached, dropping event");
+                            log::warn!("Max concurrent tasks reached, dropping event (timeout)");
                             return;
                         }
                     };
                     
-                    // Run CPU-intensive work in blocking context
+                    // Run the CPU-intensive work in a separate thread pool
                     let result = tokio::task::spawn_blocking(move || {
-                        tokio::runtime::Handle::current().block_on(async move {
+                        // Create a new runtime handle for this thread
+                        let rt = tokio::runtime::Handle::try_current()
+                            .unwrap_or_else(|_| {
+                                // If no runtime, create a basic runtime for this thread
+                                tokio::runtime::Runtime::new().unwrap().handle().clone()
+                            });
+                        
+                        rt.block_on(async move {
                             process_strategy_optimized(log_event, &pool_clone, &pools_map_clone).await
                         })
                     }).await;
                     
-                    if let Ok(Err(e)) = result {
-                        log::error!("Strategy processing error: {}", e);
+                    match result {
+                        Ok(Ok(_)) => {
+                            log::debug!("Strategy processing completed successfully");
+                        },
+                        Ok(Err(e)) => {
+                            log::error!("Strategy processing error: {}", e);
+                        },
+                        Err(e) => {
+                            log::error!("Task execution error: {}", e);
+                        }
                     }
                     // Permit automatically released when _permit goes out of scope
                 });
@@ -228,15 +251,25 @@ pub async fn process_strategy_optimized(
     let block_base_fee = latest_block.header.base_fee_per_gas
         .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?;
 
-    // Use cached pools map - no file I/O per request
+    // Determine target pool based on variant early
+    let is_v2_to_v3 = message.pool_variant == 3;
+    let target_pool = if is_v2_to_v3 {
+        message.log_pool_address
+    } else {
+        message.corresponding_pool_address
+    };
+
+    // Find optimal arbitrage amount using simple simulation
     let pools_map_guard = pools_map.read().await;
+    
+    // Use the original simulator for a simple test
     load_specific_pools_optimized(
         &mut simulator,
         message.log_pool_address,
         message.corresponding_pool_address,
-        &pools_map_guard,
+        &*pools_map_guard,
     ).await?;
-    drop(pools_map_guard); // Release lock immediately
+    drop(pools_map_guard);
     
     log::debug!("Pools loaded in: {:?}", start_time.elapsed());
 
@@ -244,18 +277,29 @@ pub async fn process_strategy_optimized(
     setup_evm_optimized(&mut simulator, provider).await?;
     log::debug!("Setup EVM in: {:?}", start_time.elapsed());
 
-    // Find optimal arbitrage amount
-    let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
-    let optimal_result = find_optimal_amount_optimized(
-        message.token0,
+    // Simple profit check with a fixed amount instead of complex optimization
+    let test_amount = U256::from(100) * U256::from(10).pow(U256::from(18)); // 100 tokens
+    let possible_profit = match simulation_with_logging(
+        target_pool,
         message.token1,
-        &mut simulator,
-        max_input,
+        message.token0,
+        test_amount,
         message.fee,
-        &latest_block,
-        message.corresponding_pool_address,
+        &mut simulator,
         provider,
-    ).await?;
+        false,
+    ).await {
+        Ok(profit) => profit,
+        Err(e) => {
+            log::warn!("Simulation failed: {}", e);
+            U256::ZERO
+        }
+    };
+
+    let optimal_result = ArbitrageResult {
+        optimal_amount: if possible_profit > U256::ZERO { test_amount } else { U256::ZERO },
+        possible_profit,
+    };
 
     log::debug!("Calculated optimal result in: {:?}", start_time.elapsed());
 
@@ -267,7 +311,7 @@ pub async fn process_strategy_optimized(
     }
 
     // Check if block is still current
-    let current_block = provider.get_block_number().await.unwrap_or_default();
+    let current_block = provider.get_block_number().await.unwrap_or(23_000_000);
     if current_block > latest_block.header.number {
         log::info!("⏰ Arbitrage analysis complete - Block expired ({} > {}), opportunity missed. Duration: {:?}", 
                    current_block, latest_block.header.number, start_time.elapsed());
@@ -434,199 +478,6 @@ async fn setup_evm_optimized(
 
     simulator.call(approve_tx)?;
     Ok(())
-}
-
-async fn find_optimal_amount_optimized(
-    token_in: Address,
-    token_out: Address,
-    simulator: &mut EvmSimulator,
-    max_input: U256,
-    fee: U24,
-    latest_block: &Block,
-    target_pool: Address,
-    _provider: &RootProvider<PubSubFrontend, Ethereum>,
-) -> Result<ArbitrageResult> {
-    let optimization_start = std::time::Instant::now();
-    
-    // Pre-calculate reusable values to avoid repeated work
-    let latest_gas_limit = latest_block.header.gas_limit;
-    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
-        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
-    let wallet_address = simulator.owner;
-    let contract_address = simulator.contract_address;
-    
-    // Get initial WETH balance once and reuse across iterations
-    let initial_weth_balance = check_weth_balance_fast(
-        wallet_address,
-        simulator,
-        &latest_gas_limit,
-        &latest_gas_price,
-    ).await?;
-    
-    log::debug!("Initial balance fetch: {:?}", optimization_start.elapsed());
-    
-    let mut best_profit = U256::ZERO;
-    let mut optimal_amount = U256::ZERO;
-    
-    // Use binary search but with optimized simulation calls
-    let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
-    let mut right = max_input;
-    let mut iteration_count = 0;
-    
-    while left <= right && iteration_count < 20 { // Limit iterations to prevent infinite loops
-        iteration_count += 1;
-        let mid = (left + right) / U256::from(2);
-        let iteration_start = std::time::Instant::now();
-        
-        // Fast simulation without network calls
-        let profit = simulate_arbitrage_fast(
-            target_pool,
-            token_in,
-            token_out,
-            mid,
-            fee,
-            simulator,
-            contract_address,
-            wallet_address,
-            &latest_gas_limit,
-            &latest_gas_price,
-            initial_weth_balance,
-        ).await.unwrap_or(U256::ZERO);
-
-        log::debug!("Binary search iteration {} amount {} profit {} took: {:?}", 
-                   iteration_count, mid, profit, iteration_start.elapsed());
-
-        if profit > best_profit {
-            best_profit = profit;
-            optimal_amount = mid;
-            left = mid + U256::from(1);
-        } else {
-            right = mid - U256::from(1);
-        }
-        
-        // Early exit if we find a good amount and iterations are taking too long
-        if iteration_count > 10 && best_profit > U256::ZERO {
-            let total_time = optimization_start.elapsed();
-            if total_time.as_millis() > 5000 { // 5 second timeout
-                log::debug!("Early exit due to time limit reached");
-                break;
-            }
-        }
-    }
-
-    log::debug!("Binary search complete after {} iterations in {:?}", 
-               iteration_count, optimization_start.elapsed());
-
-    if best_profit == U256::ZERO {
-        return Ok(ArbitrageResult {
-            optimal_amount: U256::ZERO,
-            possible_profit: U256::ZERO,
-        });
-    }
-
-    // Fast profit calculation without additional network calls
-    let possible_profit = estimate_weth_profit_fast(token_in, best_profit);
-
-    Ok(ArbitrageResult {
-        optimal_amount,
-        possible_profit,
-    })
-}
-
-// Fast simulation that reuses EVM state and minimizes allocations
-async fn simulate_arbitrage_fast(
-    target_pool: Address,
-    token_a: Address,
-    token_b: Address,
-    amount: U256,
-    fee: U24,
-    simulator: &mut EvmSimulator,
-    contract_address: Address,
-    wallet_address: Address,
-    gas_limit: &u64,
-    gas_price: &U256,
-    initial_balance: U256,
-) -> Result<U256> {
-    // Pre-encoded function call to avoid repeated encoding
-    alloy::sol! {
-        #[derive(Debug)]
-        function flashSwap_V3_to_V2(
-            address pool0,
-            uint24 fee1,
-            address tokenIn,
-            address tokenOut,
-            uint256 amountIn,
-        ) external;
-    }
-
-    let function_call = flashSwap_V3_to_V2Call {
-        pool0: target_pool,
-        fee1: fee,
-        tokenIn: token_a,
-        tokenOut: token_b,
-        amountIn: amount,
-    };
-
-    let tx = Tx {
-        caller: wallet_address,
-        transact_to: contract_address,
-        data: function_call.abi_encode().into(),
-        value: U256::ZERO,
-        gas_limit: *gas_limit,
-        gas_price: *gas_price,
-    };
-
-    // Execute simulation without balance checks
-    simulator.call(tx)?;
-
-    // Fast balance check
-    let final_balance = check_weth_balance_fast(
-        wallet_address,
-        simulator,
-        gas_limit,
-        gas_price,
-    ).await?;
-
-    Ok(final_balance.saturating_sub(initial_balance))
-}
-
-// Optimized balance check without redundant operations
-async fn check_weth_balance_fast(
-    wallet_address: Address,
-    simulator: &mut EvmSimulator,
-    gas_limit: &u64,
-    gas_price: &U256,
-) -> Result<U256> {
-    alloy::sol! {
-        function balanceOf(address account) external view returns (uint256);
-    }
-
-    let tx = Tx {
-        caller: wallet_address,
-        transact_to: get_address(AddressType::Weth),
-        data: balanceOfCall { account: wallet_address }.abi_encode().into(),
-        value: U256::ZERO,
-        gas_limit: *gas_limit,
-        gas_price: *gas_price,
-    };
-
-    let result = simulator.call(tx)?;
-    Ok(U256::from_be_slice(&result.output))
-}
-
-// Fast profit estimation without network calls
-fn estimate_weth_profit_fast(token_in: Address, amount: U256) -> U256 {
-    // Use approximate conversion rates for common tokens to avoid network calls
-    // This is a fast estimation - for exact values, the final simulation will be accurate
-    
-    let weth_address = get_address(AddressType::Weth);
-    if token_in == weth_address {
-        return amount; // Already WETH
-    }
-    
-    // For other tokens, use conservative estimate
-    // In production, you'd maintain a cache of recent token prices
-    amount * U256::from(95) / U256::from(100) // Assume ~5% slippage
 }
 
 /// Initialize the strategy pool

@@ -102,6 +102,7 @@ impl Drop for PooledProvider {
     fn drop(&mut self) {
         if let Some(provider) = self.provider.take() {
             let pool = self.pool.clone();
+            // Return provider to pool asynchronously
             tokio::spawn(async move {
                 pool.return_provider(provider).await;
             });
