@@ -1,0 +1,60 @@
+# MEV Bot Strategy Configuration
+# This file demonstrates how to configure different MEV strategies
+
+# Global settings
+[global]
+max_connections = 16
+executor_address = "0x5f1F5565561aC146d24B102D9CDC288992Ab2938"
+ws_url = "wss://eth-mainnet.g.alchemy.com/v2/your-api-key"
+
+# Arbitrage Strategy Configuration
+[strategies.arbitrage]
+enabled = true
+priority = 90
+min_profit_threshold = "100000000000000"  # 0.0001 ETH in wei
+max_gas_price = "100000000000"           # 100 gwei
+max_position_size = "1000000000000000000000"  # 1000 ETH
+description = "Uniswap V2/V3 arbitrage opportunities"
+
+# Sandwich Strategy Configuration  
+[strategies.sandwich]
+enabled = false  # Disabled by default - requires mempool monitoring
+priority = 70
+min_profit_threshold = "500000000000000"  # 0.0005 ETH in wei  
+max_gas_price = "150000000000"           # 150 gwei
+max_position_size = "100000000000000000000"   # 100 ETH
+description = "Sandwich attacks on large swaps"
+# Additional sandwich-specific settings
+max_frontrun_gas = "300000"
+max_backrun_gas = "200000"
+min_victim_swap_size = "10000000000000000000"  # 10 ETH minimum
+
+# Liquidation Strategy Configuration
+[strategies.liquidation]
+enabled = false  # Disabled by default - requires protocol integration
+priority = 50  
+min_profit_threshold = "1000000000000000"  # 0.001 ETH in wei
+max_gas_price = "200000000000"            # 200 gwei
+max_position_size = "500000000000000000000"    # 500 ETH  
+description = "Liquidations on lending protocols"
+# Additional liquidation-specific settings
+supported_protocols = ["Aave", "Compound", "MakerDAO"]
+max_liquidation_gas = "500000"
+health_factor_threshold = "1.05"  # Liquidate when health factor < 1.05
+
+# Future Strategy Examples (not yet implemented)
+
+[strategies.flashloan_arbitrage]
+enabled = false
+priority = 80
+description = "Cross-protocol arbitrage using flash loans"
+
+[strategies.nft_arbitrage]
+enabled = false  
+priority = 40
+description = "NFT arbitrage across marketplaces"
+
+[strategies.yield_farming]
+enabled = false
+priority = 30
+description = "Automated yield farming optimization"
