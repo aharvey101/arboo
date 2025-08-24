@@ -5,7 +5,7 @@ use crate::common::{
     connection_pool::ConnectionPool,
     revm::{EvmSimulator, Tx},
 };
-use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
+use crate::arbitrage::simulation::{simulation_with_logging, arboo_bytecode, get_address, one_thousand_eth, AddressType};
 use async_trait::async_trait;
 use anyhow::Result;
 use revm::primitives::{Address, U256};
@@ -14,8 +14,12 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use log::{info, debug, warn};
 use alloy::eips::BlockId;
-use alloy::providers::Provider;
+use alloy::providers::{Provider, RootProvider};
+use alloy::network::Ethereum;
+use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::BlockTransactionsKind;
+use alloy::signers::local::PrivateKeySigner;
+use alloy_primitives::U64;
 use alloy_sol_types::SolCall;
 
 /// Implementation of LogEvent as an MevEvent
@@ -148,54 +152,25 @@ impl MevStrategy for UniswapArbitrageStrategy {
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult> {
         let arbitrage_opp = match opportunity {
-            MevOpportunity::Arbitrage(opp) => opp,
+            MevOpportunity::Arbitrage(opp) => opp.clone(),
             _ => return Err(anyhow::anyhow!("Not an arbitrage opportunity")),
         };
         
-        debug!("🧪 Simulating arbitrage opportunity");
+        debug!("🧪 Starting real EVM simulation for arbitrage opportunity");
+        let start_time = std::time::Instant::now();
         
-        // For now, use simplified simulation to avoid Send/Sync issues with EvmSimulator
-        // TODO: Implement full EVM simulation with proper Send/Sync handling
+        // Perform the EVM simulation - this is the computationally intensive part
+        let result = self.perform_evm_simulation(arbitrage_opp).await?;
         
-        // Simple heuristic: check if the amount is reasonable and pools exist
-        let pools_guard = self.pools_map.read().await;
-        let pool_a_exists = pools_guard.contains_key(&arbitrage_opp.pool_a);
-        let pool_b_exists = pools_guard.contains_key(&arbitrage_opp.pool_b);
-        drop(pools_guard);
-        
-        if !pool_a_exists || !pool_b_exists {
-            return Ok(ExecutionResult {
-                success: false,
-                profit: U256::ZERO,
-                gas_used: U256::from(500_000),
-                tx_hash: None,
-                error: Some("One or more pools not found".to_string()),
-            });
+        let duration = start_time.elapsed();
+        if result.success {
+            info!("✅ EVM simulation successful! Profit: {} wei, Duration: {:?}", result.profit, duration);
+        } else {
+            debug!("❌ EVM simulation unprofitable: {} wei (threshold: {} wei), Duration: {:?}", 
+                   result.profit, self.config.min_profit_threshold, duration);
         }
         
-        // Simple profit estimation (mock)
-        let estimated_profit = if arbitrage_opp.amount_in > U256::from(10).pow(U256::from(18)) {
-            U256::from(500_000) // Mock 0.0005 ETH profit for larger amounts
-        } else {
-            U256::from(50_000) // Mock 0.00005 ETH profit for smaller amounts
-        };
-        
-        let success = estimated_profit >= self.config.min_profit_threshold;
-        
-        if success {
-            info!("✅ Simulation successful! Estimated Profit: {} wei", estimated_profit);
-        } else {
-            debug!("❌ Simulation unprofitable: {} wei (threshold: {} wei)", 
-                   estimated_profit, self.config.min_profit_threshold);
-        }
-        
-        Ok(ExecutionResult {
-            success,
-            profit: estimated_profit,
-            gas_used: U256::from(500_000), // Estimated
-            tx_hash: None,
-            error: if success { None } else { Some("Insufficient profit".to_string()) },
-        })
+        Ok(result)
     }
     
     async fn execute_opportunity(
@@ -228,15 +203,130 @@ impl MevStrategy for UniswapArbitrageStrategy {
 
 impl UniswapArbitrageStrategy {
     // Helper methods for EVM simulation
-    async fn load_specific_pools(
-        &self,
+    
+    /// Perform EVM simulation for arbitrage opportunity
+    /// This method handles the Send/Sync requirements by using spawn_blocking for the EVM part
+    async fn perform_evm_simulation(&self, arbitrage_opp: ArbitrageOpportunity) -> Result<ExecutionResult> {
+        // Get pooled provider
+        let pooled_provider = self.connection_pool.get_provider().await?;
+        let provider = pooled_provider.provider();
+        
+        // Get current block info
+        let latest_block_number = provider.get_block_number().await?;
+        let latest_block = Arc::new(
+            provider
+                .get_block(BlockId::latest(), BlockTransactionsKind::Full)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?
+        );
+        
+        // Validate pools exist
+        let pools_guard = self.pools_map.read().await;
+        let pool_a_exists = pools_guard.contains_key(&arbitrage_opp.pool_a);
+        let pool_b_exists = pools_guard.contains_key(&arbitrage_opp.pool_b);
+        let pools_map_clone = pools_guard.clone(); // Clone the HashMap for use in spawn_blocking
+        drop(pools_guard);
+        
+        if !pool_a_exists || !pool_b_exists {
+            return Ok(ExecutionResult {
+                success: false,
+                profit: U256::ZERO,
+                gas_used: U256::from(500_000),
+                tx_hash: None,
+                error: Some("One or more pools not found".to_string()),
+            });
+        }
+        
+        // Clone necessary data for spawn_blocking
+        let connection_pool = self.connection_pool.clone();
+        let min_profit_threshold = self.config.min_profit_threshold;
+        
+        // Use spawn_blocking to handle the EVM simulation that has Send/Sync issues
+        let simulation_result = tokio::task::spawn_blocking(move || -> Result<ExecutionResult> {
+            // This runs in a separate thread pool, avoiding Send/Sync issues
+            Self::run_evm_simulation_blocking(
+                arbitrage_opp,
+                latest_block_number,
+                pools_map_clone,
+                connection_pool,
+                min_profit_threshold,
+            )
+        }).await??; // Double ? for both JoinError and our Result
+        
+        Ok(simulation_result)
+    }
+    
+    /// Blocking EVM simulation method - runs in spawn_blocking
+    fn run_evm_simulation_blocking(
+        arbitrage_opp: ArbitrageOpportunity,
+        latest_block_number: u64,
+        pools_map: HashMap<Address, Event>,
+        connection_pool: ConnectionPool,
+        min_profit_threshold: U256,
+    ) -> Result<ExecutionResult> {
+        // Create a new tokio runtime for this blocking context
+        let rt = tokio::runtime::Runtime::new()?;
+        
+        rt.block_on(async {
+            // Get fresh provider connection
+            let pooled_provider = connection_pool.get_provider().await?;
+            let provider = pooled_provider.provider();
+            
+            // Create contract wallet
+            let contract_wallet = PrivateKeySigner::random();
+            let contract_wallet_address = contract_wallet.address();
+            
+            // Create EVM simulator
+            let pooled_provider_clone = connection_pool.get_provider().await?;
+            let simulator_provider = pooled_provider_clone.into_provider();
+            let mut simulator = EvmSimulator::new(
+                simulator_provider,
+                Some(contract_wallet_address),
+                U64::from(latest_block_number),
+            )?;
+            
+            // Load pool states
+            Self::load_pools_for_simulation(&mut simulator, &arbitrage_opp, &pools_map).await?;
+            
+            // Setup EVM state
+            Self::setup_evm_for_simulation(&mut simulator, provider).await?;
+            
+            // Determine target pool and fee
+            let (target_pool, fee) = Self::determine_target_pool_and_fee(&arbitrage_opp);
+            
+            // Run simulation with a test amount
+            let test_amount = U256::from(100) * U256::from(10).pow(U256::from(18)); // 100 tokens
+            let profit = simulation_with_logging(
+                target_pool,
+                arbitrage_opp.token_in,
+                arbitrage_opp.token_out,
+                test_amount,
+                alloy_primitives::aliases::U24::from(fee),
+                &mut simulator,
+                provider,
+                false,
+            ).await.unwrap_or(U256::ZERO);
+            
+            let success = profit >= min_profit_threshold;
+            
+            Ok(ExecutionResult {
+                success,
+                profit,
+                gas_used: U256::from(500_000), // Estimated
+                tx_hash: None,
+                error: if success { None } else { Some("Insufficient profit".to_string()) },
+            })
+        })
+    }
+    
+    /// Helper to load pools for simulation
+    async fn load_pools_for_simulation(
         simulator: &mut EvmSimulator,
-        pool_a: Address,
-        pool_b: Address,
+        arbitrage_opp: &ArbitrageOpportunity,
         pools_map: &HashMap<Address, Event>,
     ) -> Result<()> {
         // Load pool A
-        if let Some(pool) = pools_map.get(&pool_a) {
+        if let Some(pool) = pools_map.get(&arbitrage_opp.pool_a) {
             match pool {
                 Event::PoolCreated(pool) => {
                     simulator.load_v3_pool_state(pool.pair_address).await?;
@@ -249,7 +339,7 @@ impl UniswapArbitrageStrategy {
         }
 
         // Load pool B
-        if let Some(pool) = pools_map.get(&pool_b) {
+        if let Some(pool) = pools_map.get(&arbitrage_opp.pool_b) {
             match pool {
                 Event::PoolCreated(pool) => {
                     simulator.load_v3_pool_state(pool.pair_address).await?;
@@ -263,7 +353,11 @@ impl UniswapArbitrageStrategy {
         Ok(())
     }
     
-    async fn setup_evm(&self, simulator: &mut EvmSimulator, provider: &impl Provider) -> Result<()> {
+    /// Helper to setup EVM for simulation
+    async fn setup_evm_for_simulation(
+        simulator: &mut EvmSimulator, 
+        provider: &RootProvider<PubSubFrontend, Ethereum>
+    ) -> Result<()> {
         let latest_block = provider
             .get_block(BlockId::latest(), BlockTransactionsKind::Full)
             .await?
@@ -324,5 +418,21 @@ impl UniswapArbitrageStrategy {
 
         simulator.call(approve_tx)?;
         Ok(())
+    }
+    
+    /// Helper to determine target pool and fee
+    fn determine_target_pool_and_fee(arbitrage_opp: &ArbitrageOpportunity) -> (Address, u32) {
+        let target_pool = match (&arbitrage_opp.pool_variant_a, &arbitrage_opp.pool_variant_b) {
+            (PoolVersion::UniswapV2, PoolVersion::UniswapV3) => arbitrage_opp.pool_b,
+            (PoolVersion::UniswapV3, PoolVersion::UniswapV2) => arbitrage_opp.pool_a,
+            _ => arbitrage_opp.pool_a, // Default to pool_a
+        };
+        
+        let fee = match target_pool == arbitrage_opp.pool_a {
+            true => arbitrage_opp.fee_a,
+            false => arbitrage_opp.fee_b,
+        };
+        
+        (target_pool, fee)
     }
 }
