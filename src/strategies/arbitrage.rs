@@ -2,7 +2,10 @@ use crate::strategies::traits::*;
 use crate::common::{
     logs::LogEvent,
     pairs::Event,
+    connection_pool::ConnectionPool,
+    revm::{EvmSimulator, Tx},
 };
+use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
 use async_trait::async_trait;
 use anyhow::Result;
 use revm::primitives::{Address, U256};
@@ -10,6 +13,10 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use log::{info, debug, warn};
+use alloy::eips::BlockId;
+use alloy::providers::Provider;
+use alloy::rpc::types::BlockTransactionsKind;
+use alloy_sol_types::SolCall;
 
 /// Implementation of LogEvent as an MevEvent
 impl MevEvent for LogEvent {
@@ -45,16 +52,19 @@ impl MevEvent for LogEvent {
 pub struct UniswapArbitrageStrategy {
     config: StrategyConfig,
     pools_map: Arc<RwLock<HashMap<Address, Event>>>,
+    connection_pool: ConnectionPool,
 }
 
 impl UniswapArbitrageStrategy {
     pub fn new(
         config: StrategyConfig,
         pools_map: Arc<RwLock<HashMap<Address, Event>>>,
+        connection_pool: ConnectionPool,
     ) -> Self {
         Self {
             config,
             pools_map,
+            connection_pool,
         }
     }
     
@@ -144,8 +154,8 @@ impl MevStrategy for UniswapArbitrageStrategy {
         
         debug!("🧪 Simulating arbitrage opportunity");
         
-        // For now, return a simplified simulation result
-        // TODO: Implement full EVM simulation when Send/Sync issues are resolved
+        // For now, use simplified simulation to avoid Send/Sync issues with EvmSimulator
+        // TODO: Implement full EVM simulation with proper Send/Sync handling
         
         // Simple heuristic: check if the amount is reasonable and pools exist
         let pools_guard = self.pools_map.read().await;
@@ -171,6 +181,13 @@ impl MevStrategy for UniswapArbitrageStrategy {
         };
         
         let success = estimated_profit >= self.config.min_profit_threshold;
+        
+        if success {
+            info!("✅ Simulation successful! Estimated Profit: {} wei", estimated_profit);
+        } else {
+            debug!("❌ Simulation unprofitable: {} wei (threshold: {} wei)", 
+                   estimated_profit, self.config.min_profit_threshold);
+        }
         
         Ok(ExecutionResult {
             success,
@@ -206,5 +223,106 @@ impl MevStrategy for UniswapArbitrageStrategy {
     
     fn can_handle(&self, opportunity: &MevOpportunity) -> bool {
         matches!(opportunity, MevOpportunity::Arbitrage(_))
+    }
+}
+
+impl UniswapArbitrageStrategy {
+    // Helper methods for EVM simulation
+    async fn load_specific_pools(
+        &self,
+        simulator: &mut EvmSimulator,
+        pool_a: Address,
+        pool_b: Address,
+        pools_map: &HashMap<Address, Event>,
+    ) -> Result<()> {
+        // Load pool A
+        if let Some(pool) = pools_map.get(&pool_a) {
+            match pool {
+                Event::PoolCreated(pool) => {
+                    simulator.load_v3_pool_state(pool.pair_address).await?;
+                }
+                Event::PairCreated(pool) => {
+                    simulator.load_v2_pool_state(pool.pair_address).await?;
+                    simulator.load_pool_state(pool.pair_address).await?;
+                }
+            }
+        }
+
+        // Load pool B
+        if let Some(pool) = pools_map.get(&pool_b) {
+            match pool {
+                Event::PoolCreated(pool) => {
+                    simulator.load_v3_pool_state(pool.pair_address).await?;
+                }
+                Event::PairCreated(pool) => {
+                    simulator.load_v3_pool_state(pool.pair_address).await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+    
+    async fn setup_evm(&self, simulator: &mut EvmSimulator, provider: &impl Provider) -> Result<()> {
+        let latest_block = provider
+            .get_block(BlockId::latest(), BlockTransactionsKind::Full)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?;
+
+        let latest_gas_limit = latest_block.header.gas_limit;
+        let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
+            .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
+
+        // Deploy arbitrage contract
+        let contract_address = simulator.contract_address;
+        simulator.deploy_code_at(contract_address, arboo_bytecode()).await;
+
+        // Fund wallet with ETH
+        let initial_eth_balance = U256::from(1_000_000) * U256::from(10).pow(U256::from(18));
+        let wallet = simulator.owner;
+        simulator.set_eth_balance(wallet, initial_eth_balance).await;
+
+        // Convert ETH to WETH
+        alloy::sol! {
+            function swapEthForWeth(address to, uint256 deadline) external payable;
+        };
+
+        let function_call = swapEthForWethCall {
+            to: wallet,
+            deadline: U256::from(9999999999_u64),
+        };
+
+        let eth_to_weth_tx = Tx {
+            caller: wallet,
+            transact_to: get_address(AddressType::Weth),
+            data: function_call.abi_encode().into(),
+            value: one_thousand_eth() * U256::from(10),
+            gas_limit: latest_gas_limit,
+            gas_price: latest_gas_price,
+        };
+
+        simulator.call(eth_to_weth_tx)?;
+
+        // Approve router to spend WETH
+        alloy::sol! {
+            function approve(address spender, uint256 amount) external returns (bool);
+        }
+        
+        let approve_data = approveCall {
+            spender: get_address(AddressType::V3Router),
+            amount: U256::MAX,
+        }.abi_encode();
+
+        let approve_tx = Tx {
+            caller: wallet,
+            transact_to: get_address(AddressType::Weth),
+            data: approve_data.into(),
+            value: U256::ZERO,
+            gas_limit: latest_gas_limit,
+            gas_price: latest_gas_price,
+        };
+
+        simulator.call(approve_tx)?;
+        Ok(())
     }
 }

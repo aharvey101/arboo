@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::warn;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConnectionPool {
     pool: Arc<Mutex<VecDeque<RootProvider<PubSubFrontend, Ethereum>>>>,
     ws_url: String,

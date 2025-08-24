@@ -4,6 +4,7 @@ use crate::strategies::sandwich::SandwichStrategy;
 use crate::strategies::liquidation::LiquidationStrategy;
 use crate::common::pairs::Event;
 use crate::common::logs::LogEvent;
+use crate::common::connection_pool::ConnectionPool;
 use anyhow::Result;
 use revm::primitives::{Address, U256};
 use std::sync::Arc;
@@ -18,11 +19,12 @@ pub struct StrategyManager {
     task_semaphore: Arc<Semaphore>,
     opportunity_broadcaster: OpportunityBroadcaster,
     execution_context: ExecutionContext,
+    connection_pool: ConnectionPool,
 }
 
 impl StrategyManager {
     pub async fn new(
-        _ws_url: String,
+        ws_url: String,
         max_connections: usize,
         pools_map: Arc<RwLock<HashMap<Address, Event>>>,
         executor_address: Address,
@@ -31,6 +33,9 @@ impl StrategyManager {
         let task_semaphore = Arc::new(Semaphore::new(max_concurrent_tasks));
         let opportunity_queue = Arc::new(RwLock::new(OpportunityQueue::new()));
         let (opportunity_broadcaster, _) = broadcast::channel(1000);
+        
+        // Create connection pool
+        let connection_pool = ConnectionPool::new(ws_url, max_connections);
         
         // Create default execution context
         let execution_context = ExecutionContext {
@@ -54,6 +59,7 @@ impl StrategyManager {
         strategies.push(Box::new(UniswapArbitrageStrategy::new(
             arbitrage_config,
             pools_map,
+            connection_pool.clone(),
         )));
         
         // 2. Sandwich Strategy (medium priority)
@@ -88,6 +94,7 @@ impl StrategyManager {
             task_semaphore,
             opportunity_broadcaster,
             execution_context,
+            connection_pool,
         })
     }
     
