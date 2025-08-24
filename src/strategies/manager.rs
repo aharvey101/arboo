@@ -2,11 +2,12 @@ use crate::strategies::traits::*;
 use crate::strategies::arbitrage::UniswapArbitrageStrategy;
 use crate::strategies::sandwich::SandwichStrategy;
 use crate::strategies::liquidation::LiquidationStrategy;
+use crate::strategies::PoolVersion;
 use crate::common::pairs::Event;
 use crate::common::logs::LogEvent;
 use crate::common::connection_pool::ConnectionPool;
 use anyhow::Result;
-use revm::primitives::{Address, U256};
+use alloy_primitives::{Address, U256};
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::{RwLock, Semaphore, broadcast};
@@ -229,23 +230,48 @@ impl StrategyManager {
                 let opportunity_queue_clone = opportunity_queue.clone();
                 let strategies_clone = strategies.clone();
                 let context = execution_context.clone();
-                let semaphore = task_semaphore.clone();
+                let semaphore_clone = task_semaphore.clone();
                 
+                // Use the same pattern as the original strategy implementation
                 tokio::spawn(async move {
-                    let _permit = match semaphore.acquire().await {
-                        Ok(permit) => permit,
+                    // Acquire permit with timeout to avoid indefinite blocking
+                    let _permit = match tokio::time::timeout(
+                        tokio::time::Duration::from_millis(100),
+                        semaphore_clone.acquire()
+                    ).await {
+                        Ok(Ok(permit)) => permit,
+                        Ok(Err(_)) => {
+                            error!("Semaphore acquisition failed (semaphore closed)");
+                            return;
+                        },
                         Err(_) => {
-                            error!("Failed to acquire semaphore for opportunity processing");
+                            warn!("Max concurrent tasks reached, dropping opportunity (timeout)");
                             return;
                         }
                     };
                     
-                    Self::process_opportunity(
-                        opportunity,
-                        opportunity_queue_clone,
-                        strategies_clone,
-                        context,
-                    ).await;
+                    // Run the CPU-intensive EVM work in a separate thread pool
+                    // This matches the original strategy implementation pattern
+                    let simulation_result = tokio::task::spawn_blocking(move || {
+                        // Create a new runtime for this thread if needed
+                        let rt = tokio::runtime::Handle::try_current()
+                            .unwrap_or_else(|_| {
+                                tokio::runtime::Runtime::new().unwrap().handle().clone()
+                            });
+                        
+                        rt.block_on(async move {
+                            Self::process_opportunity(
+                                opportunity,
+                                opportunity_queue_clone,
+                                strategies_clone,
+                                context,
+                            ).await
+                        })
+                    }).await;
+                    
+                    if let Err(e) = simulation_result {
+                        error!("EVM simulation task failed: {}", e);
+                    }
                 });
             }
         });
@@ -337,6 +363,111 @@ impl StrategyManager {
         }
         Err(anyhow::anyhow!("Strategy '{}' not found", strategy_name))
     }
+    
+    /// Process a single MEV event with semaphore-controlled concurrency
+    /// This matches the original strategy's tokio::spawn + semaphore pattern
+    pub async fn process_mev_event_with_semaphore(
+        &self,
+        event: &dyn MevEvent,
+        context: &ExecutionContext,
+    ) -> Result<Vec<ExecutionResult>> {
+        debug!("🚀 Processing MEV event with semaphore pattern");
+        
+        // Try to acquire semaphore permit with timeout (100ms like original strategy)
+        let permit = match tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            self.task_semaphore.acquire()
+        ).await {
+            Ok(Ok(permit)) => {
+                debug!("✅ Acquired semaphore permit for MEV processing");
+                permit
+            },
+            Ok(Err(e)) => {
+                warn!("❌ Failed to acquire semaphore permit: {}", e);
+                return Err(anyhow::anyhow!("Failed to acquire semaphore: {}", e));
+            },
+            Err(_) => {
+                warn!("⏱️ Timeout acquiring semaphore permit (100ms)");
+                return Err(anyhow::anyhow!("Semaphore acquisition timeout"));
+            }
+        };
+        
+        // Process with CPU-intensive work in spawn_blocking (like original strategy)
+        let strategies_clone = self.get_strategy_references();
+        let event_data = self.extract_event_data(event);
+        let context_clone = context.clone();
+        
+        let processing_result = tokio::task::spawn_blocking(move || {
+            // This runs in the blocking thread pool like the original strategy
+            debug!("🧠 Processing event in spawn_blocking with {} strategies", strategies_clone.len());
+            
+            // Create a simple tokio runtime for the blocking context
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                let mut all_results = vec![];
+                
+                for strategy_ref in &strategies_clone {
+                    if !strategy_ref.config().enabled {
+                        continue;
+                    }
+                    
+                    debug!("🔄 Processing with strategy: {}", strategy_ref.name);
+                    
+                    // Create mock opportunity based on event data
+                    let mock_opportunity = create_mock_opportunity_from_event(&event_data);
+                    
+                    // Simulate the opportunity (this would be the real simulation in production)
+                    match strategy_ref.simulate_opportunity(&mock_opportunity, &context_clone).await {
+                        Ok(result) => {
+                            if result.success {
+                                info!("🎯 Strategy {} simulation successful! Profit: {} wei", 
+                                      strategy_ref.name, result.profit);
+                            } else {
+                                debug!("📉 Strategy {} simulation unprofitable", strategy_ref.name);
+                            }
+                            all_results.push(result);
+                        },
+                        Err(e) => {
+                            warn!("❌ Strategy {} simulation failed: {}", strategy_ref.name, e);
+                            all_results.push(ExecutionResult {
+                                success: false,
+                                profit: U256::ZERO,
+                                gas_used: U256::from(500_000),
+                                tx_hash: None,
+                                error: Some(e.to_string()),
+                            });
+                        }
+                    }
+                }
+                
+                all_results
+            })
+        }).await;
+        
+        // Release permit (automatically done when permit is dropped)
+        drop(permit);
+        debug!("🔓 Released semaphore permit");
+        
+        match processing_result {
+            Ok(results) => {
+                info!("✅ MEV event processing completed with {} results", results.len());
+                Ok(results)
+            },
+            Err(e) => {
+                error!("❌ MEV event processing failed in spawn_blocking: {}", e);
+                Err(anyhow::anyhow!("spawn_blocking failed: {}", e))
+            }
+        }
+    }
+    
+    /// Extract serializable data from event for cross-thread usage
+    fn extract_event_data(&self, event: &dyn MevEvent) -> EventData {
+        EventData {
+            event_type: event.event_type().to_string(),
+            block_number: event.block_number(),
+            transaction_index: event.transaction_index(),
+        }
+    }
 }
 
 /// Simplified strategy reference for async processing
@@ -344,6 +475,50 @@ impl StrategyManager {
 struct StrategyReference {
     name: String,
     config: StrategyConfig,
+}
+
+/// Serializable event data for cross-thread processing
+#[derive(Debug, Clone)]
+struct EventData {
+    event_type: String,
+    block_number: u64,
+    transaction_index: Option<u64>,
+}
+
+/// Helper to create mock opportunity from event data (for testing semaphore pattern)
+fn create_mock_opportunity_from_event(event_data: &EventData) -> MevOpportunity {
+    // Based on event type, create appropriate mock opportunity
+    match event_data.event_type.as_str() {
+        "uniswap_v2_swap" | "uniswap_v3_swap" => {
+            MevOpportunity::Arbitrage(ArbitrageOpportunity {
+                token_in: Address::from([1; 20]),
+                token_out: Address::from([2; 20]),
+                pool_a: Address::from([10; 20]),
+                pool_b: Address::from([11; 20]),
+                amount_in: U256::from(1000) * U256::from(10).pow(U256::from(18)),
+                expected_profit: U256::from(500_000),
+                pool_variant_a: PoolVersion::UniswapV2,
+                pool_variant_b: PoolVersion::UniswapV3,
+                fee_a: 300,
+                fee_b: 3000,
+            })
+        },
+        _ => {
+            // Default to arbitrage for testing
+            MevOpportunity::Arbitrage(ArbitrageOpportunity {
+                token_in: Address::from([1; 20]),
+                token_out: Address::from([2; 20]),
+                pool_a: Address::from([10; 20]),
+                pool_b: Address::from([11; 20]),
+                amount_in: U256::from(100) * U256::from(10).pow(U256::from(18)),
+                expected_profit: U256::from(250_000),
+                pool_variant_a: PoolVersion::UniswapV3,
+                pool_variant_b: PoolVersion::UniswapV3,
+                fee_a: 3000,
+                fee_b: 500,
+            })
+        }
+    }
 }
 
 impl StrategyReference {
