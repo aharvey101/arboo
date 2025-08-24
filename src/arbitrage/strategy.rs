@@ -491,7 +491,6 @@ pub async fn initialize_strategy_pool(
 
 /// Legacy function for backward compatibility
 pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
-    log::warn!("Using legacy process_strategy - switch to optimized version for better performance");
     
     let pool = ConnectionPool::new(ws_url, 1);
     let pools_map = Arc::new(RwLock::new(

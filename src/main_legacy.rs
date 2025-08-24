@@ -1,7 +1,7 @@
 use alloy::providers::ProviderBuilder;
 use alloy::rpc::client::WsConnect;
 use anyhow::Result;
-use arbooo::strategies::StrategyManager;
+use arbooo::arbitrage::strategy::initialize_strategy_pool;
 use arbooo::common::logger;
 use arbooo::common::logs;
 use arbooo::common::pools;
@@ -20,7 +20,6 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast::{self, Sender};
-use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tokio::signal;
 
@@ -28,14 +27,14 @@ use tokio::signal;
 async fn main() -> Result<()> {
     dotenv()?;
     logger::setup_logger();
-    info!("🚀 Starting Generalized MEV Bot");
-    
+    info!("Logger setup");
     let ws_url = var::<&str>("WS_URL")
         .map_err(|e| anyhow::anyhow!("WS_URL environment variable not set: {}", e))?;
     let cache_dir = var("CACHE_DIR")
         .unwrap_or_else(|_| "/tmp/arboo-cache".to_string());
     
     let ws_client = WsConnect::new(ws_url.clone());
+
     let provider = ProviderBuilder::new().on_ws(ws_client).await
         .map_err(|e| anyhow::anyhow!("Failed to create WebSocket provider: {}", e))?;
     let provider = Arc::new(provider);
@@ -43,22 +42,24 @@ async fn main() -> Result<()> {
     let cache_path = format!("{}/.cached-pools.csv", cache_dir);
     if !Path::new(&cache_path).try_exists()? {
         info!("Cache doesn't exist, crawling blocks for pools");
-        pools::load_all_pools(ws_url.clone(), 100_000, 50_000).await
+        pools::load_all_pools(ws_url.clone(), 100_000, 50_000)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
     }
 
     let mut set = JoinSet::new();
 
-    // Create channels for different event types
-    let (log_event_sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
+    let (sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
 
-    // Load pools map
+    // 1. Get all pools
+
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
     let path = Path::new(&cache_path);
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
-    
+    // id,address,version,token0,oken1,fee,block_number,timestamp
     for line in reader.lines().skip(1) {
+        // Skip the header line
         let line = line?;
         let fields: Vec<&str> = line.split(',').collect();
 
@@ -69,13 +70,15 @@ async fn main() -> Result<()> {
                 pools_map.insert(
                     pair_address,
                     Event::PairCreated(V2PoolCreated {
-                        pair_address,
+                        pair_address: Address::from_str(fields[1])
+                            .map_err(|e| anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e))?,
                         token0: Address::from_str(fields[3])
                             .map_err(|e| anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e))?,
                         token1: Address::from_str(fields[4])
                             .map_err(|e| anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e))?,
                         fee: fields[5].parse::<u32>()
                             .map_err(|e| anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e))?,
+                        //block_number: fields[6].parse::<u64>().map_err(|e| anyhow::anyhow!("Invalid V2 block number '{}': {}", fields[6], e))?,
                     }),
                 );
             }
@@ -85,7 +88,8 @@ async fn main() -> Result<()> {
                 pools_map.insert(
                     pair_address,
                     Event::PoolCreated(V3PoolCreated {
-                        pair_address,
+                        pair_address: Address::from_str(fields[1])
+                            .map_err(|e| anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e))?,
                         token0: Address::from_str(fields[3])
                             .map_err(|e| anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e))?,
                         token1: Address::from_str(fields[4])
@@ -96,50 +100,19 @@ async fn main() -> Result<()> {
                     }),
                 );
             }
-            _ => continue,
+            &_ => continue,
         };
     }
 
-    let pools_map = Arc::new(RwLock::new(pools_map));
-    info!("📊 Loaded {} pools into cache", pools_map.read().await.len());
+    // 2. Listen for logs on pools
+    set.spawn(logs::get_logs(provider.clone(), pools_map, sender.clone()));
 
-    // Initialize the generalized strategy manager
-    let executor_address = Address::from_str(
-        &var("EXECUTOR_ADDRESS")
-        .unwrap_or_else(|_| "0x5f1F5565561aC146d24B102D9CDC288992Ab2938".to_string())
-    )?;
+    info!("Spawning optimized EVM strategy with {} worker threads", 16);
+    let _strategy_pool = initialize_strategy_pool(sender, ws_url, 16).await?;
     
-    let strategy_manager = StrategyManager::new(
-        ws_url.clone(),
-        16, // max connections
-        pools_map.clone(),
-        executor_address,
-    ).await?;
-
-    // Create a bridge task to convert LogEvents to MevEvents (not needed for now)
-    let log_receiver = log_event_sender.subscribe();
-
-    // Start log listener - need to pass the HashMap, not Arc<RwLock<HashMap>>
-    let pools_map_for_logs = {
-        let guard = pools_map.read().await;
-        guard.clone()
-    };
-    set.spawn(logs::get_logs(provider.clone(), pools_map_for_logs, log_event_sender));
-
-    // Start strategy manager
-    let strategy_manager_task = {
-        let log_receiver = log_receiver;
-        tokio::spawn(async move {
-            if let Err(e) = strategy_manager.start(log_receiver).await {
-                log::error!("Strategy manager failed: {}", e);
-            }
-        })
-    };
-
-    info!("🎯 Generalized MEV Bot started successfully!");
-    info!("📈 Available strategies: Arbitrage, Sandwich (disabled), Liquidation (disabled)");
-    info!("🔧 Press Ctrl+C to shutdown gracefully");
-
+    // Add graceful shutdown handling
+    info!("Arbitrage bot started. Press Ctrl+C to shutdown gracefully.");
+    
     tokio::select! {
         // Wait for tasks to complete
         _ = async {
@@ -152,19 +125,22 @@ async fn main() -> Result<()> {
         } => {
             info!("All tasks completed");
         }
-        // Wait for strategy manager to complete
-        _ = strategy_manager_task => {
-            info!("Strategy manager completed");
-        }
         // Wait for Ctrl+C signal
         _ = signal::ctrl_c() => {
-            info!("🛑 Received Ctrl+C, shutting down gracefully...");
-            set.abort_all();
+            info!("Received Ctrl+C, shutting down gracefully...");
+            set.abort_all(); // Abort all spawned tasks
             
+            // Give tasks a moment to cleanup
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            info!("✅ Shutdown complete");
+            info!("Shutdown complete");
         }
     }
 
     Ok(())
 }
+
+// MVP What is left to do:
+// [] Fix up all the decoding so that we can understand the errors
+// [x] Create an Inspector
+// [x] Make it take profitable Arbitrages :shrug:
+// [ ] Make a ETH usdt ETH USD bot

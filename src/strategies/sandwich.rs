@@ -1,0 +1,98 @@
+use crate::strategies::traits::*;
+use async_trait::async_trait;
+use anyhow::Result;
+use revm::primitives::{Address, U256};
+use log::{info, debug};
+
+/// Sandwich Attack Strategy
+/// Detects large swaps and attempts to sandwich them for profit
+#[derive(Debug)]
+pub struct SandwichStrategy {
+    config: StrategyConfig,
+}
+
+impl SandwichStrategy {
+    pub fn new(config: StrategyConfig) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl MevStrategy for SandwichStrategy {
+    fn name(&self) -> &str {
+        "Sandwich"
+    }
+    
+    fn config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn update_config(&mut self, config: StrategyConfig) {
+        self.config = config;
+    }
+    
+    async fn scan_opportunities(&self, _event: &dyn MevEvent) -> Result<Vec<MevOpportunity>> {
+        if !self.config.enabled {
+            return Ok(vec![]);
+        }
+        
+        debug!("🥪 Scanning for sandwich opportunities");
+        
+        // TODO: Implement sandwich opportunity detection
+        // This would typically involve:
+        // 1. Monitoring mempool for large swaps
+        // 2. Calculating potential frontrun/backrun profits
+        // 3. Checking if the trade size is large enough to cause slippage
+        
+        info!("🚧 Sandwich strategy scanning not yet implemented");
+        Ok(vec![])
+    }
+    
+    async fn simulate_opportunity(
+        &self,
+        opportunity: &MevOpportunity,
+        _context: &ExecutionContext,
+    ) -> Result<ExecutionResult> {
+        let _sandwich_opp = match opportunity {
+            MevOpportunity::Sandwich(opp) => opp,
+            _ => return Err(anyhow::anyhow!("Not a sandwich opportunity")),
+        };
+        
+        // TODO: Implement sandwich simulation
+        info!("🚧 Sandwich simulation not yet implemented");
+        
+        Ok(ExecutionResult {
+            success: false,
+            profit: U256::ZERO,
+            gas_used: U256::ZERO,
+            tx_hash: None,
+            error: Some("Not implemented".to_string()),
+        })
+    }
+    
+    async fn execute_opportunity(
+        &self,
+        opportunity: &MevOpportunity,
+        _context: &ExecutionContext,
+    ) -> Result<ExecutionResult> {
+        let _sandwich_opp = match opportunity {
+            MevOpportunity::Sandwich(opp) => opp,
+            _ => return Err(anyhow::anyhow!("Not a sandwich opportunity")),
+        };
+        
+        // TODO: Implement sandwich execution
+        info!("🚧 Sandwich execution not yet implemented");
+        
+        Ok(ExecutionResult {
+            success: false,
+            profit: U256::ZERO,
+            gas_used: U256::ZERO,
+            tx_hash: None,
+            error: Some("Not implemented".to_string()),
+        })
+    }
+    
+    fn can_handle(&self, opportunity: &MevOpportunity) -> bool {
+        matches!(opportunity, MevOpportunity::Sandwich(_))
+    }
+}
