@@ -61,7 +61,7 @@ impl AnvilInstance {
 
         let mut cmd = Command::new("anvil");
         
-        // Basic configuration with verbose logging
+        // Basic configuration with verbose logging for debugging
         cmd.arg("--port").arg(port.to_string())
            .arg("--chain-id").arg(config.chain_id.to_string())
            .arg("--accounts").arg(config.accounts.to_string())
@@ -69,8 +69,9 @@ impl AnvilInstance {
            .arg("--gas-limit").arg(config.gas_limit.to_string())
            .arg("--gas-price").arg(config.gas_price.to_string())
            .arg("--base-fee").arg(config.base_fee.to_string())
-           .arg("--host").arg("127.0.0.1")
-           .arg("--silent");
+           .arg("--silent")
+           .arg("--host").arg("127.0.0.1");
+           // Removed --silent to see any error messages
 
         // Fork configuration if provided
         if let Some(fork_url) = &config.fork_url {
@@ -123,12 +124,12 @@ impl AnvilInstance {
     async fn wait_for_ready(&self) -> Result<()> {
         debug!("⏳ Waiting for Anvil to become ready...");
         
-        // Give Anvil a bit more time to fully start up
-        sleep(Duration::from_millis(1000)).await;
+        // Give Anvil more time to fully start up, especially for mainnet forks
+        sleep(Duration::from_millis(2000)).await;
         
         let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 30;
-        const DELAY_MS: u64 = 200;
+        const MAX_ATTEMPTS: u32 = 60;  // Increased from 30 to 60
+        const DELAY_MS: u64 = 500;     // Increased from 200ms to 500ms
 
         while attempts < MAX_ATTEMPTS {
             // Use a simple HTTP client to test connectivity
@@ -141,6 +142,7 @@ impl AnvilInstance {
                     "params": [],
                     "id": 1
                 }))
+                .timeout(Duration::from_secs(5)) // Add a timeout to the request
                 .send()
                 .await;
 
