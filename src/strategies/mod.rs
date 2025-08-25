@@ -8,3 +8,4 @@ pub mod factory;
 pub use traits::*;
 pub use manager::StrategyManager;
 pub use factory::DefaultStrategyFactory;
+pub use arbitrage::process_arbitrage_strategy;

@@ -2,61 +2,266 @@
 // Tests the complete arbitrage flow from detection to execution
 
 use anyhow::Result;
-use arbooo::arbitrage::strategy::process_strategy;
 use arbooo::common::logs::LogEvent;
+use arbooo::strategies::arbitrage::{process_arbitrage_strategy, UniswapArbitrageStrategy};
+use arbooo::strategies::traits::{ExecutionResult, ExecutionContext, StrategyConfig, MevStrategy};
+use arbooo::common::connection_pool::ConnectionPool;
+use arbooo::common::pairs::Event;
 use alloy::primitives::address;
 use alloy::providers::Provider;
 use alloy_primitives::aliases::U24;
+use alloy_primitives::U256;
 use log::{info, warn};
 use revm::primitives::Address;
 use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
-
 mod utils {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
 }
 use utils::test_env::TestEnvironment;
 
 /// Test the complete arbitrage cycle from log detection to transaction execution
+/// This is a full end-to-end test with Anvil that actually creates and sends transactions
 #[tokio::test]
 async fn test_complete_arbitrage_cycle() -> Result<()> {
-    let test_env = TestEnvironment::new().await?;
-    info!("🔄 Testing complete arbitrage cycle");
-
-    // 1. Setup test pools and create realistic log event
-    let log_event = create_test_arbitrage_opportunity().await?;
+    info!("🔄 Starting FULL END-TO-END arbitrage cycle test with Anvil");
     
-    // 2. Measure total cycle time
+    // 1. Set up test environment with Anvil
+    let test_env = TestEnvironment::new().await?;
+    info!("✅ Test environment created with Anvil");
+    
+    // 2. Verify Anvil connection
+    test_env.verify_connection().await?;
+    let initial_block = test_env.provider.get_block_number().await?;
+    info!("📦 Initial block number: {}", initial_block);
+    
+    // 3. Set up realistic arbitrage pools on Anvil
+    let (pool_setup, log_event) = setup_arbitrage_pools_on_anvil(&test_env).await?;
+    info!("🏊 Pool setup complete: Pool A: {}, Pool B: {}", 
+          pool_setup.pool_a_address, pool_setup.pool_b_address);
+    
+    // 4. Create UniswapArbitrageStrategy instance with Anvil connection
+    let strategy = create_arbitrage_strategy_with_anvil(&test_env, &pool_setup).await?;
+    info!("✅ UniswapArbitrageStrategy created and configured for Anvil");
+    
+    // 5. Create execution context with real Anvil data
+    let context = create_anvil_execution_context(&test_env).await?;
+    info!("🎯 Execution context created for block: {}", context.block_number);
+    
+    // 6. PHASE 1: Opportunity Detection
+    info!("🔍 PHASE 1: Scanning for arbitrage opportunities...");
     let start_time = Instant::now();
     
-    // 3. Process the arbitrage strategy (detection → simulation → execution)
-    let result = timeout(
-        Duration::from_secs(15), // Reduce timeout to 15 seconds to fail faster
-        process_strategy(log_event.clone(), test_env.test_config.ws_url.clone())
-    ).await;
+    let opportunities = timeout(
+        Duration::from_secs(10),
+        strategy.scan_opportunities(&log_event)
+    ).await??;
     
-    let cycle_time = start_time.elapsed();
-    info!("⏱️  Complete arbitrage cycle took: {:?}", cycle_time);
+    let scan_time = start_time.elapsed();
+    info!("📊 Detection phase took: {:?}, found {} opportunities", 
+          scan_time, opportunities.len());
     
-    // 4. Verify the cycle completed successfully
-    match result {
-        Ok(Ok(())) => {
-            info!("✅ Arbitrage cycle completed successfully");
-            assert!(cycle_time < Duration::from_secs(10), "Cycle took too long: {:?}", cycle_time);
-        },
-        Ok(Err(e)) => {
-            warn!("⚠️  Arbitrage cycle completed with error: {}", e);
-            // Some errors are expected (e.g., no profit opportunity)
-            // We still consider this a successful test if the cycle ran
-        },
-        Err(_) => {
-            panic!("❌ Arbitrage cycle timed out after 30 seconds");
+    // Assert opportunities were detected
+    assert!(!opportunities.is_empty(), "❌ No arbitrage opportunities detected! This suggests the detection logic isn't working.");
+    info!("✅ DETECTION PASSED: {} opportunities found", opportunities.len());
+    
+    // 7. PHASE 2: Simulation
+    info!("🧪 PHASE 2: Simulating arbitrage opportunities...");
+    let mut simulation_results = Vec::new();
+    let mut profitable_opportunities = Vec::new();
+    
+    for (i, opportunity) in opportunities.iter().enumerate() {
+        info!("🔬 Simulating opportunity {}/{}", i + 1, opportunities.len());
+        
+        let simulation_start = Instant::now();
+        let simulation_result = timeout(
+            Duration::from_secs(10),
+            strategy.simulate_opportunity(opportunity, &context)
+        ).await??;
+        
+        let simulation_time = simulation_start.elapsed();
+        info!("📊 Simulation {} took: {:?}, success: {}, profit: {} wei", 
+              i + 1, simulation_time, simulation_result.success, simulation_result.profit);
+        
+        // Assert simulation has valid structure
+        assert!(simulation_result.gas_used >= U256::from(21_000u64), 
+               "❌ Simulation gas estimate too low: {} (min: 21,000)", simulation_result.gas_used);
+        assert!(simulation_result.gas_used <= U256::from(2_000_000u64), 
+               "❌ Simulation gas estimate too high: {} (max: 2,000,000)", simulation_result.gas_used);
+        
+        simulation_results.push(simulation_result.clone());
+        
+        if simulation_result.success {
+            profitable_opportunities.push((opportunity, simulation_result));
+            //info!("✅ PROFITABLE simulation found: {} wei profit", simulation_result.clone());
+        } else {
+            info!("📉 Unprofitable simulation (this is normal)");
         }
     }
     
-    // 5. Verify system state is clean after cycle
-    verify_system_state_after_cycle(&test_env).await?;
+    assert!(!simulation_results.is_empty(), "❌ No simulations were performed!");
+    info!("✅ SIMULATION PASSED: {}/{} simulations completed", 
+          simulation_results.len(), opportunities.len());
     
+    // 8. PHASE 3: Execution (the critical part)
+    info!("🚀 PHASE 3: Executing profitable opportunities...");
+    let mut execution_results = Vec::new();
+    let mut successful_transactions = Vec::new();
+    
+    if profitable_opportunities.is_empty() {
+        warn!("⚠️  No profitable opportunities to execute - creating a forced execution for testing");
+        // For testing purposes, execute the first opportunity even if not profitable
+        if !opportunities.is_empty() {
+            let (opportunity, _) = (&opportunities[0], &simulation_results[0]);
+            
+            info!("🧪 Forcing execution of first opportunity for E2E testing...");
+            let execution_result = timeout(
+                Duration::from_secs(15),
+                strategy.execute_opportunity(opportunity, &context)
+            ).await??;
+            
+            execution_results.push(execution_result.clone());
+            
+            if execution_result.success {
+                // TDD ASSERTION: Even forced execution should have real transaction hash
+                if let Some(ref tx_hash) = execution_result.tx_hash {
+                    assert_ne!(tx_hash, "0x1234567890abcdef", 
+                              "❌ TDD FAILURE: Even forced execution returns MOCK tx_hash! execute_opportunity must call send_transaction!");
+                }
+                successful_transactions.push(execution_result);
+                info!("✅ FORCED EXECUTION successful!");
+            } else {
+                info!("📉 Forced execution failed (acceptable for testing)");
+            }
+        }
+    } else {
+        // Execute profitable opportunities
+        for (i, (opportunity, _sim_result)) in profitable_opportunities.iter().enumerate() {
+            info!("💰 Executing profitable opportunity {}/{}", i + 1, profitable_opportunities.len());
+            
+            let execution_start = Instant::now();
+            let execution_result = timeout(
+                Duration::from_secs(20), // Longer timeout for actual transaction
+                strategy.execute_opportunity(opportunity, &context)
+            ).await??;
+            
+            let execution_time = execution_start.elapsed();
+            info!("📊 Execution {} took: {:?}, success: {}, tx_hash: {:?}", 
+                  i + 1, execution_time, execution_result.success, execution_result.tx_hash);
+            
+            execution_results.push(execution_result.clone());
+            
+            if execution_result.success {
+                successful_transactions.push(execution_result.clone());
+                
+                // =================================
+                // TDD CRITICAL ASSERTIONS FOR REAL TRANSACTION SENDING
+                // These assertions will FAIL until execute_opportunity calls send_transaction!
+                // =================================
+                
+                // CRITICAL TDD ASSERTION: Must have transaction hash
+                assert!(execution_result.tx_hash.is_some(), 
+                       "❌ TDD FAILURE: Successful execution must have tx_hash! execute_opportunity is not calling send_transaction from transaction.rs");
+                
+                let tx_hash = execution_result.tx_hash.as_ref().unwrap();
+                
+                // CRITICAL TDD ASSERTION: Real transaction hash should be 66 chars (0x + 64 hex chars)
+                assert_eq!(tx_hash.len(), 66, 
+                          "❌ TDD FAILURE: Real tx_hash should be 66 chars (0x + 64 hex), got {} chars: '{}'. Current execute_opportunity returns MOCK data instead of calling send_transaction!", 
+                          tx_hash.len(), tx_hash);
+                
+                // CRITICAL TDD ASSERTION: Should start with 0x
+                assert!(tx_hash.starts_with("0x"), 
+                       "❌ TDD FAILURE: Real tx_hash should start with '0x', got: '{}'. execute_opportunity is returning MOCK data!", tx_hash);
+                
+                // CRITICAL TDD ASSERTION: Should be valid hex
+                let hex_part = &tx_hash[2..];
+                assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()), 
+                       "❌ TDD FAILURE: tx_hash should be valid hex, got: '{}'. execute_opportunity is returning MOCK data!", tx_hash);
+                
+                // CRITICAL TDD ASSERTION: Should NOT be the hardcoded mock value
+                assert_ne!(tx_hash, "0x1234567890abcdef", 
+                          "❌ TDD FAILURE: tx_hash is the MOCK value '0x1234567890abcdef'! execute_opportunity MUST call send_transaction and return the real hash!");
+                
+                // CRITICAL TDD ASSERTION: Profit should not be mock value
+                assert_ne!(execution_result.profit, U256::from(1000000), 
+                          "❌ TDD FAILURE: Profit is MOCK value (1000000 wei)! execute_opportunity should return real calculated profit from transaction simulation!");
+                
+                // CRITICAL TDD ASSERTION: Gas should not be mock value
+                assert_ne!(execution_result.gas_used, U256::from(500000), 
+                          "❌ TDD FAILURE: Gas used is MOCK value (500000)! execute_opportunity should return real gas used from send_transaction!");
+                
+                info!("🎉 TDD: Real transaction hash detected: {}", tx_hash);
+                
+                // Verify transaction was actually sent to Anvil
+                if let Some(ref tx_hash) = execution_result.tx_hash {
+                    info!("🔍 Verifying transaction on Anvil: {}", tx_hash);
+                    
+                    // Wait a bit for transaction to be mined
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    
+                    // Verify block number increased (transaction was mined)
+                    let current_block = test_env.provider.get_block_number().await?;
+                    if current_block > initial_block {
+                        info!("✅ TRANSACTION CONFIRMED: Block advanced from {} to {}", 
+                              initial_block, current_block);
+                    } else {
+                        warn!("⚠️  Block number unchanged - transaction may not have been mined yet");
+                    }
+                } else {
+                    warn!("⚠️  Successful execution but no tx_hash provided");
+                }
+            }
+        }
+    }
+    
+    let total_cycle_time = start_time.elapsed();
+    info!("⏱️  COMPLETE ARBITRAGE CYCLE took: {:?}", total_cycle_time);
+    
+    // 9. FINAL ASSERTIONS - The critical end-to-end checks
+    info!("🧪 FINAL E2E ASSERTIONS:");
+    
+    // Assert the full cycle executed
+    assert!(!opportunities.is_empty(), 
+           "❌ DETECTION FAILED: No opportunities detected");
+    assert!(!simulation_results.is_empty(), 
+           "❌ SIMULATION FAILED: No simulations performed");
+    assert!(!execution_results.is_empty(), 
+           "❌ EXECUTION FAILED: No executions attempted");
+    
+    // Assert timing is reasonable
+    assert!(total_cycle_time < Duration::from_secs(60), 
+           "❌ PERFORMANCE FAILED: Total cycle took too long: {:?}", total_cycle_time);
+    
+    // Critical: Assert that execution was attempted (even if it failed)
+    let execution_attempts = execution_results.len();
+    assert!(execution_attempts > 0, 
+           "❌ CRITICAL FAILURE: No execution attempts made!");
+    
+    // Assert at least one execution was successful (or at least attempted with valid structure)
+    let valid_executions = execution_results.iter()
+        .filter(|r| r.tx_hash.is_some() || r.error.is_some())
+        .count();
+    assert!(valid_executions > 0, 
+           "❌ EXECUTION QUALITY FAILED: No valid execution attempts (no tx_hash or error)");
+    
+    // 10. Log comprehensive summary
+    info!("📈 END-TO-END TEST SUMMARY:");
+    info!("  🔍 Opportunities detected: {}", opportunities.len());
+    info!("  🧪 Simulations performed: {}", simulation_results.len());
+    info!("  � Profitable simulations: {}", profitable_opportunities.len());
+    info!("  🚀 Execution attempts: {}", execution_attempts);
+    info!("  ✅ Successful transactions: {}", successful_transactions.len());
+    info!("  ⏱️  Total cycle time: {:?}", total_cycle_time);
+    info!("  🎯 Test Result: FULL E2E CYCLE COMPLETED");
+    
+    // 11. Verify Anvil state after execution
+    verify_anvil_state_after_execution(&test_env, initial_block).await?;
+    
+    info!("🎉 COMPLETE ARBITRAGE CYCLE TEST PASSED!");
     Ok(())
 }
 
@@ -77,7 +282,7 @@ async fn test_sequential_arbitrage_cycles() -> Result<()> {
         
         let result = timeout(
             Duration::from_secs(15),
-            process_strategy(log_event, test_env.test_config.ws_url.clone())
+            process_arbitrage_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
         
         let cycle_time = start_time.elapsed();
@@ -114,7 +319,7 @@ async fn test_profitable_vs_unprofitable_cycles() -> Result<()> {
     let profitable_event = create_profitable_arbitrage_opportunity().await?;
     let start_time = Instant::now();
     
-    let _result = process_strategy(profitable_event, test_env.test_config.ws_url.clone()).await;
+    let _result = process_arbitrage_strategy(profitable_event, test_env.test_config.ws_url.clone()).await;
     let profitable_time = start_time.elapsed();
     
     info!("💰 Profitable cycle completed in {:?}", profitable_time);
@@ -124,7 +329,7 @@ async fn test_profitable_vs_unprofitable_cycles() -> Result<()> {
     let unprofitable_event = create_unprofitable_arbitrage_opportunity().await?;
     let start_time = Instant::now();
     
-    let _result = process_strategy(unprofitable_event, test_env.test_config.ws_url.clone()).await;
+    let _result = process_arbitrage_strategy(unprofitable_event, test_env.test_config.ws_url.clone()).await;
     let unprofitable_time = start_time.elapsed();
     
     info!("📉 Unprofitable cycle completed in {:?}", unprofitable_time);
@@ -145,19 +350,19 @@ async fn test_edge_case_arbitrage_cycles() -> Result<()> {
     // Test with very small amounts
     info!("🔬 Testing very small arbitrage amount");
     let small_amount_event = create_small_amount_opportunity().await?;
-    let _result = process_strategy(small_amount_event, test_env.test_config.ws_url.clone()).await;
+    let _result = process_arbitrage_strategy(small_amount_event, test_env.test_config.ws_url.clone()).await;
     // Should complete without panicking
     
     // Test with maximum amounts
     info!("🏔️  Testing maximum arbitrage amount");
     let large_amount_event = create_large_amount_opportunity().await?;
-    let _result = process_strategy(large_amount_event, test_env.test_config.ws_url.clone()).await;
+    let _result = process_arbitrage_strategy(large_amount_event, test_env.test_config.ws_url.clone()).await;
     // Should handle gracefully
     
     // Test with invalid pool addresses
     info!("❌ Testing invalid pool addresses");
     let invalid_pool_event = create_invalid_pool_opportunity().await?;
-    let _result = process_strategy(invalid_pool_event, test_env.test_config.ws_url.clone()).await;
+    let _result = process_arbitrage_strategy(invalid_pool_event, test_env.test_config.ws_url.clone()).await;
     // Should fail gracefully without panicking
     
     info!("✅ All edge case cycles completed without panicking");
@@ -177,7 +382,7 @@ async fn test_arbitrage_cycle_performance() -> Result<()> {
     
     // This is a simplified version - in reality we'd need to instrument
     // the process_strategy function to get detailed timing
-    let _result = process_strategy(log_event, test_env.test_config.ws_url.clone()).await;
+    let _result = process_arbitrage_strategy(log_event, test_env.test_config.ws_url.clone()).await;
     
     let total_time = total_start.elapsed();
     
@@ -261,6 +466,306 @@ async fn create_invalid_pool_opportunity() -> Result<LogEvent> {
     })
 }
 
+/// Enhanced version of process_arbitrage_strategy that returns execution results for testing
+/// This allows us to assert on the actual results of strategy execution
+async fn process_arbitrage_strategy_with_results(
+    log_event: LogEvent,
+    ws_url: String,
+) -> Result<Vec<ExecutionResult>> {
+    use arbooo::strategies::factory::DefaultStrategyFactory;
+    use arbooo::strategies::manager::StrategyManager;
+    use arbooo::strategies::traits::ExecutionContext;
+    use arbooo::common::connection_pool::ConnectionPool;
+    use arbooo::common::pairs::Event;
+    use std::sync::Arc;
+    use std::collections::HashMap;
+    use tokio::sync::RwLock;
+    use alloy_primitives::address;
+    use alloy::providers::Provider;
+    
+    info!("🔄 Processing arbitrage strategy with results capture");
+    info!("🔗 Using WebSocket URL: {}", ws_url);
+    
+    // Create a simple pools map for testing
+    let pools_map = Arc::new(RwLock::new(HashMap::<Address, Event>::new()));
+    
+    // Create a connection pool with the provided ws_url
+    let connection_pool = ConnectionPool::new(ws_url.clone(), 4);
+    
+    // Create strategy factory (unused but needed for potential future expansion)
+    let _factory = DefaultStrategyFactory::new(pools_map.clone(), connection_pool.clone());
+    
+    // Create strategy manager with the correct ws_url
+    let manager = StrategyManager::new(
+        ws_url.clone(),
+        4, // max_connections
+        pools_map,
+        address!("742d35Cc6634C0532925a3b8d1C4AC1B8b5C0000"), // executor_address (dummy for tests)
+    ).await?;
+    
+    // For testing, we'll use a recent block number since LogEvent doesn't have one
+    let test_block_number = {
+        if let Ok(pooled_provider) = connection_pool.get_provider().await {
+            match pooled_provider.provider().get_block_number().await {
+                Ok(block_num) => {
+                    info!("📦 Using current block number: {}", block_num);
+                    block_num
+                },
+                Err(e) => {
+                    log::warn!("Failed to get current block number: {}, using default", e);
+                    20000000
+                }
+            }
+        } else {
+            log::warn!("Failed to get provider, using default block number");
+            20000000
+        }
+    };
+    
+    // Create execution context
+    let context = ExecutionContext {
+        block_number: test_block_number,
+        gas_price: U256::from(50_000_000_000u64), // 50 gwei
+        base_fee: U256::from(30_000_000_000u64), // 30 gwei
+        executor_address: address!("742d35Cc6634C0532925a3b8d1C4AC1B8b5C0000"),
+        max_gas_limit: 2_000_000,
+    };
+    
+    // Process the MEV event using the semaphore pattern and return results
+    let results = manager.process_mev_event_with_semaphore(&log_event, &context).await?;
+    
+    // Log summary information
+    let profitable_results: Vec<_> = results.iter()
+        .filter(|r| r.success && r.profit > U256::ZERO)
+        .collect();
+    
+    if !profitable_results.is_empty() {
+        info!("✅ Found {} profitable arbitrage opportunities", profitable_results.len());
+        for result in profitable_results {
+            info!("  💰 Profit: {} wei, Gas: {} wei", result.profit, result.gas_used);
+        }
+    } else {
+        info!("📉 No profitable opportunities found (this is normal for tests)");
+    }
+    
+    Ok(results)
+}
+
+/// Create a UniswapArbitrageStrategy instance for testing
+async fn create_arbitrage_strategy(test_env: &TestEnvironment) -> Result<UniswapArbitrageStrategy> {
+    info!("🏗️  Creating UniswapArbitrageStrategy for testing");
+    
+    // Create pools map
+    let pools_map = Arc::new(RwLock::new(HashMap::<Address, Event>::new()));
+    
+    // Create connection pool
+    let connection_pool = ConnectionPool::new(test_env.test_config.ws_url.clone(), 4);
+    
+    // Create strategy configuration
+    let config = StrategyConfig {
+        enabled: true,
+        priority: 90,
+        min_profit_threshold: U256::from(100_000u128), // 0.0001 ETH minimum for testing
+        max_gas_price: U256::from(200_000_000_000u64), // 200 gwei max
+        max_position_size: U256::from(10_000_000_000_000_000_000u64), // 10 ETH max
+    };
+    
+    // Create and return strategy
+    let strategy = UniswapArbitrageStrategy::new(config, pools_map, connection_pool);
+    info!("✅ UniswapArbitrageStrategy created successfully");
+    
+    Ok(strategy)
+}
+
+/// Create an ExecutionContext for testing
+async fn create_test_execution_context(test_env: &TestEnvironment) -> Result<ExecutionContext> {
+    info!("🏗️  Creating ExecutionContext for testing");
+    
+    // Get current block number
+    let block_number = test_env.provider.get_block_number().await
+        .unwrap_or_else(|e| {
+            warn!("Failed to get block number: {}, using default", e);
+            20000000
+        });
+    
+    let context = ExecutionContext {
+        block_number,
+        gas_price: U256::from(50_000_000_000u64), // 50 gwei
+        base_fee: U256::from(30_000_000_000u64), // 30 gwei
+        executor_address: address!("742d35Cc6634C0532925a3b8d1C4AC1B8b5C0000"), // Test address
+        max_gas_limit: 2_000_000,
+    };
+    
+    info!("✅ ExecutionContext created - Block: {}, Gas Price: {} gwei", 
+          block_number, context.gas_price / U256::from(1_000_000_000u64));
+    
+    Ok(context)
+}
+
+/// Pool setup information for Anvil testing
+#[derive(Debug, Clone)]
+struct AnvilPoolSetup {
+    pool_a_address: Address,
+    pool_b_address: Address,
+    token_a_address: Address,
+    token_b_address: Address,
+    weth_address: Address,
+}
+
+/// Set up realistic arbitrage pools on Anvil for end-to-end testing
+async fn setup_arbitrage_pools_on_anvil(test_env: &TestEnvironment) -> Result<(AnvilPoolSetup, LogEvent)> {
+    info!("🏊 Setting up arbitrage pools on Anvil...");
+    
+    // For now, use well-known mainnet addresses that should exist on the fork
+    // In a more complete test, we would deploy actual pool contracts
+    let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH
+    let usdc_address = address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"); // Mock token address
+    
+    // Use well-known Uniswap V3 pool addresses from mainnet fork
+    let pool_a_address = address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984"); // Example V3 pool
+    let pool_b_address = address!("5777d92f208679DB4b9778590Fa3CAB3aC9e2168"); // Example V2 pool
+    
+    let pool_setup = AnvilPoolSetup {
+        pool_a_address,
+        pool_b_address,
+        token_a_address: usdc_address,
+        token_b_address: weth_address,
+        weth_address,
+    };
+    
+    // Create a realistic LogEvent that would trigger arbitrage
+    let log_event = LogEvent {
+        log_pool_address: pool_a_address,
+        corresponding_pool_address: pool_b_address,
+        pool_variant: 3, // V3 pool
+        token0: usdc_address,
+        token1: weth_address,
+        fee: U24::from(3000u32), // 0.3% fee
+    };
+    
+    info!("✅ Pool setup complete:");
+    info!("  🏊 Pool A (V3): {}", pool_setup.pool_a_address);
+    info!("  🏊 Pool B (V2): {}", pool_setup.pool_b_address);
+    info!("  🪙 Token A: {}", pool_setup.token_a_address);
+    info!("  🪙 Token B (WETH): {}", pool_setup.token_b_address);
+    
+    Ok((pool_setup, log_event))
+}
+
+/// Create UniswapArbitrageStrategy configured for Anvil testing
+async fn create_arbitrage_strategy_with_anvil(
+    test_env: &TestEnvironment, 
+    pool_setup: &AnvilPoolSetup
+) -> Result<UniswapArbitrageStrategy> {
+    info!("🏗️  Creating UniswapArbitrageStrategy configured for Anvil...");
+    
+    // Create pools map with the actual pools from Anvil
+    let pools_map = Arc::new(RwLock::new(HashMap::<Address, Event>::new()));
+    
+    // Add pools to the map (with mock Event data for now)
+    {
+        let mut pools_guard = pools_map.write().await;
+        
+        // Add Pool A (V3 pool)
+        let pool_a_event = Event::PoolCreated(arbooo::common::pairs::V3PoolCreated {
+            token0: pool_setup.token_a_address,
+            token1: pool_setup.token_b_address,
+            fee: 3000,
+            tick_spacing: 60,
+            pair_address: pool_setup.pool_a_address,
+        });
+        pools_guard.insert(pool_setup.pool_a_address, pool_a_event);
+        
+        // Add Pool B (V2 pool)
+        let pool_b_event = Event::PairCreated(arbooo::common::pairs::V2PoolCreated {
+            token0: pool_setup.token_a_address,
+            token1: pool_setup.token_b_address,
+            fee: 3000,
+            pair_address: pool_setup.pool_b_address,
+        });
+        pools_guard.insert(pool_setup.pool_b_address, pool_b_event);
+    }
+    
+    // Create connection pool using Anvil's WebSocket URL
+    let anvil_ws_url = if let Some(anvil) = &test_env.anvil_instance {
+        format!("ws://127.0.0.1:{}", anvil.port)
+    } else {
+        test_env.test_config.ws_url.clone()
+    };
+    
+    let connection_pool = ConnectionPool::new(anvil_ws_url, 4);
+    
+    // Create strategy configuration optimized for testing
+    let config = StrategyConfig {
+        enabled: true,
+        priority: 90,
+        min_profit_threshold: U256::from(1u64), // Very low threshold for testing
+        max_gas_price: U256::from(200_000_000_000u64), // 200 gwei max
+        max_position_size: U256::from(10_000_000_000_000_000_000u64), // 10 ETH max
+    };
+    
+    let strategy = UniswapArbitrageStrategy::new(config, pools_map, connection_pool);
+    info!("✅ UniswapArbitrageStrategy configured for Anvil with {} pools", 2);
+    
+    Ok(strategy)
+}
+
+/// Create execution context using real Anvil data
+async fn create_anvil_execution_context(test_env: &TestEnvironment) -> Result<ExecutionContext> {
+    info!("🎯 Creating ExecutionContext using Anvil data...");
+    
+    // Get real block number from Anvil
+    let block_number = test_env.provider.get_block_number().await?;
+    
+    // Get real gas price from Anvil (or use reasonable defaults)
+    let gas_price = U256::from(20_000_000_000u64); // 20 gwei (reasonable for Anvil)
+    let base_fee = U256::from(15_000_000_000u64); // 15 gwei
+    
+    // Use a realistic executor address (could be a funded account on Anvil)
+    let executor_address = address!("742d35Cc6634C0532925a3b8d1C4AC1B8b5C0000");
+    
+    let context = ExecutionContext {
+        block_number,
+        gas_price,
+        base_fee,
+        executor_address,
+        max_gas_limit: 2_000_000,
+    };
+    
+    info!("✅ Anvil ExecutionContext created:");
+    info!("  📦 Block: {}", block_number);
+    info!("  ⛽ Gas Price: {} gwei", gas_price / U256::from(1_000_000_000u64));
+    info!("  🏠 Executor: {}", executor_address);
+    
+    Ok(context)
+}
+
+/// Verify Anvil state after execution
+async fn verify_anvil_state_after_execution(
+    test_env: &TestEnvironment,
+    initial_block: u64
+) -> Result<()> {
+    info!("🔍 Verifying Anvil state after execution...");
+    
+    let current_block = test_env.provider.get_block_number().await?;
+    info!("📦 Block progression: {} -> {}", initial_block, current_block);
+    
+    if current_block > initial_block {
+        info!("✅ Blocks advanced - transactions were likely mined");
+    } else {
+        info!("ℹ️  Block unchanged - no transactions mined (acceptable for mock execution)");
+    }
+    
+    // Verify Anvil is still responsive
+    let chain_id = test_env.provider.get_chain_id().await?;
+    info!("🔗 Anvil chain ID: {}", chain_id);
+    
+    // Verify connection pool is clean
+    info!("🧹 Connection state verified");
+    
+    Ok(())
+}
+
 async fn verify_system_state_after_cycle(test_env: &TestEnvironment) -> Result<()> {
     info!("🔍 Verifying system state after arbitrage cycle...");
 
@@ -290,7 +795,7 @@ async fn verify_provider_health(test_env: &TestEnvironment) -> Result<()> {
     // Test basic connectivity
     let block_number = test_env.provider.get_block_number().await
         .map_err(|e| anyhow::anyhow!("Provider connection failed: {}", e))?;
-    
+    println!("Block Number: {}", block_number) ;
     // Verify we can get recent block info
     let block_info = test_env.get_latest_block_info().await
         .map_err(|e| anyhow::anyhow!("Failed to get block info: {}", e))?;

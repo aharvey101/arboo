@@ -28,13 +28,18 @@ pub struct TestConfig {
 
 impl Default for TestConfig {
     fn default() -> Self {
-        // Environment variables are loaded externally
-        // Don't load .env files here as they may override our test configuration
+        // Try to load test environment variables from .env.test file
+        if let Err(e) = dotenv::from_filename("tests/.env.test") {
+            println!("⚠️  Could not load tests/.env.test: {} (this is optional)", e);
+        } else {
+            println!("✅ Loaded test configuration from tests/.env.test");
+        }
         
         println!("🔍 Environment Variables Debug:");
         println!("  TEST_WS_URL: {:?}", std::env::var("TEST_WS_URL"));
         println!("  WS_URL: {:?}", std::env::var("WS_URL"));
         println!("  MAINNET_RPC_URL: {:?}", std::env::var("MAINNET_RPC_URL"));
+        println!("  FORK_BLOCK_NUMBER: {:?}", std::env::var("FORK_BLOCK_NUMBER"));
         
         // Always use local fork (anvil), so ws_url will be set when anvil starts
         let ws_url = "".to_string(); // Will be set when anvil starts

@@ -49,6 +49,11 @@ impl Default for AnvilConfig {
 impl AnvilInstance {
     /// Start a new Anvil instance with the given configuration
     pub async fn new(config: AnvilConfig) -> Result<Self> {
+        Self::new_with_fork_block(config, None).await
+    }
+    
+    /// Start a new Anvil instance with the given configuration and optional fork block
+    pub async fn new_with_fork_block(config: AnvilConfig, fork_block: Option<u64>) -> Result<Self> {
         let port = pick_unused_port()
             .context("Failed to find unused port for Anvil")?;
 
@@ -71,6 +76,14 @@ impl AnvilInstance {
         if let Some(fork_url) = &config.fork_url {
             cmd.arg("--fork-url").arg(fork_url);
             
+            // Add fork block number if specified
+            if let Some(block) = fork_block {
+                cmd.arg("--fork-block-number").arg(block.to_string());
+                info!("🎯 Forking from block {}", block);
+            } else if let Ok(env_block) = std::env::var("FORK_BLOCK_NUMBER") {
+                cmd.arg("--fork-block-number").arg(&env_block);
+                info!("🎯 Forking from block {} (from env)", env_block);
+            }
         }
 
         // Debug: print the exact command
@@ -291,13 +304,32 @@ impl AccountInfo {
 }
 
 /// Helper function to create a test Anvil instance with mainnet fork
-pub async fn create_mainnet_fork(_block_number: Option<u64>) -> Result<AnvilInstance> {
+pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInstance> {
     let fork_url = std::env::var("MAINNET_RPC_URL").ok();
+    
+    if fork_url.is_none() {
+        info!("⚠️  MAINNET_RPC_URL not set - creating clean anvil instance instead of mainnet fork");
+        info!("   To fork from mainnet, set MAINNET_RPC_URL environment variable");
+        return create_clean_anvil().await;
+    }
+    
     let config = AnvilConfig {
         fork_url,
         ..Default::default()
     };
-    AnvilInstance::new(config).await
+    
+    // If we have a fork URL and are using a specific block number, we need to add it to the anvil command
+    if let Some(block) = block_number {
+        info!("🔄 Creating mainnet fork at block {}", block);
+    } else if let Ok(env_block) = std::env::var("FORK_BLOCK_NUMBER") {
+        if let Ok(block) = env_block.parse::<u64>() {
+            info!("🔄 Creating mainnet fork at block {} (from env)", block);
+        }
+    } else {
+        info!("🔄 Creating mainnet fork at latest block");
+    }
+    
+    AnvilInstance::new_with_fork_block(config, block_number).await
 }
 
 /// Helper function to create a clean Anvil instance without forking
