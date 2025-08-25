@@ -2,7 +2,7 @@ use log::LevelFilter;
 
 pub fn setup_test_logger() {
     use fern::colors::{Color, ColoredLevelConfig};
-    
+
     let colors = ColoredLevelConfig {
         trace: Color::Cyan,
         debug: Color::Blue,
@@ -22,12 +22,13 @@ pub fn setup_test_logger() {
             ))
         })
         .chain(std::io::stdout())
-        .level(LevelFilter::Info)  // Allow Info level and above
-        .level_for("test", LevelFilter::Debug)  // Allow Debug for test modules
+        .level(LevelFilter::Info)
+        .level_for("test", LevelFilter::Debug)
         .apply();
-        
+
     if let Err(_) = result {
-        // Logger already initialized, which is fine
+
         eprintln!("Logger already initialized");
     }
 }
+

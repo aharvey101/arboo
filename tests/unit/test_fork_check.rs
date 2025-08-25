@@ -10,23 +10,21 @@ use utils::anvil_setup::{AnvilInstance, AnvilConfig};
 #[tokio::test]
 async fn test_mainnet_fork_check() -> Result<()> {
     println!("🔍 Testing if anvil actually forks mainnet...");
-    
-    // First, let's see what happens without any MAINNET_RPC_URL
+
     println!("MAINNET_RPC_URL environment variable: {:?}", env::var("MAINNET_RPC_URL").ok());
-    
+
     let config = AnvilConfig::default();
     println!("AnvilConfig fork_url: {:?}", config.fork_url);
-    
+
     if config.fork_url.is_some() {
         println!("✅ Config has fork_url, attempting to create mainnet fork...");
         let anvil = AnvilInstance::new(config).await?;
-        
+
         let provider = anvil.get_http_provider()?;
         let block_number = provider.get_block_number().await?;
-        
+
         println!("📦 Current block number: {}", block_number);
-        
-        // If this is a mainnet fork, block number should be very high (millions)
+
         if block_number > 1_000_000 {
             println!("🎯 SUCCESS: This appears to be a mainnet fork (block: {})", block_number);
         } else if block_number == 0 {
@@ -38,6 +36,7 @@ async fn test_mainnet_fork_check() -> Result<()> {
         println!("❌ No fork_url configured, anvil will start as clean local blockchain");
         println!("   Set MAINNET_RPC_URL environment variable to fork from mainnet");
     }
-    
+
     Ok(())
 }
+

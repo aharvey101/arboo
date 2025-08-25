@@ -2,9 +2,6 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-// Test Environment Setup Utilities
-// Core test environment management and provider connections
-
 use anyhow::Result;
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::pubsub::PubSubFrontend;
@@ -16,7 +13,7 @@ use super::anvil_setup::{AnvilInstance, create_mainnet_fork};
 pub struct TestEnvironment {
     pub provider: Arc<RootProvider<PubSubFrontend>>,
     pub test_config: TestConfig,
-    pub anvil_instance: Option<AnvilInstance>, // Optional anvil instance for local testing
+    pub anvil_instance: Option<AnvilInstance>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,25 +25,24 @@ pub struct TestConfig {
 
 impl Default for TestConfig {
     fn default() -> Self {
-        // Try to load test environment variables from .env.test file
+
         if let Err(e) = dotenv::from_filename("tests/.env.test") {
             println!("⚠️  Could not load tests/.env.test: {} (this is optional)", e);
         } else {
             println!("✅ Loaded test configuration from tests/.env.test");
         }
-        
+
         println!("🔍 Environment Variables Debug:");
         println!("  TEST_WS_URL: {:?}", std::env::var("TEST_WS_URL"));
         println!("  WS_URL: {:?}", std::env::var("WS_URL"));
         println!("  MAINNET_RPC_URL: {:?}", std::env::var("MAINNET_RPC_URL"));
         println!("  FORK_BLOCK_NUMBER: {:?}", std::env::var("FORK_BLOCK_NUMBER"));
-        
-        // Always use local fork (anvil), so ws_url will be set when anvil starts
-        let ws_url = "".to_string(); // Will be set when anvil starts
-        
+
+        let ws_url = "".to_string();
+
         println!("  Final ws_url: [will use anvil]");
         println!("  Always using local fork (anvil)");
-        
+
         Self {
             ws_url,
             fork_block_number: std::env::var("FORK_BLOCK_NUMBER")
@@ -64,49 +60,47 @@ impl TestEnvironment {
     pub async fn new() -> Result<Self> {
         Self::new_with_config(TestConfig::default()).await
     }
-    
+
     pub async fn new_with_config(config: TestConfig) -> Result<Self> {
         info!("🏗️  Setting up test environment...");
         info!("🔧 Config - ws_url: {}", config.ws_url);
         info!("🔧 Config - fork_block_number: {:?}", config.fork_block_number);
         info!("🔧 Always using local anvil fork");
-        
+
         info!("🔧 Setting up local anvil fork...");
         let anvil = create_mainnet_fork(config.fork_block_number).await?;
-        
-        // Connect to the local anvil instance via WebSocket
+
         let ws_url = format!("ws://127.0.0.1:{}", anvil.port);
         info!("🔗 Connecting to local anvil at: {}", ws_url);
-        
+
         let ws_client = WsConnect::new(ws_url);
         let provider = ProviderBuilder::new().on_ws(ws_client).await?;
         let provider = Arc::new(provider);
-        
+
         info!("✅ Test environment ready");
-        
+
         Ok(Self {
             provider,
             test_config: config,
             anvil_instance: Some(anvil),
         })
     }
-    
+
     pub async fn verify_connection(&self) -> Result<()> {
         info!("🔍 Verifying test environment connection...");
-        
+
         let block_number = self.provider.get_block_number().await?;
         if let Some(anvil) = &self.anvil_instance {
             info!("📦 Connected to local anvil (port {}) at block: {}", anvil.port, block_number);
         }
-        
+
         Ok(())
     }
-    
-    /// Always returns true since we always use local anvil now
+
     pub fn is_using_anvil(&self) -> bool {
         true
     }
-    
+
     pub async fn get_latest_block_info(&self) -> Result<TestBlockInfo> {
         let block_number = self.provider.get_block_number().await?;
         let block = self.provider
@@ -116,7 +110,7 @@ impl TestEnvironment {
             )
             .await?
             .ok_or_else(|| anyhow::anyhow!("Could not fetch latest block"))?;
-            
+
         Ok(TestBlockInfo {
             number: block_number,
             hash: block.header.hash,
@@ -150,10 +144,9 @@ impl TestBlockInfo {
     }
 }
 
-// Test assertion helpers
 pub mod assertions {
     use super::*;
-    
+
     pub fn assert_block_number_increasing(old_block: u64, new_block: u64) -> Result<()> {
         if new_block <= old_block {
             return Err(anyhow::anyhow!(
@@ -162,11 +155,11 @@ pub mod assertions {
         }
         Ok(())
     }
-    
+
     pub fn assert_reasonable_gas_limit(gas_limit: u64) -> Result<()> {
-        const MIN_GAS_LIMIT: u64 = 8_000_000;  // 8M gas
-        const MAX_GAS_LIMIT: u64 = 50_000_000; // 50M gas
-        
+        const MIN_GAS_LIMIT: u64 = 8_000_000;
+        const MAX_GAS_LIMIT: u64 = 50_000_000;
+
         if gas_limit < MIN_GAS_LIMIT || gas_limit > MAX_GAS_LIMIT {
             return Err(anyhow::anyhow!(
                 "Unreasonable gas limit: {} (expected between {} and {})",
@@ -175,17 +168,17 @@ pub mod assertions {
         }
         Ok(())
     }
-    
+
     pub fn assert_recent_timestamp(timestamp: u64) -> Result<()> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-            
-        const MAX_BLOCK_AGE_SECONDS: u64 = 3600; // 1 hour
-        
+
+        const MAX_BLOCK_AGE_SECONDS: u64 = 3600;
+
         if now.saturating_sub(timestamp) > MAX_BLOCK_AGE_SECONDS {
             return Err(anyhow::anyhow!(
                 "Block timestamp too old: {} (current: {})", timestamp, now
@@ -194,3 +187,4 @@ pub mod assertions {
         Ok(())
     }
 }
+

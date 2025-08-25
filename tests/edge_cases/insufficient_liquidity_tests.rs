@@ -1,6 +1,3 @@
-// Insufficient Liquidity Tests - Phase 5.3
-// Tests system behavior under low liquidity and liquidity shortage scenarios
-
 use anyhow::Result;
 use arbooo::arbitrage::strategy::process_strategy;
 use arbooo::common::logs::LogEvent;
@@ -15,13 +12,11 @@ mod utils {
 }
 use utils::test_env::TestEnvironment;
 
-/// Test system behavior with extremely low liquidity pools
 #[tokio::test]
 async fn test_low_liquidity_handling() -> Result<()> {
     let test_env = TestEnvironment::new().await?;
     info!("💧 Testing low liquidity handling");
 
-    // Test different liquidity scenarios
     let liquidity_scenarios = [
         ("normal_liquidity", "Standard liquidity pool"),
         ("low_liquidity", "Low liquidity pool"),
@@ -33,17 +28,17 @@ async fn test_low_liquidity_handling() -> Result<()> {
 
     for (scenario_name, scenario_desc) in liquidity_scenarios {
         info!("💧 Testing liquidity scenario: {} - {}", scenario_name, scenario_desc);
-        
+
         let log_event = create_liquidity_test_opportunity(scenario_name).await?;
         let start_time = Instant::now();
-        
+
         let result = timeout(
             Duration::from_secs(12),
             process_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
-        
+
         let duration = start_time.elapsed();
-        
+
         match result {
             Ok(Ok(_)) => {
                 info!("✅ Liquidity scenario '{}' completed successfully in {:?}", scenario_name, duration);
@@ -62,7 +57,6 @@ async fn test_low_liquidity_handling() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(600)).await;
     }
 
-    // Analyze liquidity handling behavior
     let successful_scenarios = liquidity_results.iter().filter(|(_, success, _)| *success).count();
     let total_scenarios = liquidity_results.len();
 
@@ -74,19 +68,16 @@ async fn test_low_liquidity_handling() -> Result<()> {
     info!("📊 Overall liquidity handling: {}/{} scenarios handled", 
           successful_scenarios, total_scenarios);
 
-    // System should handle scenarios gracefully (may fail due to insufficient liquidity, but shouldn't crash)
     assert!(total_scenarios > 0, "Should have tested liquidity scenarios");
 
     Ok(())
 }
 
-/// Test slippage impact under different liquidity conditions
 #[tokio::test]
 async fn test_slippage_impact_analysis() -> Result<()> {
     let test_env = TestEnvironment::new().await?;
     info!("📈 Testing slippage impact under varying liquidity");
 
-    // Test slippage scenarios
     let slippage_scenarios = [
         ("low_slippage", "High liquidity, low slippage environment"),
         ("moderate_slippage", "Medium liquidity, moderate slippage"),
@@ -98,33 +89,31 @@ async fn test_slippage_impact_analysis() -> Result<()> {
 
     for (scenario_name, scenario_desc) in slippage_scenarios {
         info!("📈 Testing slippage scenario: {} - {}", scenario_name, scenario_desc);
-        
+
         let log_event = create_slippage_test_opportunity(scenario_name).await?;
         let start_time = Instant::now();
-        
+
         let result = timeout(
             Duration::from_secs(10),
             process_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
-        
+
         let duration = start_time.elapsed();
         let success = result.is_ok();
-        
+
         slippage_results.push((scenario_name, success, duration));
-        
+
         info!("📈 Slippage scenario '{}': success={}, duration={:?}", 
               scenario_name, success, duration);
 
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
-    // Analyze slippage behavior
     info!("📊 Slippage impact analysis:");
     for (scenario, success, duration) in &slippage_results {
         info!("   📈 {}: success={}, duration={:?}", scenario, success, duration);
     }
 
-    // System should be able to analyze slippage in various conditions
     let analyzed_scenarios = slippage_results.len();
     assert!(analyzed_scenarios == slippage_scenarios.len(),
            "System should analyze all slippage scenarios");
@@ -132,13 +121,11 @@ async fn test_slippage_impact_analysis() -> Result<()> {
     Ok(())
 }
 
-/// Test arbitrage viability under liquidity constraints
 #[tokio::test]
 async fn test_arbitrage_viability_constraints() -> Result<()> {
     let test_env = TestEnvironment::new().await?;
     info!("⚖️ Testing arbitrage viability under liquidity constraints");
 
-    // Test different constraint scenarios
     let constraint_scenarios = [
         ("viable_arbitrage", "Sufficient liquidity for profitable arbitrage"),
         ("marginal_arbitrage", "Marginal liquidity, questionable profitability"),
@@ -150,17 +137,17 @@ async fn test_arbitrage_viability_constraints() -> Result<()> {
 
     for (scenario_name, scenario_desc) in constraint_scenarios {
         info!("⚖️ Testing constraint scenario: {} - {}", scenario_name, scenario_desc);
-        
+
         let log_event = create_constraint_test_opportunity(scenario_name).await?;
         let start_time = Instant::now();
-        
+
         let result = timeout(
             Duration::from_secs(11),
             process_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
-        
+
         let duration = start_time.elapsed();
-        
+
         match result {
             Ok(Ok(_)) => {
                 info!("✅ Constraint scenario '{}' found viable arbitrage in {:?}", scenario_name, duration);
@@ -179,7 +166,6 @@ async fn test_arbitrage_viability_constraints() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(700)).await;
     }
 
-    // Analyze constraint handling
     info!("📊 Arbitrage viability constraint analysis:");
     for (scenario, result, duration) in &constraint_results {
         info!("   ⚖️ {}: result={}, duration={:?}", scenario, result, duration);
@@ -192,13 +178,11 @@ async fn test_arbitrage_viability_constraints() -> Result<()> {
     Ok(())
 }
 
-/// Test pool depth analysis and liquidity estimation
 #[tokio::test]
 async fn test_pool_depth_analysis() -> Result<()> {
     let test_env = TestEnvironment::new().await?;
     info!("🏊 Testing pool depth analysis and liquidity estimation");
 
-    // Test different pool depth scenarios
     let depth_scenarios = [
         ("deep_pool", "Deep liquidity pool"),
         ("shallow_pool", "Shallow liquidity pool"),
@@ -210,27 +194,26 @@ async fn test_pool_depth_analysis() -> Result<()> {
 
     for (scenario_name, scenario_desc) in depth_scenarios {
         info!("🏊 Testing depth scenario: {} - {}", scenario_name, scenario_desc);
-        
+
         let log_event = create_depth_test_opportunity(scenario_name).await?;
         let start_time = Instant::now();
-        
+
         let result = timeout(
             Duration::from_secs(9),
             process_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
-        
+
         let duration = start_time.elapsed();
         let success = result.is_ok();
-        
+
         depth_results.push((scenario_name, success, duration));
-        
+
         info!("🏊 Depth scenario '{}': success={}, duration={:?}", 
               scenario_name, success, duration);
 
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
 
-    // Analyze pool depth behavior
     info!("📊 Pool depth analysis:");
     for (scenario, success, duration) in &depth_results {
         info!("   🏊 {}: success={}, duration={:?}", scenario, success, duration);
@@ -240,20 +223,17 @@ async fn test_pool_depth_analysis() -> Result<()> {
     info!("📊 Pool depth analysis success rate: {}/{} scenarios", 
           successful_analyses, depth_results.len());
 
-    // System should be able to analyze pool depth in various conditions
     assert!(depth_results.len() == depth_scenarios.len(),
            "System should attempt all depth analyses");
 
     Ok(())
 }
 
-/// Test dynamic liquidity monitoring and adaptation
 #[tokio::test]
 async fn test_dynamic_liquidity_monitoring() -> Result<()> {
     let test_env = TestEnvironment::new().await?;
     info!("📊 Testing dynamic liquidity monitoring and adaptation");
 
-    // Test liquidity change scenarios
     let monitoring_scenarios = [
         ("stable_liquidity", "Stable liquidity conditions"),
         ("increasing_liquidity", "Gradually increasing liquidity"),
@@ -266,17 +246,17 @@ async fn test_dynamic_liquidity_monitoring() -> Result<()> {
 
     for (scenario_name, scenario_desc) in monitoring_scenarios {
         info!("📊 Testing monitoring scenario: {} - {}", scenario_name, scenario_desc);
-        
+
         let log_event = create_monitoring_test_opportunity(scenario_name).await?;
         let start_time = Instant::now();
-        
+
         let result = timeout(
             Duration::from_secs(13),
             process_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
-        
+
         let duration = start_time.elapsed();
-        
+
         match result {
             Ok(Ok(_)) => {
                 info!("✅ Monitoring scenario '{}' adapted successfully in {:?}", scenario_name, duration);
@@ -292,11 +272,9 @@ async fn test_dynamic_liquidity_monitoring() -> Result<()> {
             }
         }
 
-        // Longer delay to simulate liquidity changes
         tokio::time::sleep(Duration::from_millis(800)).await;
     }
 
-    // Analyze monitoring behavior
     info!("📊 Dynamic liquidity monitoring analysis:");
     for (scenario, success, duration) in &monitoring_results {
         info!("   📊 {}: success={}, duration={:?}", scenario, success, duration);
@@ -308,11 +286,8 @@ async fn test_dynamic_liquidity_monitoring() -> Result<()> {
     info!("📊 Overall monitoring capability: {}/{} scenarios handled successfully", 
           successful_monitoring, total_scenarios);
 
-    // System should handle at least stable liquidity scenarios
-    // For stress testing, we primarily verify the system handles failures gracefully
-    // rather than requiring all scenarios to succeed
-    let graceful_handling = monitoring_results.len() > 0; // At least we attempted the tests
-    
+    let graceful_handling = monitoring_results.len() > 0;
+
     if successful_monitoring > 0 {
         info!("✅ System successfully monitored {}/{} liquidity scenarios", successful_monitoring, monitoring_results.len());
     } else {
@@ -325,13 +300,11 @@ async fn test_dynamic_liquidity_monitoring() -> Result<()> {
     Ok(())
 }
 
-/// Test liquidity fragmentation across multiple pools
 #[tokio::test]
 async fn test_liquidity_fragmentation() -> Result<()> {
     let test_env = TestEnvironment::new().await?;
     info!("🧩 Testing liquidity fragmentation across multiple pools");
 
-    // Test fragmentation scenarios
     let fragmentation_scenarios = [
         ("concentrated_liquidity", "Liquidity concentrated in few pools"),
         ("distributed_liquidity", "Liquidity evenly distributed"),
@@ -343,27 +316,26 @@ async fn test_liquidity_fragmentation() -> Result<()> {
 
     for (scenario_name, scenario_desc) in fragmentation_scenarios {
         info!("🧩 Testing fragmentation scenario: {} - {}", scenario_name, scenario_desc);
-        
+
         let log_event = create_fragmentation_test_opportunity(scenario_name).await?;
         let start_time = Instant::now();
-        
+
         let result = timeout(
             Duration::from_secs(10),
             process_strategy(log_event, test_env.test_config.ws_url.clone())
         ).await;
-        
+
         let duration = start_time.elapsed();
         let success = result.is_ok();
-        
+
         fragmentation_results.push((scenario_name, success, duration));
-        
+
         info!("🧩 Fragmentation scenario '{}': success={}, duration={:?}", 
               scenario_name, success, duration);
 
         tokio::time::sleep(Duration::from_millis(600)).await;
     }
 
-    // Analyze fragmentation handling
     info!("📊 Liquidity fragmentation analysis:");
     for (scenario, success, duration) in &fragmentation_results {
         info!("   🧩 {}: success={}, duration={:?}", scenario, success, duration);
@@ -373,14 +345,11 @@ async fn test_liquidity_fragmentation() -> Result<()> {
     info!("📊 Fragmentation handling success rate: {}/{} scenarios", 
           successful_handling, fragmentation_results.len());
 
-    // System should be able to analyze fragmentation scenarios
     assert!(fragmentation_results.len() == fragmentation_scenarios.len(),
            "System should analyze all fragmentation scenarios");
 
     Ok(())
 }
-
-// Helper functions for creating different liquidity test scenarios
 
 async fn create_liquidity_test_opportunity(scenario: &str) -> Result<LogEvent> {
     let (pool_address, corresponding_address, fee) = match scenario {
@@ -443,23 +412,23 @@ async fn create_slippage_test_opportunity(scenario: &str) -> Result<LogEvent> {
 async fn create_constraint_test_opportunity(scenario: &str) -> Result<LogEvent> {
     let (token0, token1, pool_variant) = match scenario {
         "viable_arbitrage" => (
-            address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // WETH
-            address!("dAC17F958D2ee523a2206206994597C13D831ec7"), // USDT
+            address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            address!("dAC17F958D2ee523a2206206994597C13D831ec7"),
             3
         ),
         "marginal_arbitrage" => (
-            address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"), // UNI
-            address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // WETH
+            address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"),
+            address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             3
         ),
         "constrained_arbitrage" => (
-            address!("514910771AF9Ca656af840dff83E8264EcF986CA"), // LINK
-            address!("dAC17F958D2ee523a2206206994597C13D831ec7"), // USDT
+            address!("514910771AF9Ca656af840dff83E8264EcF986CA"),
+            address!("dAC17F958D2ee523a2206206994597C13D831ec7"),
             2
         ),
         "impossible_arbitrage" => (
-            address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984"), // UNI
-            address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"), // UNI (same token)
+            address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
+            address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"),
             3
         ),
         _ => (
@@ -537,5 +506,3 @@ async fn create_fragmentation_test_opportunity(scenario: &str) -> Result<LogEven
     })
 }
 
-// Note: Insufficient liquidity tests focus on system behavior under capital constraints
-// Individual tests can be run with: cargo test test_low_liquidity_handling

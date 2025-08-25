@@ -1,10 +1,6 @@
-// Test library file - this allows all tests to share common modules
-// without needing path macros
-
 pub mod utils;
 pub mod fixtures;
 
-// Test modules organized by category
 pub mod atomic {
     pub mod atomic_tests;
 }
@@ -30,9 +26,6 @@ pub mod evm {
     pub mod evm_simulator_tests;
 }
 
-pub mod environment {
-    pub mod test_environment_demo;
-}
 
 pub mod performance {
     pub mod high_frequency_tests;
@@ -62,3 +55,4 @@ pub mod misc {
     pub mod logger_tests;
     pub mod rpc_call_measurement_tests;
 }
+

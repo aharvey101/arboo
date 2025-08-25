@@ -1,7 +1,3 @@
-// E2E Test Runner Binary
-// This binary can be run independently to execute end-to-end tests
-// Usage: cargo run --bin e2e_test_runner
-
 use anyhow::Result;
 use log::info;
 use std::process;
@@ -11,7 +7,7 @@ mod e2e_test_runner {
     pub mod individual_tests;
     pub mod test_environment;
     pub mod reporter;
-    
+
     pub use test_environment::*;
     pub use reporter::*;
 }
@@ -43,34 +39,29 @@ fn print_help() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup our dedicated test logger
+
     setup_test_logger();
-    
-    // Parse command line arguments first to check verbose mode
+
     let args: Vec<String> = std::env::args().collect();
     let mut verbose = false;
-    
-    // Quick scan for verbose flag
+
     for arg in args.iter().skip(1) {
         if arg == "--verbose" || arg == "-v" {
             verbose = true;
             break;
         }
     }
-    
+
     if verbose {
         info!("🧪 Starting E2E Test Runner");
     }
 
-    // Create a Jest-style reporter for the overall test run
     let overall_reporter = Reporter::new();
     overall_reporter.start_suite("E2E Test Runner - All Test Suites");
 
-    // Parse command line arguments for specific test selection and verbosity
     let mut test_name = "all";
-    verbose = false; // Reset and parse properly
-    
-    // Parse arguments - more flexible approach
+    verbose = false;
+
     for arg in args.iter().skip(1) {
         match arg.as_str() {
             "--verbose" | "-v" => {
@@ -84,22 +75,20 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             _ => {
-                // If it's not a flag, treat it as test_name
+
                 if !arg.starts_with('-') {
                     test_name = arg;
                 }
             }
         }
     }
-    
+
     if verbose {
         info!("🔍 Running in verbose mode - showing detailed test output");
     } else {
-        // Only show this reminder in quiet mode, but make it less prominent
-        // info!("💡 Use --verbose or -v flag to see detailed test output");
+
     }
-    
-    // Set global verbosity flag
+
     e2e_test_runner::individual_tests::set_verbose_mode(verbose);
 
     match test_name {
@@ -108,7 +97,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         "all" => {
-            // Run all discovered categories
+
             let categories = e2e_test_runner::individual_tests::discover_test_categories()?;
             for category in &categories {
                 if verbose {
@@ -117,7 +106,7 @@ async fn main() -> Result<()> {
                 e2e_test_runner::individual_tests::run_test_category(&category.name).await?;
             }
         }
-        // Special hardcoded categories for backwards compatibility
+
         "provider" => e2e_test_runner::test_categories::run_provider_connection_test().await?,
         "component" => {
             e2e_test_runner::test_categories::run_pool_tests().await?;
@@ -126,10 +115,10 @@ async fn main() -> Result<()> {
         "full-flow" => e2e_test_runner::test_categories::run_comprehensive_flow_tests().await?,
         "stress" => e2e_test_runner::test_categories::run_edge_case_tests().await?,
         category_name => {
-            // Try to run as a discovered category
+
             match e2e_test_runner::individual_tests::run_test_category(category_name).await {
                 Ok(_) => {
-                    // Successfully ran discovered category
+
                 }
                 Err(_) => {
                     eprintln!("❌ Unknown test category: {}", category_name);
@@ -143,3 +132,4 @@ async fn main() -> Result<()> {
     println!("✅ All selected test categories completed successfully!");
     Ok(())
 }
+

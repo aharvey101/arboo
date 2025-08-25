@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-// Mock WebSocket Provider for Controlled Testing Scenarios
-// Provides utilities for simulating WebSocket connections and events
-
 use anyhow::{Result, Context};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -16,7 +13,6 @@ use log::{info, debug, warn};
 use alloy::primitives::{Address, U256, B256};
 use rand::{Rng, thread_rng};
 
-// Helper function to generate random B256
 fn random_b256() -> B256 {
     let mut rng = thread_rng();
     let mut bytes = [0u8; 32];
@@ -24,7 +20,6 @@ fn random_b256() -> B256 {
     B256::from(bytes)
 }
 
-// Helper function to generate random Address
 fn random_address() -> Address {
     let mut rng = thread_rng();
     let mut bytes = [0u8; 20];
@@ -32,7 +27,6 @@ fn random_address() -> Address {
     Address::from(bytes)
 }
 
-/// Mock WebSocket server that simulates blockchain WebSocket providers
 pub struct MockWebSocketProvider {
     port: u16,
     sender: broadcast::Sender<MockEvent>,
@@ -41,7 +35,6 @@ pub struct MockWebSocketProvider {
     is_running: Arc<Mutex<bool>>,
 }
 
-/// Events that can be simulated by the mock provider
 #[derive(Debug, Clone)]
 pub enum MockEvent {
     NewBlock {
@@ -86,26 +79,24 @@ pub enum ConnectionErrorType {
     AuthenticationFailed,
 }
 
-/// Predefined scenarios that can be replayed
 #[derive(Debug, Clone)]
 pub struct MockScenario {
     pub name: String,
-    pub events: Vec<(u64, MockEvent)>, // (delay_ms, event)
+    pub events: Vec<(u64, MockEvent)>,
     pub duration_ms: u64,
     pub repeat: bool,
 }
 
 impl MockWebSocketProvider {
-    /// Create a new mock WebSocket provider
+
     pub async fn new() -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
-        
+
         let (sender, receiver) = broadcast::channel(1000);
         let scenarios = Arc::new(Mutex::new(HashMap::new()));
         let is_running = Arc::new(Mutex::new(false));
 
-        // Start the WebSocket server
         let sender_clone = sender.clone();
         tokio::spawn(Self::run_server(listener, sender_clone, scenarios.clone(), is_running.clone()));
 
@@ -118,16 +109,14 @@ impl MockWebSocketProvider {
         };
 
         info!("🎭 Mock WebSocket provider started on port {}", port);
-        
+
         Ok(mock_provider)
     }
 
-    /// Get the WebSocket URL for this mock provider
     pub fn ws_url(&self) -> String {
         format!("ws://127.0.0.1:{}", self.port)
     }
 
-    /// Start broadcasting events from a predefined scenario
     pub async fn start_scenario(&self, scenario_name: &str) -> Result<()> {
         let scenario = {
             let scenarios = self.scenarios.lock().unwrap();
@@ -157,25 +146,21 @@ impl MockWebSocketProvider {
         Ok(())
     }
 
-    /// Send a single event immediately
     pub fn send_event(&self, event: MockEvent) -> Result<()> {
         self.sender.send(event)
             .context("Failed to send mock event")?;
         Ok(())
     }
 
-    /// Add a predefined scenario
     pub fn add_scenario(&self, scenario: MockScenario) {
         let mut scenarios = self.scenarios.lock().unwrap();
         scenarios.insert(scenario.name.clone(), scenario);
     }
 
-    /// Subscribe to events from this mock provider
     pub fn subscribe(&self) -> broadcast::Receiver<MockEvent> {
         self.sender.subscribe()
     }
 
-    /// Simulate a series of new blocks
     pub async fn simulate_blocks(&self, start_block: u64, count: u64, interval_ms: u64) -> Result<()> {
         let sender = self.sender.clone();
         tokio::spawn(async move {
@@ -186,7 +171,7 @@ impl MockWebSocketProvider {
                     hash: random_b256(),
                     timestamp: chrono::Utc::now().timestamp() as u64,
                     gas_limit: 30_000_000,
-                    base_fee: Some(20_000_000_000), // 20 gwei
+                    base_fee: Some(20_000_000_000),
                 };
 
                 if let Err(e) = sender.send(event) {
@@ -200,7 +185,6 @@ impl MockWebSocketProvider {
         Ok(())
     }
 
-    /// Simulate connection errors
     pub fn simulate_connection_error(&self, error_type: ConnectionErrorType, message: &str) -> Result<()> {
         let event = MockEvent::ConnectionError {
             error_type,
@@ -209,7 +193,6 @@ impl MockWebSocketProvider {
         self.send_event(event)
     }
 
-    /// Stop the mock WebSocket provider
     pub async fn stop(self) -> Result<()> {
         info!("Stopping mock WebSocket provider on port {}", self.port);
         {
@@ -220,7 +203,6 @@ impl MockWebSocketProvider {
         Ok(())
     }
 
-    /// Internal server runner
     async fn run_server(
         listener: TcpListener,
         event_sender: broadcast::Sender<MockEvent>,
@@ -236,7 +218,7 @@ impl MockWebSocketProvider {
 
         while let Ok((stream, addr)) = listener.accept().await {
             debug!("📞 New WebSocket connection from {}", addr);
-            
+
             let _event_sender_clone = event_sender.clone();
             let event_receiver_clone = event_sender.subscribe();
 
@@ -248,7 +230,6 @@ impl MockWebSocketProvider {
         }
     }
 
-    /// Handle individual WebSocket connections
     async fn handle_connection(
         stream: TcpStream,
         mut event_receiver: broadcast::Receiver<MockEvent>,
@@ -256,7 +237,6 @@ impl MockWebSocketProvider {
         let ws_stream = accept_async(stream).await?;
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        // Handle incoming messages and outgoing events concurrently
         let send_task = tokio::spawn(async move {
             while let Ok(event) = event_receiver.recv().await {
                 let message = Self::event_to_jsonrpc(&event);
@@ -274,7 +254,7 @@ impl MockWebSocketProvider {
                 match msg {
                     Ok(Message::Text(text)) => {
                         debug!("� Received: {}", text);
-                        // We could handle JSON-RPC requests here if needed
+
                     }
                     Ok(Message::Close(_)) => {
                         debug!("🔌 WebSocket connection closed");
@@ -289,7 +269,6 @@ impl MockWebSocketProvider {
             }
         });
 
-        // Wait for either task to complete
         tokio::select! {
             _ = send_task => {},
             _ = receive_task => {},
@@ -298,14 +277,13 @@ impl MockWebSocketProvider {
         Ok(())
     }
 
-    /// Handle JSON-RPC requests from clients
     fn handle_jsonrpc_request(request: Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(json!(null));
         let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        
+
         match method {
             "eth_subscribe" => {
-                // Return a mock subscription ID
+
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -339,7 +317,6 @@ impl MockWebSocketProvider {
         }
     }
 
-    /// Convert mock events to JSON-RPC notifications
     fn event_to_jsonrpc(event: &MockEvent) -> Value {
         match event {
             MockEvent::NewBlock { number, hash, timestamp, gas_limit, base_fee } => {
@@ -386,11 +363,10 @@ impl MockWebSocketProvider {
     }
 }
 
-/// Predefined mock scenarios
 pub struct MockScenarios;
 
 impl MockScenarios {
-    /// Normal operation with regular blocks and some transactions
+
     pub fn normal_operation() -> MockScenario {
         MockScenario {
             name: "normal_operation".to_string(),
@@ -415,7 +391,6 @@ impl MockScenarios {
         }
     }
 
-    /// Network instability with connection errors
     pub fn network_instability() -> MockScenario {
         MockScenario {
             name: "network_instability".to_string(),
@@ -448,17 +423,15 @@ impl MockScenarios {
         }
     }
 
-    /// High-frequency trading scenario with many events
     pub fn high_frequency() -> MockScenario {
         let mut events = Vec::new();
-        
-        // Generate rapid-fire events
+
         for i in 0..100 {
             events.push((i * 100, MockEvent::NewTransaction {
                 hash: random_b256(),
                 from: random_address(),
                 to: Some(random_address()),
-                value: U256::from(1000000000000000000u64), // 1 ETH
+                value: U256::from(1000000000000000000u64),
                 gas_price: 20_000_000_000 + (i * 1_000_000_000),
                 gas_limit: 21000,
             }));
@@ -496,3 +469,4 @@ mod tests {
         assert!(!instability.events.is_empty());
     }
 }
+

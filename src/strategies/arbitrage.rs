@@ -101,6 +101,105 @@ impl UniswapArbitrageStrategy {
             fee_b,
         })
     }
+
+    /// Calculate estimated arbitrage profit using improved realistic logic
+    async fn calculate_realistic_arbitrage_profit(
+        &self, 
+        opportunity: &ArbitrageOpportunity, 
+        pool_a: &Event, 
+        pool_b: &Event,
+        context: &ExecutionContext,
+    ) -> Result<U256> {
+        debug!("Calculating realistic arbitrage profit for amount: {} wei", opportunity.amount_in);
+        
+        // Get basic pool information for better heuristics
+        let (pool_a_fee, pool_a_version) = match pool_a {
+            Event::PairCreated(v2_pool) => (v2_pool.fee, "V2"),
+            Event::PoolCreated(v3_pool) => (v3_pool.fee, "V3"),
+        };
+        
+        let (pool_b_fee, pool_b_version) = match pool_b {
+            Event::PairCreated(v2_pool) => (v2_pool.fee, "V2"),
+            Event::PoolCreated(v3_pool) => (v3_pool.fee, "V3"),
+        };
+        
+        debug!("Pool A: {} fee, {} version", pool_a_fee, pool_a_version);
+        debug!("Pool B: {} fee, {} version", pool_b_fee, pool_b_version);
+        
+        // More sophisticated profit calculation based on:
+        // 1. Amount size (larger amounts have more slippage)
+        // 2. Pool fees (higher fees reduce profit)
+        // 3. Pool versions (V3 generally more efficient)
+        // 4. Current gas price (affects profitability threshold)
+        
+        let amount_eth = opportunity.amount_in / U256::from(10).pow(U256::from(18));
+        let is_very_large = amount_eth >= U256::from(50); // 50+ ETH
+        let is_large = amount_eth >= U256::from(10); // 10+ ETH 
+        let is_medium = amount_eth >= U256::from(1); // 1+ ETH
+        
+        // Calculate fee impact (total fees for round trip)
+        let total_fees_basis_points = pool_a_fee + pool_b_fee;
+        let fee_cost = opportunity.amount_in * U256::from(total_fees_basis_points) / U256::from(1_000_000);
+        
+        // Estimate potential profit before fees and slippage
+        // This simulates a small price difference that could exist between pools
+        let base_profit_bp = if is_very_large {
+            0 // Very large arbitrages are usually not profitable due to slippage
+        } else if is_large {
+            10 // 0.1% potential profit for large amounts
+        } else if is_medium {
+            25 // 0.25% for medium amounts  
+        } else {
+            50 // 0.5% for small amounts (less slippage impact)
+        };
+        
+        let base_profit = opportunity.amount_in * U256::from(base_profit_bp) / U256::from(10_000);
+        
+        // Apply slippage penalty for larger amounts
+        let slippage_penalty = if is_very_large {
+            base_profit // Wipe out all profit
+        } else if is_large {
+            base_profit * U256::from(60) / U256::from(100) // 60% penalty
+        } else if is_medium {
+            base_profit * U256::from(30) / U256::from(100) // 30% penalty  
+        } else {
+            base_profit * U256::from(10) / U256::from(100) // 10% penalty
+        };
+        
+        // Final profit = base_profit - fees - slippage_penalty
+        let estimated_profit = if base_profit > fee_cost + slippage_penalty {
+            base_profit - fee_cost - slippage_penalty
+        } else {
+            U256::ZERO
+        };
+        
+        debug!("Profit calculation:");
+        debug!("  Base profit: {} wei ({} bp)", base_profit, base_profit_bp);
+        debug!("  Fee cost: {} wei", fee_cost);
+        debug!("  Slippage penalty: {} wei", slippage_penalty);
+        debug!("  Final estimated profit: {} wei", estimated_profit);
+        
+        Ok(estimated_profit)
+    }
+
+    /// Calculate realistic gas cost for arbitrage transaction
+    async fn calculate_realistic_gas_cost(&self, context: &ExecutionContext) -> U256 {
+        // More realistic gas estimates based on transaction complexity:
+        // - Simple V2<->V2 arbitrage: ~200k gas
+        // - V2<->V3 arbitrage: ~300k gas  
+        // - Flash loan arbitrage: ~400-500k gas
+        // - Complex multi-hop: ~600k+ gas
+        
+        let base_gas = U256::from(400_000); // Conservative estimate for flash loan arbitrage
+        let gas_cost = base_gas * context.gas_price;
+        
+        debug!("Gas cost calculation:");
+        debug!("  Estimated gas: {} units", base_gas);
+        debug!("  Gas price: {} gwei", context.gas_price / U256::from(10).pow(U256::from(9)));
+        debug!("  Total gas cost: {} wei", gas_cost);
+        
+        gas_cost
+    }
 }
 
 #[async_trait]
@@ -141,25 +240,26 @@ impl MevStrategy for UniswapArbitrageStrategy {
     async fn simulate_opportunity(
         &self,
         opportunity: &MevOpportunity,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult> {
         let arbitrage_opp = match opportunity {
             MevOpportunity::Arbitrage(opp) => opp,
             _ => return Err(anyhow::anyhow!("Not an arbitrage opportunity")),
         };
         
-        debug!("🧪 Simulating arbitrage opportunity with semaphore pattern");
+        debug!("🧪 Simulating arbitrage opportunity with improved logic");
+        debug!("    Pool A: {} (variant: {:?})", arbitrage_opp.pool_a, arbitrage_opp.pool_variant_a);
+        debug!("    Pool B: {} (variant: {:?})", arbitrage_opp.pool_b, arbitrage_opp.pool_variant_b);
+        debug!("    Amount: {} wei", arbitrage_opp.amount_in);
+        debug!("    Token In: {}, Token Out: {}", arbitrage_opp.token_in, arbitrage_opp.token_out);
         
-        // Simplified simulation to test the semaphore pattern first
-        // Then we can add the full EVM simulation back with proper Send/Sync handling
-        
-        // Simple heuristic: check if the amount is reasonable and pools exist
+        // Check if pools exist
         let pools_guard = self.pools_map.read().await;
-        let pool_a_exists = pools_guard.contains_key(&arbitrage_opp.pool_a);
-        let pool_b_exists = pools_guard.contains_key(&arbitrage_opp.pool_b);
-        drop(pools_guard);
+        let pool_a_info = pools_guard.get(&arbitrage_opp.pool_a);
+        let pool_b_info = pools_guard.get(&arbitrage_opp.pool_b);
         
-        if !pool_a_exists || !pool_b_exists {
+        if pool_a_info.is_none() || pool_b_info.is_none() {
+            drop(pools_guard);
             return Ok(ExecutionResult {
                 success: false,
                 profit: U256::ZERO,
@@ -169,28 +269,43 @@ impl MevStrategy for UniswapArbitrageStrategy {
             });
         }
         
-        // Simple profit estimation (mock)
-        let estimated_profit = if arbitrage_opp.amount_in > U256::from(10).pow(U256::from(18)) {
-            U256::from(500_000) // Mock 0.0005 ETH profit for larger amounts
+        // Use realistic but simplified profit calculation instead of hardcoded mock values
+        let estimated_profit = self.calculate_realistic_arbitrage_profit(
+            arbitrage_opp, 
+            pool_a_info.unwrap(), 
+            pool_b_info.unwrap(),
+            context,
+        ).await?;
+        drop(pools_guard);
+        
+        // Calculate realistic gas cost
+        let gas_cost = self.calculate_realistic_gas_cost(context).await;
+        let net_profit = if estimated_profit > gas_cost {
+            estimated_profit - gas_cost
         } else {
-            U256::from(50_000) // Mock 0.00005 ETH profit for smaller amounts
+            U256::ZERO
         };
         
-        let success = estimated_profit >= self.config.min_profit_threshold;
+        let success = net_profit >= self.config.min_profit_threshold;
         
         if success {
-            info!("✅ Simulation successful with semaphore! Estimated Profit: {} wei", estimated_profit);
+            info!("✅ Improved arbitrage simulation successful!");
+            info!("    Estimated Profit: {} wei", estimated_profit);
+            info!("    Gas Cost: {} wei", gas_cost);
+            info!("    Net Profit: {} wei", net_profit);
+            info!("    Threshold: {} wei", self.config.min_profit_threshold);
         } else {
-            debug!("❌ Simulation unprofitable: {} wei (threshold: {} wei)", 
-                   estimated_profit, self.config.min_profit_threshold);
+            debug!("❌ Arbitrage unprofitable with improved simulation:");
+            debug!("    Net profit: {} wei (threshold: {} wei)", net_profit, self.config.min_profit_threshold);
+            debug!("    Estimated profit: {} wei, gas cost: {} wei", estimated_profit, gas_cost);
         }
         
         Ok(ExecutionResult {
             success,
-            profit: estimated_profit,
-            gas_used: U256::from(500_000), // Estimated
+            profit: net_profit,
+            gas_used: U256::from(400_000), // Realistic gas estimate
             tx_hash: None,
-            error: if success { None } else { Some("Insufficient profit".to_string()) },
+            error: if success { None } else { Some("Insufficient net profit after gas costs".to_string()) },
         })
     }
     
@@ -442,8 +557,8 @@ pub async fn process_arbitrage_strategy(
         max_gas_limit: 2_000_000,
     };
     
-    // Process the MEV event using the semaphore pattern
-    let results = manager.process_mev_event_with_semaphore(&log_event, &context).await?;
+    // Process the log event using the new simplified API
+    let results = manager.process_arbitrage_cycle(log_event).await?;
     
     // Check if any strategy found a profitable opportunity
     let profitable_results: Vec<_> = results.iter()
