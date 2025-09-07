@@ -8,7 +8,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::client::WsConnect;
 use log::info;
 use std::sync::Arc;
-use super::anvil_setup::{AnvilInstance, create_mainnet_fork};
+use super::anvil_setup::{AnvilInstance, create_mainnet_fork, create_mainnet_fork_latest};
 
 pub struct TestEnvironment {
     pub provider: Arc<RootProvider<PubSubFrontend>>,
@@ -45,9 +45,7 @@ impl Default for TestConfig {
 
         Self {
             ws_url,
-            fork_block_number: std::env::var("FORK_BLOCK_NUMBER")
-                .ok()
-                .and_then(|s| s.parse().ok()),
+            fork_block_number: None, // Use latest block instead of hardcoded 23000000
             test_timeout_secs: std::env::var("TEST_TIMEOUT_SECS")
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
@@ -68,7 +66,13 @@ impl TestEnvironment {
         info!("🔧 Always using local anvil fork");
 
         info!("🔧 Setting up local anvil fork...");
-        let anvil = create_mainnet_fork(config.fork_block_number).await?;
+        let anvil = if config.fork_block_number.is_some() {
+            info!("🎯 Using specified fork block: {:?}", config.fork_block_number);
+            create_mainnet_fork(config.fork_block_number).await?
+        } else {
+            info!("🚀 Using latest mainnet block for fork");
+            create_mainnet_fork_latest().await?
+        };
 
         let ws_url = format!("ws://127.0.0.1:{}", anvil.port);
         info!("🔗 Connecting to local anvil at: {}", ws_url);

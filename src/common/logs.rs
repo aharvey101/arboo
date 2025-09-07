@@ -357,6 +357,33 @@ impl LogEvent {
     }
 }
 
+// Import the MevEvent trait at the top of the file
+use crate::strategies::traits::MevEvent;
+
+impl MevEvent for LogEvent {
+    fn event_type(&self) -> &str {
+        "arbitrage_opportunity"
+    }
+    
+    fn block_number(&self) -> u64 {
+        // In a real implementation, this would come from the log data
+        // For tests, we can use a default value
+        0
+    }
+    
+    fn transaction_index(&self) -> Option<u64> {
+        None
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
+    fn clone_boxed(&self) -> Box<dyn MevEvent> {
+        Box::new(self.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

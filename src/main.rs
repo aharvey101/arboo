@@ -124,14 +124,13 @@ async fn main() -> Result<()> {
 
     let strategy_manager = StrategyManager::new(
         ws_url.clone(),
-        16, // max connections
-        pools_map.clone(),
+        30000, // max connections
         executor_address,
     )
     .await?;
 
     // Create a bridge task to convert LogEvents to MevEvents (not needed for now)
-    let log_receiver = log_event_sender.subscribe();
+    let mut log_receiver = log_event_sender.subscribe();
 
     // Start log listener - need to pass the HashMap, not Arc<RwLock<HashMap>>
     let pools_map_for_logs = {
@@ -144,35 +143,32 @@ async fn main() -> Result<()> {
         log_event_sender,
     ));
 
-    // Start strategy manager
-    let strategy_manager_task = {
-        let mut log_receiver = log_receiver;
-        tokio::spawn(async move {
-            info!("🚀 Starting Strategy Manager event processing loop");
-            
-            while let Ok(log_event) = log_receiver.recv().await {
-                // Process each log event for arbitrage opportunities
-                match strategy_manager.process_arbitrage_cycle(log_event).await {
-                    Ok(results) => {
-                        if !results.is_empty() {
-                            info!("📊 Processed arbitrage cycle with {} results", results.len());
-                            for result in results {
-                                if result.success {
-                                    info!("✅ Successful arbitrage execution: Profit {} wei", result.profit);
-                                } else {
-                                    debug!("📉 Unprofitable arbitrage attempt");
-                                }
+    // Start strategy manager on main thread (non-Send types can't cross thread boundaries)
+    let strategy_manager_task = async move {
+        info!("🚀 Starting Strategy Manager event processing loop");
+        
+        while let Ok(log_event) = log_receiver.recv().await {
+            // Process each log event for arbitrage opportunities
+            match strategy_manager.process_arbitrage_cycle(log_event).await {
+                Ok(results) => {
+                    if !results.is_empty() {
+                        info!("📊 Processed arbitrage cycle with {} results", results.len());
+                        for result in results {
+                            if result.success {
+                                info!("✅ Successful arbitrage execution: Profit {} wei", result.profit);
+                            } else {
+                                debug!("📉 Unprofitable arbitrage attempt");
                             }
                         }
                     }
-                    Err(e) => {
-                        debug!("⚠️ Arbitrage cycle processing failed: {}", e);
-                    }
+                }
+                Err(e) => {
+                    debug!("⚠️ Arbitrage cycle processing failed: {}", e);
                 }
             }
-            
-            warn!("📡 Log receiver channel closed, stopping strategy manager");
-        })
+        }
+        
+        warn!("📡 Log receiver channel closed, stopping strategy manager");
     };
 
     info!("🎯 Generalized MEV Bot started successfully!");

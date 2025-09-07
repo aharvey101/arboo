@@ -99,7 +99,7 @@ impl Default for StrategyConfig {
 
 /// Generic trait that all MEV strategies must implement
 #[async_trait]
-pub trait MevStrategy: Send + Sync + Debug {
+pub trait MevStrategy:  Debug {
     /// Name of the strategy
     fn name(&self) -> &str;
     

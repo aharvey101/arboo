@@ -312,6 +312,27 @@ pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInsta
     AnvilInstance::new_with_fork_block(config, block_number).await
 }
 
+pub async fn get_latest_mainnet_block() -> Result<u64> {
+    use alloy::providers::{Provider, ProviderBuilder};
+    
+    let rpc_url = std::env::var("MAINNET_RPC_URL")
+        .unwrap_or_else(|_| "http://192.168.0.14:8545".to_string());
+    
+    info!("🔍 Getting latest block from: {}", rpc_url);
+    
+    let provider = ProviderBuilder::new().on_http(rpc_url.parse().unwrap());
+    let latest_block = provider.get_block_number().await?;
+    
+    info!("📦 Latest mainnet block: {}", latest_block);
+    Ok(latest_block)
+}
+
+pub async fn create_mainnet_fork_latest() -> Result<AnvilInstance> {
+    let latest_block = get_latest_mainnet_block().await?;
+    info!("🎯 Forking from latest block: {}", latest_block);
+    create_mainnet_fork(Some(latest_block)).await
+}
+
 pub async fn create_clean_anvil() -> Result<AnvilInstance> {
     let config = AnvilConfig {
         fork_url: None,

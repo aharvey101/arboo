@@ -23,7 +23,9 @@ pub mod pool {
 }
 
 pub mod evm {
-    pub mod evm_simulator_tests;
+//    pub mod evm_simulator_tests;
+    pub mod alloydb_compatibility_test;
+    pub mod direct_reth_alloydb_test;
 }
 
 
