@@ -149,7 +149,7 @@ async fn setup_basic_test_environment(
 
     // Real mainnet addresses for ETH/USDC
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH
-    let usdc_address = address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"); // USDC
+    let usdc_address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // USDC (Circle)
 
     // Real Uniswap pool addresses
     let v3_pool_address = address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"); // USDC/WETH 0.05% V3 pool
@@ -213,16 +213,13 @@ async fn execute_market_moving_swap(
 
     info!("🐋 Executing large swap to create arbitrage opportunity...");
 
-    // Use a known whale address with ETH balance
-    let whale_address = address!("47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503"); // Known whale
+    // Use Anvil's first pre-funded account (has 10,000 ETH by default)
+    let funded_account = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"); // Anvil account #0
     
-    // For now, we'll simulate the market-moving transaction
-    // In a real implementation, you would:
-    // 1. Impersonate a whale account using anvil_impersonateAccount
-    // 2. Execute a large swap on Uniswap V2 to move the price
-    // 3. This creates arbitrage opportunity between V2 and V3
+    info!("💰 Using Anvil pre-funded account with 10,000 ETH");
+    info!("🎭 No impersonation needed - account has signing capability");
     
-    info!("📍 Whale address: {:#x}", whale_address);
+    info!("📍 Funded account: {:#x}", funded_account);
     info!("📍 V2 Pool: {:#x}", setup.v2_pool_address);
     info!("📍 V3 Pool: {:#x}", setup.v3_pool_address);
     info!("📍 Token0 (USDC): {:#x}", setup.token0);
@@ -236,7 +233,7 @@ async fn execute_market_moving_swap(
     info!("💱 Would swap {} ETH for USDC on V2 to create price imbalance", swap_amount / U256::from(10u128.pow(18)));
     
     // Execute the actual swap
-    match execute_uniswap_v2_swap(provider, whale_address, v2_router, swap_amount, setup).await {
+    match execute_uniswap_v2_swap(provider, funded_account, v2_router, swap_amount, setup).await {
         Ok(tx_hash) => {
             info!("✅ Large swap executed successfully: {:?}", tx_hash);
             info!("📊 ARBITRAGE OPPORTUNITY CREATED!");
@@ -591,7 +588,7 @@ async fn execute_uniswap_v2_swap(
     );
 
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let usdc_address = address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2");
+    let usdc_address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");  // USDC (Circle) on mainnet
 
     // Build the swap path: ETH -> WETH -> USDC
     let path = vec![weth_address, usdc_address];
@@ -602,9 +599,13 @@ async fn execute_uniswap_v2_swap(
         .unwrap()
         .as_secs() + 300);
     
+    // Calculate minimum amount out (very low slippage tolerance for testing)
+    // For 20 ETH, expect at least some USDC (using a very conservative estimate)
+    let min_usdc_out = U256::from(1_000_000u64); // 1 USDC (6 decimals) minimum
+    
     // Build the transaction call data
     let swap_call = IUniswapV2Router::swapExactETHForTokensCall {
-        amountOutMin: U256::from(0), // Accept any amount of tokens out (for testing)
+        amountOutMin: min_usdc_out,
         path,
         to: whale_address,
         deadline,
