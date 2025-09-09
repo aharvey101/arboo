@@ -157,7 +157,7 @@ async fn setup_basic_test_environment(
 
     // Create arbitrage opportunity by executing a large swap on V2
     info!("💰 Creating arbitrage opportunity with large V2 swap...");
-    let whale_address = address!("742d35Cc6634C0532925a3b8D1C4AC1B8b5C0000");
+    let whale_address = address!("bF3aEB96e164ae67E763D9e050FF124e7c3Fdd28");
     
     // Impersonate a whale account and fund it
     create_arbitrage_opportunity(provider, &whale_address, &v2_pool_address, &weth_address, &usdc_address).await?;
@@ -206,7 +206,7 @@ async fn create_arbitrage_opportunity(
 }
 
 async fn execute_market_moving_swap(
-    _provider: &Arc<RootProvider<PubSubFrontend>>,
+    provider: &Arc<RootProvider<PubSubFrontend>>,
     setup: &ArbitrageSetup,
 ) -> Result<()> {
     use alloy::rpc::types::TransactionRequest;
@@ -235,8 +235,20 @@ async fn execute_market_moving_swap(
     let swap_amount = U256::from(20) * U256::from(10u128.pow(18)); // 20 ETH swap
     info!("💱 Would swap {} ETH for USDC on V2 to create price imbalance", swap_amount / U256::from(10u128.pow(18)));
     
-    // TODO: Implement actual swap execution here
-    // For now, we proceed with the existing mainnet state which should have arbitrage opportunities
+    // Execute the actual swap
+    match execute_uniswap_v2_swap(provider, whale_address, v2_router, swap_amount, setup).await {
+        Ok(tx_hash) => {
+            info!("✅ Large swap executed successfully: {:?}", tx_hash);
+            info!("📊 ARBITRAGE OPPORTUNITY CREATED!");
+            info!("💰 V2 pool price moved due to 20 ETH swap");
+            info!("🔍 V3 pool price remains unchanged");
+            info!("🚨 Arboo should detect this price difference!");
+        }
+        Err(e) => {
+            warn!("⚠️  Large swap failed: {:?}", e);
+            info!("📝 Will proceed with natural mainnet arbitrage opportunities");
+        }
+    }
     
     info!("✅ Market setup complete - existing mainnet state should provide arbitrage opportunities");
     info!("� Arboo should detect price differences between V2 and V3 pools");
@@ -552,4 +564,69 @@ async fn test_arboo_quick_smoke_test() -> Result<()> {
 
     info!("✅ Arboo binary smoke test passed");
     Ok(())
+}
+
+/// Execute a Uniswap V2 swap to create market imbalance
+async fn execute_uniswap_v2_swap(
+    provider: &Arc<RootProvider<PubSubFrontend>>,
+    whale_address: Address,
+    router_address: Address,
+    eth_amount: U256,
+    _setup: &ArbitrageSetup,
+) -> Result<FixedBytes<32>> {
+    use alloy::sol;
+    use alloy::rpc::types::TransactionRequest;
+    use alloy::sol_types::SolCall;
+
+    // Define Uniswap V2 Router interface
+    sol!(
+        interface IUniswapV2Router {
+            function swapExactETHForTokens(
+                uint amountOutMin,
+                address[] calldata path,
+                address to,
+                uint deadline
+            ) external payable returns (uint[] memory amounts);
+        }
+    );
+
+    let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let usdc_address = address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2");
+
+    // Build the swap path: ETH -> WETH -> USDC
+    let path = vec![weth_address, usdc_address];
+    
+    // Use a simple deadline (current timestamp + 5 minutes as seconds)
+    let deadline = U256::from(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() + 300);
+    
+    // Build the transaction call data
+    let swap_call = IUniswapV2Router::swapExactETHForTokensCall {
+        amountOutMin: U256::from(0), // Accept any amount of tokens out (for testing)
+        path,
+        to: whale_address,
+        deadline,
+    };
+
+    let tx_request = TransactionRequest::default()
+        .to(router_address)
+        .from(whale_address)
+        .value(eth_amount)
+        .input(swap_call.abi_encode().into());
+
+    info!("🔄 Sending {} ETH swap transaction from whale address", eth_amount / U256::from(10u128.pow(18)));
+    
+    // Send the transaction
+    let pending_tx = provider.send_transaction(tx_request).await?;
+    let tx_hash = *pending_tx.tx_hash();
+    
+    info!("📝 Transaction sent: {:?}", tx_hash);
+    
+    // Wait for confirmation
+    let receipt = pending_tx.get_receipt().await?;
+    info!("✅ Transaction confirmed in block: {:?}", receipt.block_number);
+    
+    Ok(tx_hash)
 }
