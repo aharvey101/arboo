@@ -23,6 +23,7 @@ use tokio::signal;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,6 +51,9 @@ async fn main() -> Result<()> {
     }
 
     let mut set = JoinSet::new();
+    
+    // Create cancellation token for graceful shutdown
+    let cancellation_token = CancellationToken::new();
 
     // Create channels for different event types
     let (log_event_sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
@@ -141,34 +145,52 @@ async fn main() -> Result<()> {
         provider.clone(),
         pools_map_for_logs,
         log_event_sender,
+        cancellation_token.clone(),
     ));
 
     // Start strategy manager on main thread (non-Send types can't cross thread boundaries)
+    let cancellation_token_strategy = cancellation_token.clone();
     let strategy_manager_task = async move {
         info!("🚀 Starting Strategy Manager event processing loop");
         
-        while let Ok(log_event) = log_receiver.recv().await {
-            // Process each log event for arbitrage opportunities
-            match strategy_manager.process_arbitrage_cycle(log_event).await {
-                Ok(results) => {
-                    if !results.is_empty() {
-                        info!("📊 Processed arbitrage cycle with {} results", results.len());
-                        for result in results {
-                            if result.success {
-                                info!("✅ Successful arbitrage execution: Profit {} wei", result.profit);
-                            } else {
-                                debug!("📉 Unprofitable arbitrage attempt");
+        loop {
+            tokio::select! {
+                log_event = log_receiver.recv() => {
+                    match log_event {
+                        Ok(log_event) => {
+                            // Process each log event for arbitrage opportunities
+                            match strategy_manager.process_arbitrage_cycle(log_event).await {
+                                Ok(results) => {
+                                    if !results.is_empty() {
+                                        info!("📊 Processed arbitrage cycle with {} results", results.len());
+                                        for result in results {
+                                            if result.success {
+                                                info!("✅ Successful arbitrage execution: Profit {} wei", result.profit);
+                                            } else {
+                                                debug!("📉 Unprofitable arbitrage attempt");
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("⚠️ Arbitrage cycle processing failed: {}", e);
+                                }
                             }
+                        }
+                        Err(_) => {
+                            warn!("📡 Log receiver channel closed, stopping strategy manager");
+                            break;
                         }
                     }
                 }
-                Err(e) => {
-                    debug!("⚠️ Arbitrage cycle processing failed: {}", e);
+                _ = cancellation_token_strategy.cancelled() => {
+                    info!("Strategy manager shutdown requested");
+                    break;
                 }
             }
         }
         
-        warn!("📡 Log receiver channel closed, stopping strategy manager");
+        info!("Strategy manager task completed");
     };
 
     info!("🎯 Generalized MEV Bot started successfully!");
@@ -194,6 +216,14 @@ async fn main() -> Result<()> {
         // Wait for Ctrl+C signal
         _ = signal::ctrl_c() => {
             info!("🛑 Received Ctrl+C, shutting down gracefully...");
+            
+            // Trigger cancellation for all tasks
+            cancellation_token.cancel();
+            
+            // Give tasks time to shutdown gracefully
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            
+            // Abort any remaining tasks
             set.abort_all();
 
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

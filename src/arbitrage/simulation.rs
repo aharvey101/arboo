@@ -47,15 +47,19 @@ pub async fn simulation_with_logging(
     });
     
     let (latest_gas_limit, latest_gas_price) = {
-        let mut cache = CACHED_BLOCK_DATA.lock().unwrap();
+        // Check cache first and release lock immediately
+        let cache_data = {
+            let cache = CACHED_BLOCK_DATA.lock().unwrap();
+            cache.clone()
+        };
         
-        // Use cached data if less than 12 seconds old (one block)
-        if let Some((_, _, gas_price, gas_limit, cached_at)) = cache.as_ref() {
-            if cached_at.elapsed().as_secs() < 12 {
+        // Use cached data if less than 11 seconds old (one block)
+        if let Some((_, _, gas_price, gas_limit, cached_at)) = cache_data {
+            if cached_at.elapsed().as_secs() < 11 {
                 log::debug!("Using cached block data, age: {:?}", cached_at.elapsed());
-                (*gas_limit, *gas_price)
+                (gas_limit, gas_price)
             } else {
-                // Refresh cache
+                // Refresh cache - do network calls without holding lock
                 let latest_block_number = provider.get_block_number().await?;
                 log::debug!("got block number: {:?}", latest_block_number);
                 
@@ -70,13 +74,17 @@ pub async fn simulation_with_logging(
                 let gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
                 let timestamp = latest_block.header.timestamp;
                 
-                *cache = Some((latest_block_number, timestamp, gas_price, gas_limit, std::time::Instant::now()));
+                // Update cache with new data
+                {
+                    let mut cache = CACHED_BLOCK_DATA.lock().unwrap();
+                    *cache = Some((latest_block_number, timestamp, gas_price, gas_limit, std::time::Instant::now()));
+                }
                 
                 log::debug!("Refreshed block cache in: {:?}", simulation_start.elapsed());
                 (gas_limit, gas_price)
             }
         } else {
-            // Initialize cache
+            // Initialize cache - do network calls without holding lock
             let latest_block_number = provider.get_block_number().await?;
             let block_id = BlockId::from_str(latest_block_number.to_string().as_str())
                 .map_err(|e| anyhow::anyhow!("Invalid block number format: {}", e))?;
@@ -89,7 +97,11 @@ pub async fn simulation_with_logging(
             let gas_price = U256::from(latest_block.header.base_fee_per_gas.expect("gas"));
             let timestamp = latest_block.header.timestamp;
             
-            *cache = Some((latest_block_number, timestamp, gas_price, gas_limit, std::time::Instant::now()));
+            // Store in cache
+            {
+                let mut cache = CACHED_BLOCK_DATA.lock().unwrap();
+                *cache = Some((latest_block_number, timestamp, gas_price, gas_limit, std::time::Instant::now()));
+            }
             
             (gas_limit, gas_price)
         }
@@ -105,7 +117,6 @@ pub async fn simulation_with_logging(
         &latest_gas_price,
     ).await.inspect_err(|e| log::debug!("Error getting weth balance {:?}", e))?;
 
-    log::debug!("Initial Weth Balance: {:?}", weth_balance);
 
     alloy::sol! {
         #[derive(Debug)]

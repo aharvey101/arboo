@@ -132,13 +132,14 @@ impl EvmSimulator {
         let contract_wallet = PrivateKeySigner::random();
         let _inspector = revm_inspector::RevmInspector::new();
 
-        let alloy_db = CacheDB::new(
-            AlloyDB::new(provider, BlockId::from(block_number))
-                .ok_or_else(|| anyhow::anyhow!("Failed to create AlloyDB: provider or block unavailable"))?
-        );
+        // Create AlloyDB without creating a new runtime - use the current runtime context
+        let alloy_db = AlloyDB::new(provider, BlockId::from(block_number))
+            .ok_or_else(|| anyhow::anyhow!("Failed to create AlloyDB - current runtime may be incompatible"))?;
+
+        let cache_db = CacheDB::new(alloy_db);
 
         let evm = Evm::builder()
-            .with_db(alloy_db)
+            .with_db(cache_db)
             //.with_external_context(EmptyDB::new())
             //.with_external_context(inspector)
             //.append_handler_register(inspector_handle_register)

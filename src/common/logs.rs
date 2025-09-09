@@ -200,6 +200,7 @@ pub async fn get_logs(
     client: Arc<RootProvider<PubSubFrontend>>,
     pairs: HashMap<Address, Event>,
     event_sender: Sender<LogEvent>,
+    cancellation_token: tokio_util::sync::CancellationToken,
 ) {
     info!("Starting log subscription service...");
     
@@ -207,23 +208,32 @@ pub async fn get_logs(
     
     // Spawn queue processor task to handle events from queue to broadcast
     let sender_clone = event_sender.clone();
+    let cancellation_token_clone = cancellation_token.clone();
     tokio::spawn(async move {
         let mut processed_count = 0u64;
         let mut dropped_count = 0u64;
         
-        while let Some(log_event) = event_queue_rx.recv().await {
-            match sender_clone.send(log_event) {
-                Ok(_) => {
-                    processed_count += 1;
-                    if processed_count % 100 == 0 {
-                        debug!("Processed {} events from queue", processed_count);
+        loop {
+            tokio::select! {
+                Some(log_event) = event_queue_rx.recv() => {
+                    match sender_clone.send(log_event) {
+                        Ok(_) => {
+                            processed_count += 1;
+                            if processed_count % 100 == 0 {
+                                debug!("Processed {} events from queue", processed_count);
+                            }
+                        }
+                        Err(_) => {
+                            dropped_count += 1;
+                            if dropped_count % 10 == 0 {
+                                warn!("Dropped {} events (no receivers)", dropped_count);
+                            }
+                        }
                     }
                 }
-                Err(_) => {
-                    dropped_count += 1;
-                    if dropped_count % 10 == 0 {
-                        warn!("Dropped {} events (no receivers)", dropped_count);
-                    }
+                _ = cancellation_token_clone.cancelled() => {
+                    info!("Queue processor shutdown requested");
+                    break;
                 }
             }
         }
@@ -245,7 +255,7 @@ pub async fn get_logs(
     info!("Log subscription established, processing incoming events...");
     
     // Process incoming log stream
-    process_log_stream(stream, processor).await;
+    process_log_stream(stream, processor, cancellation_token).await;
 }
 
 /// Create a filter for V2 and V3 Swap events
@@ -273,7 +283,7 @@ async fn subscribe_to_logs(
 }
 
 /// Enhanced log processing loop with batching for high-frequency scenarios
-async fn process_log_stream<S>(mut stream: S, processor: LogProcessor)
+async fn process_log_stream<S>(mut stream: S, processor: LogProcessor, cancellation_token: tokio_util::sync::CancellationToken)
 where
     S: futures::Stream<Item = Log> + Unpin,
 {
@@ -281,33 +291,41 @@ where
     let mut opportunity_count = 0u64;
     let start_time = std::time::Instant::now();
     
-    while let Some(log) = stream.next().await {
-        processed_count += 1;
-        
-        // Process the log and potentially create an arbitrage opportunity
-        if let Some(log_event) = processor.process_log(&log) {
-            opportunity_count += 1;
-            
-            info!("Arbitrage opportunity detected #{}: V{} pool {:?} -> V{} counterpart {:?}", 
-                  opportunity_count,
-                  if log_event.pool_variant == 2 { 2 } else { 3 },
-                  log_event.log_pool_address,
-                  if log_event.pool_variant == 2 { 3 } else { 2 },
-                  log_event.corresponding_pool_address);
-            
-            processor.send_log_event(log_event);
-        }
-        
-        // Log processing stats every 1000 logs
-        if processed_count % 1000 == 0 {
-            let elapsed = start_time.elapsed();
-            let logs_per_sec = processed_count as f64 / elapsed.as_secs_f64();
-            info!("Processing stats - Logs: {}, Opportunities: {}, Rate: {:.2}/sec", 
-                  processed_count, opportunity_count, logs_per_sec);
+    loop {
+        tokio::select! {
+            Some(log) = stream.next() => {
+                processed_count += 1;
+                
+                // Process the log and potentially create an arbitrage opportunity
+                if let Some(log_event) = processor.process_log(&log) {
+                    opportunity_count += 1;
+                    
+                    info!("Arbitrage opportunity detected #{}: V{} pool {:?} -> V{} counterpart {:?}", 
+                          opportunity_count,
+                          if log_event.pool_variant == 2 { 2 } else { 3 },
+                          log_event.log_pool_address,
+                          if log_event.pool_variant == 2 { 3 } else { 2 },
+                          log_event.corresponding_pool_address);
+                    
+                    processor.send_log_event(log_event);
+                }
+                
+                // Log processing stats every 1000 logs
+                if processed_count % 1000 == 0 {
+                    let elapsed = start_time.elapsed();
+                    let logs_per_sec = processed_count as f64 / elapsed.as_secs_f64();
+                    info!("Processing stats - Logs: {}, Opportunities: {}, Rate: {:.2}/sec", 
+                          processed_count, opportunity_count, logs_per_sec);
+                }
+            }
+            _ = cancellation_token.cancelled() => {
+                info!("Log stream processing shutdown requested");
+                break;
+            }
         }
     }
     
-    warn!("Log stream ended unexpectedly after processing {} logs with {} opportunities", 
+    info!("Log stream ended after processing {} logs with {} opportunities", 
           processed_count, opportunity_count);
 }
 

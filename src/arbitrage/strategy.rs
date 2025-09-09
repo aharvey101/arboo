@@ -28,7 +28,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tokio::sync::{broadcast::Sender, mpsc, RwLock, Semaphore};
+use tokio::sync::{broadcast::Sender, mpsc, RwLock};
 
 /// Strategy worker pool for handling arbitrage opportunities efficiently
 /// Uses connection pooling, memory caching, and optimized processing with bounded concurrency
@@ -37,70 +37,28 @@ pub struct StrategyWorkerPool {
     sender: mpsc::Sender<LogEvent>,
     connection_pool: ConnectionPool,
     pools_map: Arc<RwLock<HashMap<Address, Event>>>,
-    // Add semaphore for limiting concurrent tasks
-    task_semaphore: Arc<Semaphore>,
 }
 
 impl StrategyWorkerPool {
-    pub async fn new(sender: Sender<LogEvent>, ws_url: String, max_connections: usize) -> Result<Self> {
+    pub async fn new(_sender: Sender<LogEvent>, ws_url: String, max_connections: usize) -> Result<Self> {
         let (tx, _rx) = mpsc::channel::<LogEvent>(1000);
         let connection_pool = ConnectionPool::new(ws_url, max_connections);
         
         // Load pools map once and cache it
         let pools_map = Arc::new(RwLock::new(Self::load_pools_map().await?));
         
-        // Create semaphore to limit concurrent strategy tasks (prevent thread explosion)
-        let max_concurrent_tasks = (max_connections * 2).min(32); // Reasonable limit
-        let task_semaphore = Arc::new(Semaphore::new(max_concurrent_tasks));
-        
-        info!("Strategy worker pool configured with max {} concurrent tasks", max_concurrent_tasks);
-        
-        // Use standard spawn with bounded concurrency
-        let pool_clone = connection_pool.clone();
-        let pools_map_clone = pools_map.clone();
-        let semaphore_clone = task_semaphore.clone();
-        let mut event_receiver = sender.subscribe();
-
-        tokio::spawn(async move {
-            info!("Starting bounded strategy worker with {} max concurrent tasks", max_concurrent_tasks);
-            while let Ok(log_event) = event_receiver.recv().await {
-                let pool_clone = pool_clone.clone();
-                let pools_map_clone = pools_map_clone.clone();
-                let semaphore_clone_inner = semaphore_clone.clone();
-                
-                // Use async spawn instead of spawn_blocking to handle semaphore properly
-                tokio::spawn(async move {
-                    // Acquire permit asynchronously - this blocks if no permits available
-                    let _permit = match semaphore_clone_inner.try_acquire() {
-                        Ok(permit) => permit,
-                        Err(_) => {
-                            log::warn!("Max concurrent tasks reached, dropping event");
-                            return;
-                        }
-                    };
-                    
-                    // Run CPU-intensive work in blocking context
-                    let result = tokio::task::spawn_blocking(move || {
-                        tokio::runtime::Handle::current().block_on(async move {
-                            process_strategy_optimized(log_event, &pool_clone, &pools_map_clone).await
-                        })
-                    }).await;
-                    
-                    if let Ok(Err(e)) = result {
-                        log::error!("Strategy processing error: {}", e);
-                    }
-                    // Permit automatically released when _permit goes out of scope
-                });
-            }
-            info!("Strategy worker stopped");
-        });
-        
+        // Store components for direct processing - no spawning needed since main app handles this
+        // EVM components can't be Send+Sync so we avoid spawning tasks entirely
         Ok(Self {
             sender: tx,
             connection_pool,
             pools_map,
-            task_semaphore,
         })
+    }
+
+    /// Process a log event directly - use this instead of sending to channel
+    pub async fn process_event(&self, log_event: LogEvent) -> Result<()> {
+        process_strategy_optimized(log_event, &self.connection_pool, &self.pools_map).await
     }
 
     async fn load_pools_map() -> Result<HashMap<Address, Event>> {

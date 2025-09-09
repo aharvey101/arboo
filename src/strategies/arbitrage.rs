@@ -57,11 +57,20 @@ pub struct ArbitrageOpportunity {
 }
 
 /// UniswapArbitrageStrategy using production logic
-#[derive(Debug)]
 pub struct UniswapArbitrageStrategy {
     pub config: StrategyConfig,
     pools_map: Arc<RwLock<HashMap<Address, Event>>>,
     connection_pool: ConnectionPool,
+}
+
+impl std::fmt::Debug for UniswapArbitrageStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UniswapArbitrageStrategy")
+            .field("config", &self.config)
+            .field("pools_map", &"Arc<RwLock<HashMap<Address, Event>>>")
+            .field("connection_pool", &"ConnectionPool")
+            .finish()
+    }
 }
 
 impl UniswapArbitrageStrategy {
