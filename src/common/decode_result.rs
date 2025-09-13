@@ -119,6 +119,68 @@ fn translate_error_message(message: &str) -> String {
 /// Decode known custom error selectors
 fn decode_known_custom_error(selector: [u8; 4], data: Vec<u8>) -> Option<EVMErrorType> {
     match selector {
+        // Arboo.sol custom errors
+        [0xe8, 0x03, 0xeb, 0x93] => {
+            // UnderflowError(uint256,uint256)
+            let mut description = "Arithmetic underflow in calculation".to_string();
+            if data.len() >= 68 { // 4 bytes selector + 2 * 32 bytes parameters
+                let param1_bytes = &data[4..36];
+                let param2_bytes = &data[36..68];
+                
+                let param1_formatted = format_u256_bytes(param1_bytes);
+                let param2_formatted = format_u256_bytes(param2_bytes);
+                
+                description.push_str(&format!(" | Expected: {} | Actual: {}", param1_formatted, param2_formatted));
+            }
+            Some(EVMErrorType::KnownCustomError {
+                name: "UnderflowError".to_string(),
+                description,
+                params: data[4..].to_vec(),
+            })
+        },
+        [0x5b, 0x3f, 0x0c, 0xef] => Some(EVMErrorType::KnownCustomError {
+            name: "AmountLessThanZero".to_string(),
+            description: "Amount must be greater than zero".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        [0x13, 0xdf, 0x30, 0x45] => {
+            // NotSender(address)
+            let mut description = "Caller is not the expected sender".to_string();
+            if data.len() >= 36 { // 4 bytes selector + 32 bytes address (20 bytes actual + 12 bytes padding)
+                let address_bytes = &data[16..36]; // Last 20 bytes of the 32-byte slot
+                let address_hex = hex::encode(address_bytes);
+                description.push_str(&format!(" | Actual sender: 0x{}", address_hex));
+            }
+            Some(EVMErrorType::KnownCustomError {
+                name: "NotSender".to_string(),
+                description,
+                params: data[4..].to_vec(),
+            })
+        },
+        [0x9f, 0x55, 0xe4, 0xc5] => {
+            // BuyBackAmountLessThanAmountIn(uint256,uint256)
+            let mut description = "Buy back amount is less than amount in".to_string();
+            if data.len() >= 68 { // 4 bytes selector + 2 * 32 bytes parameters
+                let param1_bytes = &data[4..36];
+                let param2_bytes = &data[36..68];
+                
+                let param1_formatted = format_u256_bytes(param1_bytes);
+                let param2_formatted = format_u256_bytes(param2_bytes);
+                
+                description.push_str(&format!(" | Buy Back Amount: {} | Amount In: {}", param1_formatted, param2_formatted));
+            }
+            Some(EVMErrorType::KnownCustomError {
+                name: "BuyBackAmountLessThanAmountIn".to_string(),
+                description,
+                params: data[4..].to_vec(),
+            })
+        },
+        [0x0c, 0xa4, 0x0d, 0x1b] => Some(EVMErrorType::KnownCustomError {
+            name: "ProfitIsZero".to_string(),
+            description: "Arbitrage trade would result in zero profit".to_string(),
+            params: data[4..].to_vec(),
+        }),
+        
         // Common Uniswap V2/V3 errors - this seems to be the most frequent one
         [0x8b, 0x02, 0x88, 0x3f] => {
             let mut description = "Uniswap swap calculation failed".to_string();
@@ -203,6 +265,7 @@ pub fn decode_evm_revert(data: Vec<u8>) -> DecodedEVMRevert {
     if selector == [0x08, 0xc3, 0x79, 0xa0] {
         return decode_string_error(data);
     }
+    // test:
 
     // Handle Panic errors
     if selector == [0x4e, 0x48, 0x7b, 0x71] {
@@ -423,4 +486,69 @@ fn test_real_examples() {
         _ => panic!("Expected StringError for Example 3"),
     }
     assert_eq!(result.selector, [0x08, 0xc3, 0x79, 0xa0]);
+}
+
+#[test]
+fn test_arboo_custom_errors() {
+    // Test Arboo.sol custom errors
+    
+    // 1. Test UnderflowError(uint256,uint256) - selector: 0xe803eb93
+    let result = decode_revert_hex("0xe803eb93000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000005").expect("UnderflowError hex should be valid");
+    println!("Arboo UnderflowError: {}", result);
+    match &result.error_type {
+        EVMErrorType::KnownCustomError { name, description, .. } => {
+            assert_eq!(name, "UnderflowError");
+            assert!(description.contains("Arithmetic underflow"));
+        }
+        _ => panic!("Expected KnownCustomError for UnderflowError"),
+    }
+    assert_eq!(result.selector, [0xe8, 0x03, 0xeb, 0x93]);
+    
+    // 2. Test AmountLessThanZero() - selector: 0x5b3f0cef
+    let result = decode_revert_hex("0x5b3f0cef").expect("AmountLessThanZero hex should be valid");
+    println!("Arboo AmountLessThanZero: {}", result);
+    match &result.error_type {
+        EVMErrorType::KnownCustomError { name, description, .. } => {
+            assert_eq!(name, "AmountLessThanZero");
+            assert!(description.contains("greater than zero"));
+        }
+        _ => panic!("Expected KnownCustomError for AmountLessThanZero"),
+    }
+    assert_eq!(result.selector, [0x5b, 0x3f, 0x0c, 0xef]);
+    
+    // 3. Test NotSender(address) - selector: 0x13df3045
+    let result = decode_revert_hex("0x13df30450000000000000000000000001234567890123456789012345678901234567890").expect("NotSender hex should be valid");
+    println!("Arboo NotSender: {}", result);
+    match &result.error_type {
+        EVMErrorType::KnownCustomError { name, description, .. } => {
+            assert_eq!(name, "NotSender");
+            assert!(description.contains("expected sender"));
+        }
+        _ => panic!("Expected KnownCustomError for NotSender"),
+    }
+    assert_eq!(result.selector, [0x13, 0xdf, 0x30, 0x45]);
+    
+    // 4. Test BuyBackAmountLessThanAmountIn(uint256,uint256) - selector: 0x9f55e4c5
+    let result = decode_revert_hex("0x9f55e4c50000000000000000000000000000000000000000000000000de0b6b3a764000000000000000000000000000000000000000000000000000001158e460913d00000").expect("BuyBackAmountLessThanAmountIn hex should be valid");
+    println!("Arboo BuyBackAmountLessThanAmountIn: {}", result);
+    match &result.error_type {
+        EVMErrorType::KnownCustomError { name, description, .. } => {
+            assert_eq!(name, "BuyBackAmountLessThanAmountIn");
+            assert!(description.contains("Buy back amount"));
+        }
+        _ => panic!("Expected KnownCustomError for BuyBackAmountLessThanAmountIn"),
+    }
+    assert_eq!(result.selector, [0x9f, 0x55, 0xe4, 0xc5]);
+    
+    // 5. Test ProfitIsZero() - selector: 0x0ca40d1b
+    let result = decode_revert_hex("0x0ca40d1b").expect("ProfitIsZero hex should be valid");
+    println!("Arboo ProfitIsZero: {}", result);
+    match &result.error_type {
+        EVMErrorType::KnownCustomError { name, description, .. } => {
+            assert_eq!(name, "ProfitIsZero");
+            assert!(description.contains("zero profit"));
+        }
+        _ => panic!("Expected KnownCustomError for ProfitIsZero"),
+    }
+    assert_eq!(result.selector, [0x0c, 0xa4, 0x0d, 0x1b]);
 }
