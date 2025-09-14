@@ -12,6 +12,199 @@ use std::env;
 
 use crate::common::decode_result::{decode_evm_revert, EVMErrorType};
 
+/// Comprehensive mapping of function selectors to human-readable function signatures
+fn get_function_signature(selector: &str) -> &'static str {
+    match selector {
+        // ERC20 Functions
+        "70a08231" => "balanceOf(address)",
+        "a9059cbb" => "transfer(address,uint256)",
+        "095ea7b3" => "approve(address,uint256)",
+        "dd62ed3e" => "allowance(address,address)",
+        "23b872dd" => "transferFrom(address,address,uint256)",
+        "06fdde03" => "name()",
+        "95d89b41" => "symbol()",
+        "313ce567" => "decimals()",
+        "18160ddd" => "totalSupply()",
+        
+        // WETH Functions
+        "d0e30db0" => "deposit()",
+        "2e1a7d4d" => "withdraw(uint256)",
+        
+        // Uniswap V2 Functions
+        "38ed1739" => "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)",
+        "8803dbee" => "swapTokensForExactTokens(uint256,uint256,address[],address,uint256)",
+        "7ff36ab5" => "swapExactETHForTokens(uint256,address[],address,uint256)",
+        "4a25d94a" => "swapTokensForExactETH(uint256,uint256,address[],address,uint256)",
+        "18cbafe5" => "swapExactTokensForETH(uint256,uint256,address[],address,uint256)",
+        "fb3bdb41" => "swapETHForExactTokens(uint256,address[],address,uint256)",
+        "02751cec" => "removeLiquidity(address,address,uint256,uint256,uint256,address,uint256)",
+        "af2979eb" => "removeLiquidityETH(address,uint256,uint256,uint256,address,uint256)",
+        "e8e33700" => "addLiquidity(address,address,uint256,uint256,uint256,uint256,address,uint256)",
+        "f305d719" => "addLiquidityETH(address,uint256,uint256,uint256,address,uint256)",
+        "0902f1ac" => "getReserves()",
+        "89afcb44" => "getAmountOut(uint256,uint256,uint256)",
+        "85f8c259" => "getAmountIn(uint256,uint256,uint256)",
+        "d06ca61f" => "getAmountsOut(uint256,address[])",
+        "1f00ca74" => "getAmountsIn(uint256,address[])",
+        
+        // Uniswap V3 Functions
+        "04e45aaf" => "exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))",
+        "c04b8d59" => "exactInput((bytes,address,uint256,uint256,uint256))",
+        "db3e2198" => "exactOutputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))",
+        "f28c0498" => "exactOutput((bytes,address,uint256,uint256,uint256))",
+        "414bf389" => "exactInputSingle_v2((address,address,uint24,address,uint256,uint256,uint256,uint160))",
+        "b858183f" => "exactInput_v2((bytes,address,uint256,uint256,uint256))",
+        "09b81346" => "exactOutputSingle_v2((address,address,uint24,address,uint256,uint256,uint256,uint160))",
+        "f7729d43" => "exactOutput_v2((bytes,address,uint256,uint256,uint256))",
+        "fa461e33" => "uniswapV3FlashCallback(uint256,uint256,bytes)",
+        "f3995c67" => "uniswapV3MintCallback(uint256,uint256,bytes)",
+        "23a69e75" => "uniswapV3SwapCallback(int256,int256,bytes)",
+        
+        // Uniswap V3 Pool Functions
+        "3c8a7d8d" => "swap(address,bool,int256,uint160,bytes)",
+        "a34123a7" => "mint(address,int24,int24,uint128,bytes)",
+        "0c49ccbe" => "burn(int24,int24,uint128)",
+        "fc6f7865" => "collect(address,int24,int24,uint128,uint128)",
+        "490e6cbc" => "snapshotCumulativesInside(int24,int24)",
+        "514ea4bf" => "increaseObservationCardinalityNext(uint16)",
+        
+        // Flash Loan Functions
+        "128acb08" => "flash(address,uint256,uint256,bytes)",
+        "618dc65e" => "flashLoan(address,address[],uint256[],uint256[],address,bytes,uint16)",
+        "ab9c4b5d" => "flashLoanSimple(address,address,uint256,bytes,uint16)",
+        
+        // Arbitrage Functions
+        "7bd04165" => "arbitrageFunction()",
+        "5d47ff29" => "executeArbitrage(address,address,uint256,uint256,bool,bytes)",
+        "e83bfc7d" => "arbitrage(address,address,uint256,bool)",
+        
+        // Multicall Functions
+        "ac9650d8" => "multicall(bytes[])",
+        "1f0464d1" => "multicall(bytes[])",
+        "5ae401dc" => "multicall(uint256,bytes[])",
+        
+        // Common DEX Functions
+        "022c0d9f" => "swap(uint256,uint256,address,bytes)",
+        "ced7b2d3" => "swapExactAmountIn(address,uint256,address,uint256,uint256)",
+        "8201aa3f" => "swapExactAmountOut(address,uint256,address,uint256,uint256)",
+        
+        // Governance Functions
+        "fe0d94c1" => "execute(uint256)",
+        "40e58ee5" => "propose(address[],uint256[],string[],bytes[],string)",
+        "56781388" => "castVote(uint256,uint8)",
+        "15373e3d" => "castVoteWithReason(uint256,uint8,string)",
+        
+        // Common Contract Functions
+        "8da5cb5b" => "owner()",
+        "f2fde38b" => "transferOwnership(address)",
+        "715018a6" => "renounceOwnership()",
+        "8456cb59" => "pause()",
+        "3f4ba83a" => "unpause()",
+        "5c975abb" => "paused()",
+        
+        // Proxy Functions
+        "3659cfe6" => "upgradeTo(address)",
+        "4f1ef286" => "upgradeToAndCall(address,bytes)",
+        "52d1902d" => "proxiableUUID()",
+        
+        // Factory Functions
+        "c9c65396" => "createPair(address,address)",
+        "e6a43905" => "getPair(address,address)",
+        "1e3dd18b" => "allPairs(uint256)",
+        "574f2ba3" => "allPairsLength()",
+        "5909c0d5" => "createPool(address,address,uint24)",
+        "1698ee82" => "getPool(address,address,uint24)",
+        
+        // Staking Functions
+        "a694fc3a" => "stake(uint256)",
+        "3d18b912" => "getReward()",
+        "8b876347" => "earned(address)",
+        
+        // NFT Functions
+        "081812fc" => "getApproved(uint256)",
+        "42842e0e" => "safeTransferFrom(address,address,uint256)",
+        "b88d4fde" => "safeTransferFrom(address,address,uint256,bytes)",
+        "a22cb465" => "setApprovalForAll(address,bool)",
+        "e985e9c5" => "isApprovedForAll(address,address)",
+        "6352211e" => "ownerOf(uint256)",
+        "c87b56dd" => "tokenURI(uint256)",
+        
+        _ => "Unknown Function"
+    }
+}
+
+/// Extract and format function parameters from calldata
+fn decode_function_parameters(selector: &str, input: &[u8]) -> String {
+    if input.len() < 4 {
+        return String::new();
+    }
+    
+    let params_data = &input[4..];
+    if params_data.is_empty() {
+        return String::new();
+    }
+    
+    match selector {
+        // Single address parameter
+        "70a08231" | "8da5cb5b" | "f2fde38b" => {
+            if params_data.len() >= 32 {
+                let addr_bytes = &params_data[12..32];
+                format!(" → address: 0x{}", hex::encode(addr_bytes))
+            } else {
+                String::new()
+            }
+        }
+        // Single uint256 parameter  
+        "2e1a7d4d" | "a694fc3a" => {
+            if params_data.len() >= 32 {
+                let amount = U256::from_be_slice(&params_data[0..32]);
+                format!(" → amount: {}", amount)
+            } else {
+                String::new()
+            }
+        }
+        // Address + uint256 (transfer, approve)
+        "a9059cbb" | "095ea7b3" => {
+            if params_data.len() >= 64 {
+                let addr_bytes = &params_data[12..32];
+                let amount = U256::from_be_slice(&params_data[32..64]);
+                format!(" → to: 0x{}, amount: {}", hex::encode(addr_bytes), amount)
+            } else {
+                String::new()
+            }
+        }
+        // Two addresses (allowance, getPair)
+        "dd62ed3e" | "e6a43905" => {
+            if params_data.len() >= 64 {
+                let addr1_bytes = &params_data[12..32];
+                let addr2_bytes = &params_data[44..64];
+                format!(" → addr1: 0x{}, addr2: 0x{}", hex::encode(addr1_bytes), hex::encode(addr2_bytes))
+            } else {
+                String::new()
+            }
+        }
+        // Swap functions - just show first few parameters
+        "38ed1739" | "8803dbee" | "18cbafe5" => {
+            if params_data.len() >= 64 {
+                let amount_in = U256::from_be_slice(&params_data[0..32]);
+                let amount_out = U256::from_be_slice(&params_data[32..64]);
+                format!(" → amountIn: {}, amountOut: {}", amount_in, amount_out)
+            } else {
+                String::new()
+            }
+        }
+        _ => {
+            // For unknown functions, just show parameter count
+            let param_count = params_data.len() / 32;
+            if param_count > 0 {
+                format!(" → {} parameters", param_count)
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
 /// A comprehensive REVM Inspector that tracks:
 #[derive(Debug, Default)]
 pub struct RevmInspector {
@@ -150,7 +343,34 @@ impl RevmInspector {
                     // Try to decode function selector
                     if input.len() >= 4 {
                         let selector = hex::encode(&input[..4]);
-                        report.push_str(&format!("   Function Selector: 0x{}\n", selector));
+                        let function_signature = get_function_signature(&selector);
+                        let parameters = decode_function_parameters(&selector, input);
+                        
+                        report.push_str(&format!("   📋 Function: 0x{} → {}{}\n", 
+                            selector, function_signature, parameters));
+                            
+                        // Add context for important function types
+                        match selector.as_str() {
+                            "38ed1739" | "8803dbee" | "18cbafe5" | "4a25d94a" => {
+                                report.push_str("      🔄 Uniswap V2 Swap\n");
+                            }
+                            "04e45aaf" | "c04b8d59" | "db3e2198" | "f28c0498" => {
+                                report.push_str("      🔄 Uniswap V3 Swap\n");
+                            }
+                            "128acb08" | "618dc65e" | "ab9c4b5d" => {
+                                report.push_str("      ⚡ Flash Loan\n");
+                            }
+                            "7bd04165" | "5d47ff29" | "e83bfc7d" => {
+                                report.push_str("      💰 Arbitrage Function\n");
+                            }
+                            "d0e30db0" => {
+                                report.push_str("      📦 WETH Wrap\n");
+                            }
+                            "2e1a7d4d" => {
+                                report.push_str("      📤 WETH Unwrap\n");
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -321,18 +541,62 @@ impl RevmInspector {
             if let Some(input) = &failed_call.input {
                 if input.len() >= 4 {
                     let selector = hex::encode(&input[..4]);
-                    analysis.push_str(&format!("   Function Called: 0x{}\n", selector));
+                    let function_signature = get_function_signature(&selector);
+                    let parameters = decode_function_parameters(&selector, input);
                     
-                    // Try to identify common function selectors
+                    analysis.push_str(&format!("   📋 Function Called: 0x{} → {}{}\n", 
+                        selector, function_signature, parameters));
+                    
+                    // Add specific debugging advice based on function type
                     match selector.as_str() {
-                        "a9059cbb" => analysis.push_str("   📝 Function: transfer(address,uint256)\n"),
-                        "23b872dd" => analysis.push_str("   📝 Function: transferFrom(address,address,uint256)\n"),
-                        "095ea7b3" => analysis.push_str("   📝 Function: approve(address,uint256)\n"),
-                        "dd62ed3e" => analysis.push_str("   📝 Function: allowance(address,address)\n"),
-                        "70a08231" => analysis.push_str("   📝 Function: balanceOf(address)\n"),
-                        "d0e30db0" => analysis.push_str("   📝 Function: deposit() - WETH wrap\n"),
-                        "2e1a7d4d" => analysis.push_str("   📝 Function: withdraw(uint256) - WETH unwrap\n"),
-                        _ => analysis.push_str(&format!("   📝 Function: Unknown selector 0x{}\n", selector)),
+                        "a9059cbb" | "23b872dd" => {
+                            analysis.push_str("   � ERC20 Transfer Issues:\n");
+                            analysis.push_str("      1. Check token balance\n");
+                            analysis.push_str("      2. Verify allowance (for transferFrom)\n");
+                            analysis.push_str("      3. Ensure recipient address is valid\n");
+                        }
+                        "095ea7b3" => {
+                            analysis.push_str("   � ERC20 Approval Issues:\n");
+                            analysis.push_str("      1. Check if spender address is valid\n");
+                            analysis.push_str("      2. Some tokens require zero approval first\n");
+                        }
+                        "38ed1739" | "8803dbee" | "18cbafe5" => {
+                            analysis.push_str("   � Uniswap V2 Swap Issues:\n");
+                            analysis.push_str("      1. Check slippage tolerance\n");
+                            analysis.push_str("      2. Verify pool liquidity\n");
+                            analysis.push_str("      3. Check token approvals\n");
+                            analysis.push_str("      4. Verify deadline hasn't passed\n");
+                        }
+                        "04e45aaf" | "c04b8d59" => {
+                            analysis.push_str("   � Uniswap V3 Swap Issues:\n");
+                            analysis.push_str("      1. Check price limits (sqrtPriceLimitX96)\n");
+                            analysis.push_str("      2. Verify pool exists and has liquidity\n");
+                            analysis.push_str("      3. Check token approvals\n");
+                            analysis.push_str("      4. Verify deadline\n");
+                        }
+                        "128acb08" => {
+                            analysis.push_str("   � Flash Loan Issues:\n");
+                            analysis.push_str("      1. Check callback implementation\n");
+                            analysis.push_str("      2. Verify fee payment\n");
+                            analysis.push_str("      3. Ensure sufficient balance for repayment\n");
+                        }
+                        "d0e30db0" => {
+                            analysis.push_str("   � WETH Wrap Issues:\n");
+                            analysis.push_str("      1. Check ETH balance\n");
+                            analysis.push_str("      2. Verify msg.value matches deposit amount\n");
+                        }
+                        "2e1a7d4d" => {
+                            analysis.push_str("   � WETH Unwrap Issues:\n");
+                            analysis.push_str("      1. Check WETH balance\n");
+                            analysis.push_str("      2. Verify unwrap amount is valid\n");
+                        }
+                        _ => {
+                            analysis.push_str("   💡 General Debugging Steps:\n");
+                            analysis.push_str("      1. Check contract exists at target address\n");
+                            analysis.push_str("      2. Verify gas limit is sufficient\n");
+                            analysis.push_str("      3. Check for invalid opcodes\n");
+                            analysis.push_str("      4. Ensure proper contract state\n");
+                        }
                     }
                 }
             }
@@ -395,32 +659,46 @@ impl<DB: Database> revm::Inspector<DB> for RevmInspector {
             if inputs.input.len() >= 4 {
                 let selector = &inputs.input[0..4];
                 let selector_hex = hex::encode(selector);
-                let function_name = match selector_hex.as_str() {
-                    "d0e30db0" => "deposit() - WETH wrap",
-                    "095ea7b3" => "approve(address,uint256) - ERC20 approval",
-                    "70a08231" => "balanceOf(address) - ERC20 balance check",
-                    "a9059cbb" => "transfer(address,uint256) - ERC20 transfer",
-                    "7bd04165" => "arbitrageFunction() - Main arbitrage execution",
-                    "38ed1739" => "swapExactTokensForTokens() - Uniswap V2 swap",
-                    "04e45aaf" => "exactInputSingle() - Uniswap V3 swap",
-                    "128acb08" => "flash() - Flash loan",
-                    "fa461e33" => "uniswapV3FlashCallback() - Flash callback",
-                    "0902f1ac" => "getReserves() - Uniswap V2 pair reserves",
-                    _ => "Unknown function"
-                };
-                log::debug!("{}   Function: 0x{} - {}", indent, selector_hex, function_name);
+                let function_signature = get_function_signature(&selector_hex);
+                let parameters = decode_function_parameters(&selector_hex, &inputs.input);
                 
-                // Log input data preview
+                log::debug!("{}   📋 Function: 0x{} → {}{}", 
+                    indent, selector_hex, function_signature, parameters);
+                
+                // Log additional context for important functions
+                match selector_hex.as_str() {
+                    "38ed1739" | "8803dbee" | "18cbafe5" | "4a25d94a" => {
+                        log::debug!("{}      🔄 Uniswap V2 Swap Detected", indent);
+                    }
+                    "04e45aaf" | "c04b8d59" | "db3e2198" | "f28c0498" => {
+                        log::debug!("{}      🔄 Uniswap V3 Swap Detected", indent);
+                    }
+                    "128acb08" | "618dc65e" | "ab9c4b5d" => {
+                        log::debug!("{}      ⚡ Flash Loan Detected", indent);
+                    }
+                    "7bd04165" | "5d47ff29" | "e83bfc7d" => {
+                        log::debug!("{}      💰 Arbitrage Function Detected", indent);
+                    }
+                    "d0e30db0" => {
+                        log::debug!("{}      📦 WETH Wrap Detected", indent);
+                    }
+                    "2e1a7d4d" => {
+                        log::debug!("{}      📤 WETH Unwrap Detected", indent);
+                    }
+                    _ => {}
+                }
+                
+                // Log raw input data for debugging if needed
                 if inputs.input.len() > 4 {
                     let data_preview = if inputs.input.len() > 36 {
                         format!("{}... ({} bytes total)", hex::encode(&inputs.input[4..36]), inputs.input.len() - 4)
                     } else {
                         format!("{} ({} bytes)", hex::encode(&inputs.input[4..]), inputs.input.len() - 4)
                     };
-                    log::debug!("{}   Input Data: {}", indent, data_preview);
+                    log::debug!("{}   📊 Raw Data: {}", indent, data_preview);
                 }
             } else if !inputs.input.is_empty() {
-                log::debug!("{}   Raw Input: {} ({} bytes)", indent, hex::encode(&inputs.input), inputs.input.len());
+                log::debug!("{}   📊 Raw Input: {} ({} bytes)", indent, hex::encode(&inputs.input), inputs.input.len());
             }
         }
         
