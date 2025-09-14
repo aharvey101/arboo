@@ -371,16 +371,13 @@ pub async fn load_uniswap_v3_pools(
             .map_err(|e| anyhow::anyhow!("Invalid topic1 format in V3 log: {}", e))?;
         let token1 = Address::from(topic1);
 
-        // Decode the log data
+        // Decode the log data - V3 PoolCreated event has (uint24 fee, int24 tickSpacing, address pool)
         let log_data = &log.inner.data.data;
-        let decoded: (B256, B256) = SolValue::abi_decode(log_data, false)
+        let decoded: (U256, i32, Address) = SolValue::abi_decode(log_data, false)
             .map_err(|e| anyhow::anyhow!("Failed to decode V3 log data: {}", e))?;
-        let pool_address = decoded.1;
-        let pool_address = FixedBytes::<20>::try_from(&pool_address[12..32])
-            .map_err(|e| anyhow::anyhow!("Invalid pool address format in V3 log: {}", e))?;
-        let pool_address = Address::from(pool_address);
-        let fee = u32::from_str_radix(decoded.0.to_string().as_str().trim_start_matches("0x"), 16)
-            .map_err(|e| anyhow::anyhow!("Invalid fee format in V3 log: {}", e))?;
+        
+        let fee = decoded.0.to::<u32>(); // fee is uint24, can safely convert to u32
+        let pool_address = decoded.2; // pool address is the third field
 
         // info!("is v3: {:?}", is_v3);
         let pool_data = Pool {
