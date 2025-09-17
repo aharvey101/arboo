@@ -2,9 +2,12 @@ use alloy::consensus::Transaction as TransactionTrait;
 use alloy::primitives::address;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
+use alloy::rpc::client::WsConnect;
 use alloy::sol;
-use alloy_primitives::{FixedBytes, U256};
+use alloy_primitives::{FixedBytes, U160, U256};
+use alloy_sol_types::*;
 use anyhow::Result;
+use arbooo::arbitrage::simulation::one_thousand_eth;
 use log::{info, warn};
 use revm::primitives::Address;
 use std::fs;
@@ -12,7 +15,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::rpc::client::WsConnect;
 mod utils {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
 }
@@ -41,7 +43,7 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
         ..Default::default()
     };
 
-    // Fork from latest block - current mainnet has excellent WETH/USDT liquidity with cached pairs
+    // Fork from latest block - current mainnet has excellent WETH/USDC liquidity with cached pairs
     let anvil = utils::anvil_setup::AnvilInstance::new_with_fork_block(config, None).await?;
     info!(
         "✅ Mainnet fork started successfully on port {}",
@@ -96,7 +98,7 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
 
     // Wait for arboo to process the swap events we just generated
     info!("⏳ Waiting 5 seconds for arboo to process the swap events...");
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(20)).await;
 
     // Read arboo output to check for successful simulations
     let arboo_output = match fs::read_to_string(arboo_output_path) {
@@ -158,13 +160,13 @@ async fn setup_basic_test_environment(
 ) -> Result<ArbitrageSetup> {
     info!("🔧 Setting up real arbitrage environment with mainnet fork...");
 
-    // Real mainnet addresses for WETH/USDT (cached pairs with arbitrage opportunities)
+    // Real mainnet addresses for WETH/USDC (cached pairs with arbitrage opportunities)
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH
-    let usdt_address = address!("dAC17F958D2ee523a2206206994597C13D831ec7"); // USDT
+    let usdc_address = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // USDC
 
     // Real Uniswap pool addresses that are in arboo's cache for profitable arbitrage
-    let v3_pool_address = address!("dafbac89adcb1149df1b344b779f0144031c7e93"); // WETH/USDT V3 pool (fee: 300)
-    let v2_pool_address = address!("6a11ed98b1a3ac36a768ebbbba36ded101da5a3f"); // WETH/USDT V2 pool (fee: 60)
+    let v3_pool_address = address!("0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"); // USDC/WETH V3 pool (fee: 300)
+    let v2_pool_address = address!("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"); // USDC/WETH V2 pool (fee: 300)
 
     // Create arbitrage opportunity by executing a large swap on V2
     info!("💰 Creating arbitrage opportunity with large V2 swap...");
@@ -173,14 +175,14 @@ async fn setup_basic_test_environment(
         v3_pool_address,
         v2_pool_address,
         token0: weth_address,
-        token1: usdt_address,
+        token1: usdc_address,
         weth_address,
     };
 
     // Log the addresses for verification
     info!("📍 Pool addresses configured:");
     info!("  WETH: {:#x}", weth_address);
-    info!("  USDC: {:#x}", usdt_address);
+    info!("  USDC: {:#x}", usdc_address);
     info!("  V2 Pool: {:#x}", v2_pool_address);
     info!("  V3 Pool: {:#x}", v3_pool_address);
 
@@ -209,13 +211,13 @@ async fn execute_market_moving_swap(
     info!("📍 V2 Pool: {:#x}", setup.v2_pool_address);
     info!("📍 V3 Pool: {:#x}", setup.v3_pool_address);
     info!("📍 Token0 (WETH): {:#x}", setup.token0);
-    info!("📍 Token1 (USDT): {:#x}", setup.token1);
+    info!("📍 Token1 (USDC): {:#x}", setup.token1);
 
     // Uniswap V2 Router address
-    let v2_router = address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
-    info!("📍 V2 Router: {:#x}", v2_router);
+    let v3_router = address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45");
+    info!("📍 V2 Router: {:#x}", v3_router);
 
-    let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 50 ETH swap (more realistic)
+    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 50 ETH swap (more realistic)
     info!(
         "💱 Would swap {} ETH for USDC on V2 to create price imbalance",
         swap_amount / U256::from(10u128.pow(18))
@@ -224,7 +226,7 @@ async fn execute_market_moving_swap(
     match execute_uniswap_v2_swap(
         provider,
         funded_account,
-        v2_router,
+        v3_router,
         swap_amount,
         setup.token1,
         setup.token0,
@@ -275,32 +277,97 @@ async fn execute_uniswap_v2_swap(
             + 300,
     );
 
-    let min_usdt_out = U256::from(1u64);
+    alloy::sol! {
+        function swapEthForWeth(
+            address to,
+            uint256 deadline
+        ) external payable;
+    };
 
-    let path = vec![token0, token1];
-
-    sol! {
-        interface IUniswapV2Router {
-            function swapExactETHForTokens(
-                uint256 amountOutMin,
-                address[] calldata path,
-                address to,
-                uint256 deadline
-            ) external payable returns (uint256[] memory amounts);
-        }
-    }
-
-    let swap_call = IUniswapV2Router::swapExactETHForTokensCall {
-        amountOutMin: min_usdt_out,
-        path,
+    let function_call = swapEthForWethCall {
         to: whale_address,
         deadline,
     };
 
     let tx_request = TransactionRequest::default()
+        .from(whale_address)
+        .to(token0)
+        .input(function_call.abi_encode().into())
+        .value(U256::from(100))
+        .gas_limit(50000u64);
+
+    info!("Swapping ETH for WETH");
+    provider
+        .call(&tx_request)
+        .await
+        .expect("Error swapping eth for weth");
+
+    //    let receipt = pending_tx.get_receipt().await?;
+    //    if !receipt.status() {
+    //        info!("reciept: {:?}", receipt);
+    //        return Err(anyhow::anyhow!("Weth Swap Failed"));
+    //    }
+    info!("Weth swap succesful");
+    info!("Approving max weth ");
+    alloy::sol! {
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+
+    let approve_data = approveCall {
+        spender: token0,
+        amount: U256::MAX, // Infinite approval, you can set a specific amount instead
+    }
+    .abi_encode();
+
+    let tx_request = TransactionRequest::default()
+        .from(whale_address)
+        .to(router_address)
+        .input(approve_data.into());
+    info!("TX Request: {:?}", tx_request);
+    provider
+        .send_transaction(tx_request)
+        .await
+        .expect("Error doing approve tx?");
+
+    let receipt = pending_tx.get_receipt().await?;
+    if !receipt.status() {
+        return Err(anyhow::anyhow!("Approve failed"));
+    }
+    let min_usdt_out = U256::from(1000u64);
+
+    alloy::sol! {
+        interface ISwapRouter {
+              #[derive(Debug)]
+              struct ExactInputSingleParams {
+                address tokenIn;
+                address tokenOut;
+                uint24 fee;
+                address recipient;
+                uint256 amountIn;
+                uint256 amountOutMinimum;
+                uint160 sqrtPriceLimitX96;
+        }
+       function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+    }
+    }
+
+    let swap_call = ISwapRouter::ExactInputSingleParams {
+        tokenIn: token0,
+        tokenOut: token1,
+        fee: alloy_primitives::aliases::U24::from(300),
+        recipient: whale_address,
+        amountIn: eth_amount,
+        amountOutMinimum: min_usdt_out,
+        sqrtPriceLimitX96: U160::from(4295128739u64),
+    };
+
+    info!("Doing swap with: {:?} ", swap_call);
+    let swap_call = ISwapRouter::exactInputSingleCall { params: swap_call };
+
+    let tx_request = TransactionRequest::default()
         .to(router_address)
         .from(whale_address)
-        .value(eth_amount)
+        .value(U256::ZERO)
         .input(swap_call.abi_encode().into());
 
     info!(
