@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     let cache_path = format!("{}/.cached-pools.csv", cache_dir);
     if !Path::new(&cache_path).try_exists()? {
         info!("Cache doesn't exist, crawling blocks for pools");
-        pools::load_all_pools(ws_url.clone(), 100_000, 50_000)
+        pools::load_all_pools(ws_url.clone(), 100_000, 50_000, &cache_path)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
     }

@@ -132,18 +132,19 @@ pub async fn load_all_pools(
     wss_url: String,
     from_block: u64,
     chunk: u64,
+    cache_path: &String
 ) -> Result<(Vec<Pool>, i64)> {
     create_dir_all("cache")
         .map_err(|e| anyhow::anyhow!("Error creating cache directory: {}", e))?;
     info!("Creating cache file");
-    let cache_file = "/Users/alexander/cache/.cached-pools.csv";
-    let file_path = Path::new(cache_file);
+    
+    let file_path = Path::new(cache_path);
     let file_exists = file_path.exists();
     let file = OpenOptions::new()
         .append(true)
         .create(true)
-        .open(cache_file)
-        .map_err(|e| anyhow::anyhow!("Error opening cache file '{}': {}", cache_file, e))?;
+        .open(cache_path)
+        .map_err(|error| anyhow::anyhow!("Error opening cache file '{}': {}", cache_path, error))?;
     let mut writer = csv::Writer::from_writer(file);
 
     let mut pools = Vec::new();
@@ -151,7 +152,7 @@ pub async fn load_all_pools(
     let mut v2_pool_cnt = 0;
 
     if file_exists {
-        let mut reader = csv::Reader::from_path(cache_file)?;
+        let mut reader = csv::Reader::from_path(cache_path)?;
 
         for row in reader.records() {
             let row = row

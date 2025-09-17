@@ -117,8 +117,8 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
         }
     };
 
-    // Analyze the output for successful simulations
-    analyze_arboo_output(&arboo_output);
+    // Analyze the output for successful simulations and validate requirements
+    analyze_arboo_output(&arboo_output)?;
 
     // Cleanup: terminate arboo process and remove log file
     info!("🧹 Cleaning up: terminating arboo process and removing log file");
@@ -213,23 +213,23 @@ async fn execute_market_moving_swap(
     info!("📍 Token0 (WETH): {:#x}", setup.token0);
     info!("📍 Token1 (USDC): {:#x}", setup.token1);
 
-    // Uniswap V2 Router address
-    let v3_router = address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45");
-    info!("📍 V2 Router: {:#x}", v3_router);
+    // Uniswap V3 SwapRouter address (not Universal Router)
+    let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
+    info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 50 ETH swap (more realistic)
+    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 ETH swap (more realistic)
     info!(
-        "💱 Would swap {} ETH for USDC on V2 to create price imbalance",
+        "💱 Would swap {} ETH for USDC on V3 to create price imbalance",
         swap_amount / U256::from(10u128.pow(18))
     );
 
-    match execute_uniswap_v2_swap(
+    match execute_uniswap_v3_swap(
         provider,
         funded_account,
         v3_router,
         swap_amount,
-        setup.token1,
-        setup.token0,
+        setup.token0, // WETH (for deposit and approval)
+        setup.token1, // USDC (target token)
         setup,
     )
     .await
@@ -256,8 +256,8 @@ async fn execute_market_moving_swap(
     Ok(())
 }
 
-/// Execute a Uniswap V2 swap to create market imbalance
-async fn execute_uniswap_v2_swap(
+/// Execute a Uniswap V3 swap using exactInput to create market imbalance
+async fn execute_uniswap_v3_swap(
     provider: &Arc<RootProvider<PubSubFrontend>>,
     whale_address: Address,
     router_address: Address,
@@ -277,98 +277,98 @@ async fn execute_uniswap_v2_swap(
             + 300,
     );
 
+    // WETH contract has a simple deposit() function to convert ETH to WETH
     alloy::sol! {
-        function swapEthForWeth(
-            address to,
-            uint256 deadline
-        ) external payable;
+        function deposit() external payable;
     };
 
-    let function_call = swapEthForWethCall {
-        to: whale_address,
-        deadline,
-    };
+    let deposit_call = depositCall {};
 
     let tx_request = TransactionRequest::default()
         .from(whale_address)
-        .to(token0)
-        .input(function_call.abi_encode().into())
-        .value(U256::from(100))
-        .gas_limit(50000u64);
+        .to(token0) // WETH contract address
+        .input(deposit_call.abi_encode().into())
+        .value(eth_amount) // Send the ETH amount we want to convert
+        .gas_limit(100000u64);
 
-    info!("Swapping ETH for WETH");
-    provider
-        .call(&tx_request)
+    info!("Converting {} ETH to WETH", eth_amount / U256::from(10u128.pow(18)));
+    let pending_tx = provider
+        .send_transaction(tx_request)
         .await
-        .expect("Error swapping eth for weth");
+        .expect("Error converting ETH to WETH");
 
-    //    let receipt = pending_tx.get_receipt().await?;
-    //    if !receipt.status() {
-    //        info!("reciept: {:?}", receipt);
-    //        return Err(anyhow::anyhow!("Weth Swap Failed"));
-    //    }
-    info!("Weth swap succesful");
-    info!("Approving max weth ");
+    let receipt = pending_tx.get_receipt().await?;
+    if !receipt.status() {
+        info!("receipt: {:?}", receipt);
+        return Err(anyhow::anyhow!("ETH to WETH conversion failed"));
+    }
+    info!("✅ ETH to WETH conversion successful");
+    info!("Approving router to spend WETH");
     alloy::sol! {
         function approve(address spender, uint256 amount) external returns (bool);
     }
 
     let approve_data = approveCall {
-        spender: token0,
+        spender: router_address, // Approve the router to spend our WETH
         amount: U256::MAX, // Infinite approval, you can set a specific amount instead
     }
     .abi_encode();
 
     let tx_request = TransactionRequest::default()
         .from(whale_address)
-        .to(router_address)
+        .to(token0) // Call approve on the WETH token contract
         .input(approve_data.into());
     info!("TX Request: {:?}", tx_request);
-    provider
+    let pending_tx = provider
         .send_transaction(tx_request)
         .await
-        .expect("Error doing approve tx?");
+        .expect("Error doing approve tx");
 
     let receipt = pending_tx.get_receipt().await?;
     if !receipt.status() {
-        return Err(anyhow::anyhow!("Approve failed"));
+        return Err(anyhow::anyhow!("WETH approval failed"));
     }
-    let min_usdt_out = U256::from(1000u64);
+    info!("✅ WETH approval successful");
+    let min_usdt_out = U256::from(1u64);
 
     alloy::sol! {
         interface ISwapRouter {
               #[derive(Debug)]
-              struct ExactInputSingleParams {
-                address tokenIn;
-                address tokenOut;
-                uint24 fee;
+              struct ExactInputParams {
+                bytes path;
                 address recipient;
+                uint256 deadline;
                 uint256 amountIn;
                 uint256 amountOutMinimum;
-                uint160 sqrtPriceLimitX96;
-        }
-       function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+              }
+       function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
     }
     }
 
-    let swap_call = ISwapRouter::ExactInputSingleParams {
-        tokenIn: token0,
-        tokenOut: token1,
-        fee: alloy_primitives::aliases::U24::from(300),
+    // Create path: tokenIn + fee + tokenOut
+    // WETH (token0) -> 500 fee tier -> USDC (token1)
+    let mut path = Vec::new();
+    path.extend_from_slice(token0.as_slice());  // WETH address (20 bytes)
+    path.extend_from_slice(&[0x00, 0x01, 0xf4]); // 500 fee tier (3 bytes)
+    path.extend_from_slice(token1.as_slice());  // USDC address (20 bytes)
+
+    let swap_call = ISwapRouter::ExactInputParams {
+        path: path.into(),
         recipient: whale_address,
+        deadline,
         amountIn: eth_amount,
         amountOutMinimum: min_usdt_out,
-        sqrtPriceLimitX96: U160::from(4295128739u64),
     };
 
     info!("Doing swap with: {:?} ", swap_call);
-    let swap_call = ISwapRouter::exactInputSingleCall { params: swap_call };
+    let swap_call = ISwapRouter::exactInputCall { params: swap_call };
 
     let tx_request = TransactionRequest::default()
         .to(router_address)
         .from(whale_address)
         .value(U256::ZERO)
-        .input(swap_call.abi_encode().into());
+        .input(swap_call.abi_encode().into())
+        .gas_limit(300000u64); // Add explicit gas limit
 
     info!(
         "🔄 Sending {} ETH swap transaction from whale address",
@@ -416,7 +416,7 @@ async fn start_arboo_binary(output_path: &str, ws_url: &str) -> Result<Child> {
         .env("CACHE_DIR", "cache")
         .env("ENABLE_DETAILED_INSPECTOR", "true")
         .env("HTTP_URL", "https://mevshare-rpc.beaverbuild.org")
-        .stdout(Stdio::inherit())
+        .stdout(output_file)
         .stderr(Stdio::from(stderr_file))
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to start arboo process: {}", e))?;
@@ -432,15 +432,14 @@ async fn start_arboo_binary(output_path: &str, ws_url: &str) -> Result<Child> {
 }
 
 /// Analyze arboo output for successful simulations and arbitrage opportunities
-fn analyze_arboo_output(output: &str) {
+fn analyze_arboo_output(output: &str) -> Result<()> {
     info!("🔍 Analyzing arboo output for successful simulations...");
 
     let lines: Vec<&str> = output.lines().collect();
     info!("📊 Total output lines: {}", lines.len());
 
     if lines.is_empty() {
-        warn!("⚠️  Arboo output is empty - process may not have started correctly");
-        return;
+        return Err(anyhow::anyhow!("⚠️  Arboo output is empty - process may not have started correctly"));
     }
 
     let mut successful_simulations = 0;
@@ -451,9 +450,9 @@ fn analyze_arboo_output(output: &str) {
     let mut weth_setup_success = 0;
 
     for line in &lines {
-        //info!("{:?}", line);
+        info!("{:?}", line);
 
-        if line.contains("📥 Received log from address") {
+        if line.contains("📥 Received log") {
             info!("🎯 Event detection working: {}", line);
             event_detections += 1;
         }
@@ -502,7 +501,29 @@ fn analyze_arboo_output(output: &str) {
 
     // Show first few and last few lines for context (skip compilation lines)
 
-    // Look for specific success patterns - prioritize event detection
+    // ASSERTIONS: Validate that the arbitrage bot is working properly
+    if lines.len() < 10 {
+        return Err(anyhow::anyhow!("❌ Test Failed: Arboo output too short ({} lines) - process may have crashed early", lines.len()));
+    }
+
+    if pool_scanning_count == 0 {
+        return Err(anyhow::anyhow!("❌ Test Failed: No pool scanning activity detected - bot may not be initialized properly"));
+    }
+
+    if error_count > 5 {
+        return Err(anyhow::anyhow!("❌ Test Failed: Too many errors detected ({} errors) - system may be unstable", error_count));
+    }
+
+    // STRICT ASSERTIONS: Test must find BOTH event detections AND arbitrage opportunities
+    if event_detections == 0 {
+        return Err(anyhow::anyhow!("❌ Test Failed: No event detections found! Expected > 0 event detections. The bot should detect the V3 swap we executed."));
+    }
+
+    if arbitrage_opportunities == 0 {
+        return Err(anyhow::anyhow!("❌ Test Failed: No arbitrage opportunities found! Expected > 0 arbitrage opportunities. The price difference between V2/V3 should create opportunities."));
+    }
+
+    // Perfect success - both event detection and arbitrage opportunities found!
     if event_detections > 0 && arbitrage_opportunities > 0 {
         info!("🎉 FULL E2E SUCCESS! Event detection and arbitrage processing working!");
         info!("   ✅ Swap events detected: {}", event_detections);
@@ -519,21 +540,8 @@ fn analyze_arboo_output(output: &str) {
         if weth_setup_success > 0 {
             info!("   ✅ WETH setup working: {}", weth_setup_success);
         }
-    } else if event_detections > 0 {
-        info!("🎯 EVENT DETECTION WORKING! Events captured but no arbitrage found");
-        info!("   ✅ Swap events detected: {}", event_detections);
-        info!("   This indicates the monitoring pipeline is functional");
-    } else if arbitrage_opportunities > 0 {
-        info!("💡 Arbitrage opportunities detected - arboo is monitoring successfully");
-        info!("   While no events captured, the monitoring system is working");
-    } else if pool_scanning_count > 0 {
-        info!("🔍 Arboo is scanning pools and monitoring for opportunities");
-        info!("   The system appears to be running and monitoring blockchain activity");
-    } else if lines.len() > 20 {
-        info!("📊 Arboo produced substantial output - likely processing events");
-        info!("   Even without specific keywords, the system appears active");
+        return Ok(()); // Perfect success!
     } else {
-        warn!("⚠️  Limited or no clear activity detected in arboo output");
-        warn!("   This may indicate an issue with event monitoring or processing");
+        return Err(anyhow::anyhow!("❌ Test Failed: Unexpected state - this should not be reachable"));
     }
 }

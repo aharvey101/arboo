@@ -117,7 +117,7 @@ impl LogProcessor {
 
         // Find all pools with the same token pair
         let matching_pools = self.token_pair_index.get(&token_pair)?;
-        info!("Pool matches: {:?}", matching_pools);
+        debug!("Pool matches: {:?}", matching_pools);
         // Look for a V3 pool among the matching pools
         for &candidate_address in matching_pools {
             if candidate_address == pool_address {
@@ -158,10 +158,11 @@ impl LogProcessor {
 
         // Find all pools with the same token pair
         let matching_pools = self.token_pair_index.get(&token_pair)?;
-
+        debug!("Log Pool Matched: {:?}", matching_pools);
         // Look for a V2 pool among the matching pools
         for &candidate_address in matching_pools {
             if candidate_address == pool_address {
+                debug!("candidate address = pool address");
                 continue; // Skip self
             }
 
@@ -284,7 +285,7 @@ fn create_swap_event_filter() -> Filter {
     let v2_swap_signature =
         keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
     let v3_swap_signature =
-        keccak256("Swap(address,address,int256,int256,uint160,uint160,int24)".as_bytes());
+        keccak256("Swap(address,address,int256,int256,uint160,uint128,int24)".as_bytes());
 
     Filter::new()
         .event_signature(vec![v2_swap_signature, v3_swap_signature])
@@ -320,8 +321,7 @@ async fn process_log_stream<S>(
         tokio::select! {
             Some(log) = stream.next() => {
                 processed_count += 1;
-                info!("Log? incoming");
-                info!("Log: {:?}", log);
+                info!("📥 Received log #{} from address: {:?}", processed_count, log.address());
                 // Process the log and potentially create an arbitrage opportunity
                 if let Some(log_event) = processor.process_log(&log) {
                     opportunity_count += 1;
