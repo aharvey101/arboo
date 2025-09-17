@@ -217,7 +217,7 @@ async fn execute_market_moving_swap(
     let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
     info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 ETH swap (more realistic)
+    let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 1 ETH swap (more realistic)
     info!(
         "💱 Would swap {} ETH for USDC on V3 to create price imbalance",
         swap_amount / U256::from(10u128.pow(18))
@@ -291,7 +291,10 @@ async fn execute_uniswap_v3_swap(
         .value(eth_amount) // Send the ETH amount we want to convert
         .gas_limit(100000u64);
 
-    info!("Converting {} ETH to WETH", eth_amount / U256::from(10u128.pow(18)));
+    info!(
+        "Converting {} ETH to WETH",
+        eth_amount / U256::from(10u128.pow(18))
+    );
     let pending_tx = provider
         .send_transaction(tx_request)
         .await
@@ -310,7 +313,7 @@ async fn execute_uniswap_v3_swap(
 
     let approve_data = approveCall {
         spender: router_address, // Approve the router to spend our WETH
-        amount: U256::MAX, // Infinite approval, you can set a specific amount instead
+        amount: U256::MAX,       // Infinite approval, you can set a specific amount instead
     }
     .abi_encode();
 
@@ -348,9 +351,9 @@ async fn execute_uniswap_v3_swap(
     // Create path: tokenIn + fee + tokenOut
     // WETH (token0) -> 500 fee tier -> USDC (token1)
     let mut path = Vec::new();
-    path.extend_from_slice(token0.as_slice());  // WETH address (20 bytes)
+    path.extend_from_slice(token0.as_slice()); // WETH address (20 bytes)
     path.extend_from_slice(&[0x00, 0x01, 0xf4]); // 500 fee tier (3 bytes)
-    path.extend_from_slice(token1.as_slice());  // USDC address (20 bytes)
+    path.extend_from_slice(token1.as_slice()); // USDC address (20 bytes)
 
     let swap_call = ISwapRouter::ExactInputParams {
         path: path.into(),
@@ -360,7 +363,6 @@ async fn execute_uniswap_v3_swap(
         amountOutMinimum: min_usdt_out,
     };
 
-    info!("Doing swap with: {:?} ", swap_call);
     let swap_call = ISwapRouter::exactInputCall { params: swap_call };
 
     let tx_request = TransactionRequest::default()
@@ -374,7 +376,6 @@ async fn execute_uniswap_v3_swap(
         "🔄 Sending {} ETH swap transaction from whale address",
         eth_amount / U256::from(10u128.pow(18))
     );
-    info!("Transaction Request {:?}", tx_request);
 
     let pending_tx = provider.send_transaction(tx_request).await?;
     let tx_hash = *pending_tx.tx_hash();
@@ -439,7 +440,9 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
     info!("📊 Total output lines: {}", lines.len());
 
     if lines.is_empty() {
-        return Err(anyhow::anyhow!("⚠️  Arboo output is empty - process may not have started correctly"));
+        return Err(anyhow::anyhow!(
+            "⚠️  Arboo output is empty - process may not have started correctly"
+        ));
     }
 
     let mut successful_simulations = 0;
@@ -450,8 +453,6 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
     let mut weth_setup_success = 0;
 
     for line in &lines {
-        info!("{:?}", line);
-
         if line.contains("📥 Received log") {
             info!("🎯 Event detection working: {}", line);
             event_detections += 1;
@@ -471,7 +472,6 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
             || line.contains("Production arbitrage simulation successful")
             || line.contains("Arbitrage transaction executed successfully")
         {
-            info!("🧪 Arbitrage simulation executed: {}", line);
             successful_simulations += 1;
         }
 
@@ -480,11 +480,6 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
         }
         if line.contains("pool") || line.contains("scanning") {
             pool_scanning_count += 1;
-        }
-
-        // Look for simulation attempts (even if unsuccessful)
-        if line.contains("Simulating") || line.contains("simulation") {
-            info!("🧪 Simulation activity detected: {}", line);
         }
     }
 
@@ -499,11 +494,16 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
     info!("  🔍 Pool scanning activities: {}", pool_scanning_count);
     info!("  ❌ Error messages: {}", error_count);
 
+    assert!(successful_simulations > 0);
+
     // Show first few and last few lines for context (skip compilation lines)
 
     // ASSERTIONS: Validate that the arbitrage bot is working properly
     if lines.len() < 10 {
-        return Err(anyhow::anyhow!("❌ Test Failed: Arboo output too short ({} lines) - process may have crashed early", lines.len()));
+        return Err(anyhow::anyhow!(
+            "❌ Test Failed: Arboo output too short ({} lines) - process may have crashed early",
+            lines.len()
+        ));
     }
 
     if pool_scanning_count == 0 {
@@ -511,7 +511,10 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
     }
 
     if error_count > 5 {
-        return Err(anyhow::anyhow!("❌ Test Failed: Too many errors detected ({} errors) - system may be unstable", error_count));
+        return Err(anyhow::anyhow!(
+            "❌ Test Failed: Too many errors detected ({} errors) - system may be unstable",
+            error_count
+        ));
     }
 
     // STRICT ASSERTIONS: Test must find BOTH event detections AND arbitrage opportunities
@@ -542,6 +545,8 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
         }
         return Ok(()); // Perfect success!
     } else {
-        return Err(anyhow::anyhow!("❌ Test Failed: Unexpected state - this should not be reachable"));
+        return Err(anyhow::anyhow!(
+            "❌ Test Failed: Unexpected state - this should not be reachable"
+        ));
     }
 }
