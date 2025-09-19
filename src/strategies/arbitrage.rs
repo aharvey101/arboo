@@ -38,7 +38,7 @@ use std::{
 use tokio::sync::RwLock;
 
 /// Production arbitrage result structure
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ArbitrageResult {
     pub optimal_amount: U256,
     pub possible_profit: U256,
@@ -176,7 +176,7 @@ impl UniswapArbitrageStrategy {
     /// Load specific pools using production method
     async fn load_specific_pools_optimized(
         &self,
-        simulator: &mut EvmSimulator,
+        simulator: &mut EvmSimulator<'_>,
         pool_a: Address,
         pool_b: Address,
     ) -> Result<()> {
@@ -213,7 +213,7 @@ impl UniswapArbitrageStrategy {
     /// Setup EVM using production method
     async fn setup_evm_optimized(
         &self,
-        simulator: &mut EvmSimulator,
+        simulator: &mut EvmSimulator<'_>,
         provider: &RootProvider<PubSubFrontend, Ethereum>,
     ) -> Result<()> {
         let latest_block = provider
@@ -293,7 +293,7 @@ impl UniswapArbitrageStrategy {
         &self,
         token_in: Address,
         token_out: Address,
-        simulator: &mut EvmSimulator,
+        simulator: &mut EvmSimulator<'_>,
         max_input: U256,
         fee: U24,
         latest_block: &Block,
@@ -319,7 +319,6 @@ impl UniswapArbitrageStrategy {
             )
             .await
             .unwrap_or(U256::ZERO);
-
             if v3_amount_out > best_profit {
                 best_profit = v3_amount_out;
                 optimal_amount = mid;
@@ -328,7 +327,6 @@ impl UniswapArbitrageStrategy {
                 right = mid - U256::from(1);
             }
         }
-
         if best_profit == U256::ZERO {
             return Ok(ArbitrageResult {
                 optimal_amount: U256::ZERO,
@@ -377,7 +375,10 @@ impl UniswapArbitrageStrategy {
 
         let result = simulator.call(quote_tx)?;
         let possible_profit = self.decode_quote_output_v3(result.output)?;
-
+        info!(
+            "Optimal Amount: {:?}\n Possible Profit: {:?}",
+            optimal_amount, possible_profit
+        );
         Ok(ArbitrageResult {
             optimal_amount,
             possible_profit,
@@ -466,7 +467,8 @@ impl UniswapArbitrageStrategy {
                 message.corresponding_pool_address,
                 provider,
             )
-            .await?;
+            .await
+            .unwrap_or_default();
 
         debug!("Calculated optimal result in: {:?}", start_time.elapsed());
         debug!(

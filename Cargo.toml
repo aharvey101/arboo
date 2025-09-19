@@ -85,6 +85,14 @@ path = "tests/bin/e2e_test_runner.rs"
 name = "arboo"
 path = "src/main.rs"
 
+[[bin]]
+name = "test_v3_swap"
+path = "test_v3_swap.rs"
+
+[[bin]]
+name = "arbitrage_simulator"
+path = "src/bin/arbitrage_simulator.rs"
+
 
 # Examples
 [[example]]

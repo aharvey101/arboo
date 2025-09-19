@@ -1,3 +1,4 @@
+use alloy::providers::Provider;
 use alloy::providers::ProviderBuilder;
 use alloy::rpc::client::WsConnect;
 use anyhow::Result;
@@ -11,7 +12,7 @@ use arbooo::common::{
 use arbooo::strategies::StrategyManager;
 use dotenv::dotenv;
 use dotenv::var;
-use log::{info, debug, warn};
+use log::{debug, info, warn};
 use revm::primitives::Address;
 use std::collections::HashMap;
 use std::fs::File;
@@ -33,6 +34,7 @@ async fn main() -> Result<()> {
 
     let ws_url = var::<&str>("WS_URL")
         .map_err(|e| anyhow::anyhow!("WS_URL environment variable not set: {}", e))?;
+    info!("WS URL {:?}", ws_url);
     let cache_dir = var("CACHE_DIR").unwrap_or_else(|_| "/tmp/arboo-cache".to_string());
 
     let ws_client = WsConnect::new(ws_url.clone());
@@ -40,6 +42,10 @@ async fn main() -> Result<()> {
         .on_ws(ws_client)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create WebSocket provider: {}", e))?;
+    let block_number = provider.get_block_number().await?;
+
+    info!("Block Number: {:?}", block_number);
+
     let provider = Arc::new(provider);
 
     let cache_path = format!("{}/.cached-pools.csv", cache_dir);
@@ -51,7 +57,7 @@ async fn main() -> Result<()> {
     }
 
     let mut set = JoinSet::new();
-    
+
     // Create cancellation token for graceful shutdown
     let cancellation_token = CancellationToken::new();
 
@@ -62,14 +68,19 @@ async fn main() -> Result<()> {
     let mut pools_map: HashMap<Address, Event> = HashMap::new();
     let path = Path::new(&cache_path);
     let file = File::open(path).map_err(|e| anyhow::anyhow!("Failed to load pools file {}", e))?;
+    //info!("File: {:?}", file);
     let reader = io::BufReader::new(file);
+
+    let mut v2_count = 0;
+    let mut v3_count = 0;
+    let mut skipped_count = 0;
 
     for line in reader.lines().skip(1) {
         let line = line?;
         let fields: Vec<&str> = line.split(',').collect();
-
         match fields[2] {
             "2" => {
+                v2_count += 1;
                 let pair_address = Address::from_str(fields[1]).map_err(|e| {
                     anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e)
                 })?;
@@ -90,6 +101,7 @@ async fn main() -> Result<()> {
                 );
             }
             "3" => {
+                v3_count += 1;
                 let pair_address = Address::from_str(fields[1]).map_err(|e| {
                     anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e)
                 })?;
@@ -110,14 +122,24 @@ async fn main() -> Result<()> {
                     }),
                 );
             }
-            _ => continue,
+            _ => {
+                skipped_count += 1;
+                info!(
+                    "Skipping unknown pool version '{}' for address {}",
+                    fields[2], fields[1]
+                );
+                continue;
+            }
         };
     }
 
     let pools_map = Arc::new(RwLock::new(pools_map));
     info!(
-        "📊 Loaded {} pools into cache",
-        pools_map.read().await.len()
+        "📊 Loaded {} pools into cache (V2: {}, V3: {}, Skipped: {})",
+        pools_map.read().await.len(),
+        v2_count,
+        v3_count,
+        skipped_count
     );
 
     // Initialize the generalized strategy manager
@@ -152,7 +174,7 @@ async fn main() -> Result<()> {
     let cancellation_token_strategy = cancellation_token.clone();
     let strategy_manager_task = async move {
         info!("🚀 Starting Strategy Manager event processing loop");
-        
+
         loop {
             tokio::select! {
                 log_event = log_receiver.recv() => {
@@ -189,7 +211,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         info!("Strategy manager task completed");
     };
 
@@ -216,13 +238,13 @@ async fn main() -> Result<()> {
         // Wait for Ctrl+C signal
         _ = signal::ctrl_c() => {
             info!("🛑 Received Ctrl+C, shutting down gracefully...");
-            
+
             // Trigger cancellation for all tasks
             cancellation_token.cancel();
-            
+
             // Give tasks time to shutdown gracefully
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            
+
             // Abort any remaining tasks
             set.abort_all();
 

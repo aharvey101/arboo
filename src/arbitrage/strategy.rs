@@ -262,7 +262,7 @@ pub async fn process_strategy_optimized(
 }
 
 async fn load_specific_pools_optimized(
-    simulator: &mut EvmSimulator,
+    simulator: &mut EvmSimulator<'_>,
     pool_a: Address,
     pool_b: Address,
     pools_map: &HashMap<Address, Event>,
@@ -296,7 +296,7 @@ async fn load_specific_pools_optimized(
 }
 
 async fn setup_evm_optimized(
-    simulator: &mut EvmSimulator,
+    simulator: &mut EvmSimulator<'_>,
     provider: &RootProvider<PubSubFrontend, Ethereum>,
 ) -> Result<()> {
     let latest_block = provider
@@ -367,7 +367,7 @@ async fn setup_evm_optimized(
 async fn find_optimal_amount_optimized(
     token_in: Address,
     token_out: Address,
-    simulator: &mut EvmSimulator,
+    simulator: &mut EvmSimulator<'_>,
     max_input: U256,
     fee: U24,
     latest_block: &Block,

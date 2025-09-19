@@ -21,7 +21,7 @@ use anyhow::Result;
 use super::revm::EvmSimulator;
 pub async fn sim_test(
     provider: Arc<RootProvider<PubSubFrontend, Ethereum>>,
-    simulator: Arc<TokioMutex<EvmSimulator>>,
+    simulator: Arc<TokioMutex<EvmSimulator<'_>>>,
 ) -> Result<()> {
     let latest_block = provider
         .get_block(

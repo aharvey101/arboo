@@ -55,29 +55,27 @@ pub struct Pool {
 
 impl From<StringRecord> for Pool {
     fn from(record: StringRecord) -> Self {
-        let version = match record.get(2)
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(2) {
+        let version = match record.get(2).and_then(|v| v.parse().ok()).unwrap_or(2) {
             2 => DexVariant::UniswapV2,
-            _ => DexVariant::UniswapV2,
+            3 => DexVariant::UniswapV3,
+            _ => DexVariant::UniswapV2, // Default to V2 for unknown versions
         };
         Self {
-            id: record.get(0)
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0),
-            address: record.get(1)
+            id: record.get(0).and_then(|v| v.parse().ok()).unwrap_or(0),
+            address: record
+                .get(1)
                 .and_then(|v| Address::from_str(v).ok())
                 .unwrap_or_default(),
             version,
-            token0: record.get(3)
+            token0: record
+                .get(3)
                 .and_then(|v| Address::from_str(v).ok())
                 .unwrap_or_default(),
-            token1: record.get(4)
+            token1: record
+                .get(4)
                 .and_then(|v| Address::from_str(v).ok())
                 .unwrap_or_default(),
-            fee: record.get(5)
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3000),
+            fee: record.get(5).and_then(|v| v.parse().ok()).unwrap_or(3000),
             //block_number: record.get(6).and_then(|v| v.parse().ok()).unwrap_or(0),
         }
     }
@@ -132,12 +130,12 @@ pub async fn load_all_pools(
     wss_url: String,
     from_block: u64,
     chunk: u64,
-    cache_path: &String
+    cache_path: &String,
 ) -> Result<(Vec<Pool>, i64)> {
     create_dir_all("cache")
         .map_err(|e| anyhow::anyhow!("Error creating cache directory: {}", e))?;
     info!("Creating cache file");
-    
+
     let file_path = Path::new(cache_path);
     let file_exists = file_path.exists();
     let file = OpenOptions::new()
@@ -155,8 +153,7 @@ pub async fn load_all_pools(
         let mut reader = csv::Reader::from_path(cache_path)?;
 
         for row in reader.records() {
-            let row = row
-                .map_err(|e| anyhow::anyhow!("Error reading CSV row: {}", e))?;
+            let row = row.map_err(|e| anyhow::anyhow!("Error reading CSV row: {}", e))?;
             let pool = Pool::from(row);
             if let DexVariant::UniswapV2 = pool.version {
                 v2_pool_cnt += 1
@@ -177,9 +174,7 @@ pub async fn load_all_pools(
     let provider = Arc::new(ws);
 
     let mut id = if !pools.is_empty() {
-        pools.last()
-            .map(|p| p.id)
-            .unwrap_or(-1)
+        pools.last().map(|p| p.id).unwrap_or(-1)
     } else {
         -1
     };
@@ -191,7 +186,9 @@ pub async fn load_all_pools(
     //        from_block
     //    };
 
-    let to_block = provider.get_block_number().await
+    let to_block = provider
+        .get_block_number()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
 
     let mut blocks_processed = 0;
@@ -319,8 +316,10 @@ pub async fn load_uniswap_v2_pools(
             .map_err(|e| anyhow::anyhow!("Invalid topic0 format in V2 log: {}", e))?;
         let token0 = Address::from(topic0);
 
-        let token1 = Address::from(FixedBytes::<20>::try_from(&log.topics()[2][12..32])
-            .map_err(|e| anyhow::anyhow!("Invalid topic2 format in V2 log: {}", e))?);
+        let token1 = Address::from(
+            FixedBytes::<20>::try_from(&log.topics()[2][12..32])
+                .map_err(|e| anyhow::anyhow!("Invalid topic2 format in V2 log: {}", e))?,
+        );
         let log_data = log.inner.data.data.to_vec();
         let log_data = log_data.as_slice();
         let decoded: (Address, B256) = SolValue::abi_decode(log_data, false)
@@ -376,7 +375,7 @@ pub async fn load_uniswap_v3_pools(
         let log_data = &log.inner.data.data;
         let decoded: (U256, i32, Address) = SolValue::abi_decode(log_data, false)
             .map_err(|e| anyhow::anyhow!("Failed to decode V3 log data: {}", e))?;
-        
+
         let fee = decoded.0.to::<u32>(); // fee is uint24, can safely convert to u32
         let pool_address = decoded.2; // pool address is the third field
 

@@ -160,10 +160,11 @@ contract UniswapV3FlashSwap {
         // Repay pool0
         IERC20(tokenIn).transfer(pool0, amountIn);
 
+        // Send profit directly to caller to avoid nested V3 calls
         if (tokenIn != WETH) {
-            v3SwapToEth(tokenIn, caller, profit);
+            IERC20(tokenIn).transfer(caller, profit);
         } else {
-            IWETH(WETH).transfer(address(this), profit);
+            IWETH(WETH).transfer(caller, profit);
         }
     }
 

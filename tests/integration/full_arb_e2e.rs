@@ -217,7 +217,7 @@ async fn execute_market_moving_swap(
     let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
     info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-    let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 1 ETH swap (more realistic)
+    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 ETH swap (much smaller)
     info!(
         "💱 Would swap {} ETH for USDC on V3 to create price imbalance",
         swap_amount / U256::from(10u128.pow(18))
@@ -237,9 +237,9 @@ async fn execute_market_moving_swap(
         Ok(tx_hash) => {
             info!("✅ Large swap executed successfully: {:?}", tx_hash);
             info!("📊 ARBITRAGE OPPORTUNITY CREATED!");
-            info!("💰 V2 pool price moved due to 1 ETH swap");
-            info!("🔍 V3 pool price remains unchanged");
-            info!("🚨 Arboo should detect this price difference!");
+            info!("💰 V3 pool price moved due to ETH->USDC swap");
+            info!("🔍 Should see events from USDC/WETH V3 pool");
+            info!("🚨 Arboo should detect this swap event!");
         }
         Err(e) => {
             warn!("⚠️  Large swap failed: {:?}", e);
@@ -321,7 +321,6 @@ async fn execute_uniswap_v3_swap(
         .from(whale_address)
         .to(token0) // Call approve on the WETH token contract
         .input(approve_data.into());
-    info!("TX Request: {:?}", tx_request);
     let pending_tx = provider
         .send_transaction(tx_request)
         .await
@@ -349,10 +348,10 @@ async fn execute_uniswap_v3_swap(
     }
 
     // Create path: tokenIn + fee + tokenOut
-    // WETH (token0) -> 500 fee tier -> USDC (token1)
+    // WETH (token0) -> 500 fee tier -> USDC (token1) - this one actually works!
     let mut path = Vec::new();
     path.extend_from_slice(token0.as_slice()); // WETH address (20 bytes)
-    path.extend_from_slice(&[0x00, 0x01, 0xf4]); // 500 fee tier (3 bytes)
+    path.extend_from_slice(&[0x00, 0x01, 0xF4]); // 500 fee tier (3 bytes) = 0x01F4
     path.extend_from_slice(token1.as_slice()); // USDC address (20 bytes)
 
     let swap_call = ISwapRouter::ExactInputParams {
@@ -363,6 +362,7 @@ async fn execute_uniswap_v3_swap(
         amountOutMinimum: min_usdt_out,
     };
 
+    info!("Doing swap with: {:?} ", swap_call);
     let swap_call = ISwapRouter::exactInputCall { params: swap_call };
 
     let tx_request = TransactionRequest::default()
@@ -370,7 +370,7 @@ async fn execute_uniswap_v3_swap(
         .from(whale_address)
         .value(U256::ZERO)
         .input(swap_call.abi_encode().into())
-        .gas_limit(300000u64); // Add explicit gas limit
+        .gas_limit(500000u64); // Increased gas limit
 
     info!(
         "🔄 Sending {} ETH swap transaction from whale address",
@@ -385,7 +385,11 @@ async fn execute_uniswap_v3_swap(
     let receipt = pending_tx.get_receipt().await?;
 
     if !receipt.status() {
-        return Err(anyhow::anyhow!("There was an error"));
+        warn!("💥 Transaction failed!");
+        warn!("Receipt: {:?}", receipt);
+        warn!("Gas used: {:?}", receipt.gas_used);
+        warn!("Effective gas price: {:?}", receipt.effective_gas_price);
+        return Err(anyhow::anyhow!("Transaction failed with receipt: {:?}", receipt));
     }
     info!(
         "✅ Transaction confirmed in block: {:?}",
@@ -453,6 +457,7 @@ fn analyze_arboo_output(output: &str) -> Result<()> {
     let mut weth_setup_success = 0;
 
     for line in &lines {
+        info!("{:?}", line);
         if line.contains("📥 Received log") {
             info!("🎯 Event detection working: {}", line);
             event_detections += 1;

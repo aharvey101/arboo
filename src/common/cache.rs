@@ -33,7 +33,7 @@ impl EvmSimulatorCache {
         provider: RootProvider<PubSubFrontend, Ethereum>,
         owner: Option<Address>,
         block_number: alloy::primitives::U64,
-    ) -> anyhow::Result<EvmSimulator> {
+    ) -> anyhow::Result<EvmSimulator<'_>> {
         log::debug!("Creating new EVM simulator (caching not yet implemented for EvmSimulator)");
         let mut new_simulator = EvmSimulator::new(provider, owner, block_number)?;
         
@@ -42,7 +42,7 @@ impl EvmSimulatorCache {
         Ok(new_simulator)
     }
 
-    async fn setup_simulator_optimized(&self, simulator: &mut EvmSimulator) -> anyhow::Result<()> {
+    async fn setup_simulator_optimized(&self, simulator: &mut EvmSimulator<'_>) -> anyhow::Result<()> {
         // Setup common state that all simulations need
         simulator.setup().await;
         log::debug!("EVM simulator setup completed");
