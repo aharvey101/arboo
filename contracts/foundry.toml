@@ -8,6 +8,10 @@ remappings = [
     "@uniswap=lib",
     "@openzeppelin/contracts/token/ERC20=lib/openzeppelin-contracts/contracts/interfaces/",
 ]
+
+[rpc_endpoints]
+local = "http://127.0.0.1:8545"
+
 [profile]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
