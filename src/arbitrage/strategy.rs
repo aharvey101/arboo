@@ -1,6 +1,5 @@
 use crate::arbitrage::simulation::{arboo_bytecode, get_address, one_thousand_eth, AddressType};
-use crate::arbitrage::simulation::simulation_with_logging;
-use crate::common::cache::{EvmSimulatorCache, BlockDataCache};
+use crate::arbitrage::simulation::simulation;
 use crate::common::connection_pool::ConnectionPool;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
@@ -12,9 +11,9 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::types::BlockTransactionsKind;
+use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy::signers::local::PrivateKeySigner;
-
+use alloy_primitives::aliases::U24;
 use alloy_primitives::{address, U64};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
@@ -28,9 +27,8 @@ use std::{
     path::Path,
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
-use tokio::sync::{broadcast::Sender, mpsc, RwLock, Semaphore};
+use tokio::sync::{broadcast::Sender, mpsc, RwLock};
 
 /// Strategy worker pool for handling arbitrage opportunities efficiently
 /// Uses connection pooling, memory caching, and optimized processing with bounded concurrency
@@ -39,102 +37,28 @@ pub struct StrategyWorkerPool {
     sender: mpsc::Sender<LogEvent>,
     connection_pool: ConnectionPool,
     pools_map: Arc<RwLock<HashMap<Address, Event>>>,
-    // Add semaphore for limiting concurrent tasks
-    task_semaphore: Arc<Semaphore>,
-    // Add EVM simulator cache for better performance
-    evm_cache: EvmSimulatorCache,
-    // Block data cache to reduce network calls
-    block_cache: BlockDataCache,
 }
 
 impl StrategyWorkerPool {
-    pub async fn new(sender: Sender<LogEvent>, ws_url: String, max_connections: usize) -> Result<Self> {
+    pub async fn new(_sender: Sender<LogEvent>, ws_url: String, max_connections: usize) -> Result<Self> {
         let (tx, _rx) = mpsc::channel::<LogEvent>(1000);
         let connection_pool = ConnectionPool::new(ws_url, max_connections);
         
         // Load pools map once and cache it
         let pools_map = Arc::new(RwLock::new(Self::load_pools_map().await?));
         
-        // Create semaphore to limit concurrent strategy tasks (prevent thread explosion)
-        let max_concurrent_tasks = (max_connections * 2).min(32); // Reasonable limit
-        let task_semaphore = Arc::new(Semaphore::new(max_concurrent_tasks));
-        
-        // Initialize caches
-        let evm_cache = EvmSimulatorCache::new(16, 30); // Cache up to 16 simulators for 30 seconds
-        let block_cache = BlockDataCache::new(10); // Cache block data for 10 seconds
-        
-        info!("Strategy worker pool configured with max {} concurrent tasks", max_concurrent_tasks);
-        
-        // Use standard spawn with bounded concurrency
-        let pool_clone = connection_pool.clone();
-        let pools_map_clone = pools_map.clone();
-        let semaphore_clone = task_semaphore.clone();
-        let mut event_receiver = sender.subscribe();
-
-        tokio::spawn(async move {
-            info!("Starting bounded strategy worker with {} max concurrent tasks", max_concurrent_tasks);
-            while let Ok(log_event) = event_receiver.recv().await {
-                let pool_clone = pool_clone.clone();
-                let pools_map_clone = pools_map_clone.clone();
-                let semaphore_clone_inner = semaphore_clone.clone();
-                
-                // Spawn blocking task but manage it properly
-                tokio::spawn(async move {
-                    // Acquire permit with timeout to avoid indefinite blocking
-                    let _permit = match tokio::time::timeout(
-                        Duration::from_millis(100),
-                        semaphore_clone_inner.acquire()
-                    ).await {
-                        Ok(Ok(permit)) => permit,
-                        Ok(Err(_)) => {
-                            log::error!("Semaphore acquisition failed (semaphore closed)");
-                            return;
-                        },
-                        Err(_) => {
-                            log::warn!("Max concurrent tasks reached, dropping event (timeout)");
-                            return;
-                        }
-                    };
-                    
-                    // Run the CPU-intensive work in a separate thread pool
-                    let result = tokio::task::spawn_blocking(move || {
-                        // Create a new runtime handle for this thread
-                        let rt = tokio::runtime::Handle::try_current()
-                            .unwrap_or_else(|_| {
-                                // If no runtime, create a basic runtime for this thread
-                                tokio::runtime::Runtime::new().unwrap().handle().clone()
-                            });
-                        
-                        rt.block_on(async move {
-                            process_strategy_optimized(log_event, &pool_clone, &pools_map_clone).await
-                        })
-                    }).await;
-                    
-                    match result {
-                        Ok(Ok(_)) => {
-                            log::debug!("Strategy processing completed successfully");
-                        },
-                        Ok(Err(e)) => {
-                            log::error!("Strategy processing error: {}", e);
-                        },
-                        Err(e) => {
-                            log::error!("Task execution error: {}", e);
-                        }
-                    }
-                    // Permit automatically released when _permit goes out of scope
-                });
-            }
-            info!("Strategy worker stopped");
-        });
-        
+        // Store components for direct processing - no spawning needed since main app handles this
+        // EVM components can't be Send+Sync so we avoid spawning tasks entirely
         Ok(Self {
             sender: tx,
             connection_pool,
             pools_map,
-            task_semaphore,
-            evm_cache,
-            block_cache,
         })
+    }
+
+    /// Process a log event directly - use this instead of sending to channel
+    pub async fn process_event(&self, log_event: LogEvent) -> Result<()> {
+        process_strategy_optimized(log_event, &self.connection_pool, &self.pools_map).await
     }
 
     async fn load_pools_map() -> Result<HashMap<Address, Event>> {
@@ -215,9 +139,6 @@ pub async fn process_strategy_optimized(
 ) -> Result<()> {
     let start_time = std::time::Instant::now();
     
-    log::info!("🔍 Starting arbitrage analysis for pool: {} (variant: {})", 
-               message.log_pool_address, message.pool_variant);
-    
     // Get pooled provider - much faster than creating new connection
     let pooled_provider = connection_pool.get_provider().await?;
     let provider = pooled_provider.provider();
@@ -251,25 +172,15 @@ pub async fn process_strategy_optimized(
     let block_base_fee = latest_block.header.base_fee_per_gas
         .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?;
 
-    // Determine target pool based on variant early
-    let is_v2_to_v3 = message.pool_variant == 3;
-    let target_pool = if is_v2_to_v3 {
-        message.log_pool_address
-    } else {
-        message.corresponding_pool_address
-    };
-
-    // Find optimal arbitrage amount using simple simulation
+    // Use cached pools map - no file I/O per request
     let pools_map_guard = pools_map.read().await;
-    
-    // Use the original simulator for a simple test
     load_specific_pools_optimized(
         &mut simulator,
         message.log_pool_address,
         message.corresponding_pool_address,
-        &*pools_map_guard,
+        &pools_map_guard,
     ).await?;
-    drop(pools_map_guard);
+    drop(pools_map_guard); // Release lock immediately
     
     log::debug!("Pools loaded in: {:?}", start_time.elapsed());
 
@@ -277,44 +188,32 @@ pub async fn process_strategy_optimized(
     setup_evm_optimized(&mut simulator, provider).await?;
     log::debug!("Setup EVM in: {:?}", start_time.elapsed());
 
-    // Simple profit check with a fixed amount instead of complex optimization
-    let test_amount = U256::from(100) * U256::from(10).pow(U256::from(18)); // 100 tokens
-    let possible_profit = match simulation_with_logging(
-        target_pool,
-        message.token1,
+    // Find optimal arbitrage amount
+    let max_input = U256::MAX - U256::from(10).pow(U256::from(18));
+    let optimal_result = find_optimal_amount_optimized(
         message.token0,
-        test_amount,
-        message.fee,
+        message.token1,
         &mut simulator,
+        max_input,
+        message.fee,
+        &latest_block,
+        message.corresponding_pool_address,
         provider,
-        false,
-    ).await {
-        Ok(profit) => profit,
-        Err(e) => {
-            log::warn!("Simulation failed: {}", e);
-            U256::ZERO
-        }
-    };
-
-    let optimal_result = ArbitrageResult {
-        optimal_amount: if possible_profit > U256::ZERO { test_amount } else { U256::ZERO },
-        possible_profit,
-    };
+    ).await?;
 
     log::debug!("Calculated optimal result in: {:?}", start_time.elapsed());
 
     // Early exit for unprofitable opportunities
     if optimal_result.possible_profit < U256::from(100_000u128) {
-        log::info!("❌ Arbitrage analysis complete - Not profitable ({}), skipping. Duration: {:?}", 
-                   optimal_result.possible_profit, start_time.elapsed());
+        log::debug!("Opportunity not profitable ({}), skipping", optimal_result.possible_profit);
         return Ok(());
     }
 
     // Check if block is still current
-    let current_block = provider.get_block_number().await.unwrap_or(23_000_000);
+    let current_block = provider.get_block_number().await.unwrap_or_default();
     if current_block > latest_block.header.number {
-        log::info!("⏰ Arbitrage analysis complete - Block expired ({} > {}), opportunity missed. Duration: {:?}", 
-                   current_block, latest_block.header.number, start_time.elapsed());
+        log::debug!("Block {} passed (current: {}), opportunity expired", 
+              latest_block.header.number, current_block);
         return Ok(());
     }
 
@@ -330,21 +229,6 @@ pub async fn process_strategy_optimized(
         "🎯 Profitable arbitrage! Profit: {} wei, Amount: {}, Target: {}",
         optimal_result.possible_profit, optimal_result.optimal_amount, target_pool
     );
-
-    log::info!("📊 Arbitrage opportunity details - Token0: {}, Token1: {}, Fee: {}", 
-               message.token0, message.token1, message.fee);
-
-    // Run final simulation with detailed logging for the optimal amount
-    let _final_profit = simulation_with_logging(
-        target_pool,
-        message.token1,
-        message.token0,
-        optimal_result.optimal_amount,
-        message.fee,
-        &mut simulator,
-        provider,
-        true, // Enable detailed logging for this final run
-    ).await.unwrap_or(U256::ZERO);
 
     // Create transaction data
     let transaction = create_input_data(
@@ -373,12 +257,12 @@ pub async fn process_strategy_optimized(
         nonce,
     ));
 
-    log::info!("✅ Arbitrage analysis complete - Transaction submitted. Total duration: {:?}", start_time.elapsed());
+    log::debug!("⚡ Total processing time: {:?}", start_time.elapsed());
     Ok(())
 }
 
 async fn load_specific_pools_optimized(
-    simulator: &mut EvmSimulator,
+    simulator: &mut EvmSimulator<'_>,
     pool_a: Address,
     pool_b: Address,
     pools_map: &HashMap<Address, Event>,
@@ -412,7 +296,7 @@ async fn load_specific_pools_optimized(
 }
 
 async fn setup_evm_optimized(
-    simulator: &mut EvmSimulator,
+    simulator: &mut EvmSimulator<'_>,
     provider: &RootProvider<PubSubFrontend, Ethereum>,
 ) -> Result<()> {
     let latest_block = provider
@@ -480,6 +364,109 @@ async fn setup_evm_optimized(
     Ok(())
 }
 
+async fn find_optimal_amount_optimized(
+    token_in: Address,
+    token_out: Address,
+    simulator: &mut EvmSimulator<'_>,
+    max_input: U256,
+    fee: U24,
+    latest_block: &Block,
+    target_pool: Address,
+    provider: &RootProvider<PubSubFrontend, Ethereum>,
+) -> Result<ArbitrageResult> {
+    let mut best_profit = U256::ZERO;
+    let mut optimal_amount = U256::ZERO;
+    let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
+    let mut right = max_input;
+
+    // Binary search for optimal amount
+    while left <= right {
+        let mid = (left + right) / U256::from(2);
+        
+        let v3_amount_out = simulation(
+            target_pool,
+            token_in,
+            token_out,
+            mid,
+            fee,
+            simulator,
+            provider,
+        )
+        .await
+        .unwrap_or(U256::ZERO);
+
+        if v3_amount_out > best_profit {
+            best_profit = v3_amount_out;
+            optimal_amount = mid;
+            left = mid + U256::from(1);
+        } else {
+            right = mid - U256::from(1);
+        }
+    }
+
+    if best_profit == U256::ZERO {
+        return Ok(ArbitrageResult {
+            optimal_amount: U256::ZERO,
+            possible_profit: U256::ZERO,
+        });
+    }
+
+    // Calculate profit in WETH terms
+    alloy::sol! {
+        #[derive(Debug)]
+        function quoteExactInput(
+            bytes memory path,
+            uint256 amountIn
+        ) external returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate);
+    }
+
+    let latest_gas_limit = latest_block.header.gas_limit;
+    let latest_gas_price = U256::from(latest_block.header.base_fee_per_gas
+        .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?);
+
+    // Create path for token -> WETH conversion
+    let mut path = Vec::new();
+    path.extend_from_slice(token_in.as_slice());
+    path.extend_from_slice(&U24::from(3000).to_be_bytes_vec());
+    path.extend_from_slice(get_address(AddressType::Weth).as_slice());
+    let path = alloy::primitives::Bytes::from(path);
+
+    let tx_data = quoteExactInputCall {
+        path,
+        amountIn: best_profit,
+    }.abi_encode();
+
+    let quote_tx = Tx {
+        caller: simulator.owner,
+        transact_to: get_address(AddressType::V2Quoter),
+        data: tx_data.into(),
+        value: U256::ZERO,
+        gas_price: latest_gas_price,
+        gas_limit: latest_gas_limit,
+    };
+
+    let result = simulator.call(quote_tx)?;
+    let possible_profit = decode_quote_output_v3(result.output)?;
+
+    Ok(ArbitrageResult {
+        optimal_amount,
+        possible_profit,
+    })
+}
+
+fn decode_quote_output_v3(output: revm::primitives::Bytes) -> Result<U256> {
+    let output_str = output.to_string();
+    let hex_str = output_str.trim_start_matches("0x");
+    let output_bytes = hex::decode(hex_str)?;
+    
+    if output_bytes.len() < 32 {
+        return Err(anyhow::anyhow!("Output too short: {} bytes", output_bytes.len()));
+    }
+    
+    let number = U256::from_be_slice(&output_bytes[0..32]);
+    Ok(number)
+}
+
 /// Initialize the strategy pool
 pub async fn initialize_strategy_pool(
     sender: Sender<LogEvent>, 
@@ -491,6 +478,7 @@ pub async fn initialize_strategy_pool(
 
 /// Legacy function for backward compatibility
 pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
+    log::warn!("Using legacy process_strategy - switch to optimized version for better performance");
     
     let pool = ConnectionPool::new(ws_url, 1);
     let pools_map = Arc::new(RwLock::new(

@@ -37,7 +37,7 @@ impl Reporter {
             start_time: Local::now(),
             end_time: None,
         });
-        
+
         println!("\n🧪 {}", suite_name);
     }
 
@@ -49,11 +49,11 @@ impl Reporter {
         let mut suites = self.suites.lock().unwrap();
         if let Some(suite) = suites.get_mut(suite_name) {
             suite.end_time = Some(Local::now());
-            
+
             let passed = suite.assertions.iter().filter(|a| a.passed).count();
             let failed = suite.assertions.iter().filter(|a| !a.passed).count();
             let duration = suite.end_time.unwrap() - suite.start_time;
-            
+
             if failed == 0 {
                 println!("  ✅ {} assertions passed ({:.2}s)", passed, duration.num_milliseconds() as f64 / 1000.0);
             } else {
@@ -75,11 +75,11 @@ impl Reporter {
         for (suite_name, suite) in suites.iter() {
             let passed = suite.assertions.iter().filter(|a| a.passed).count();
             let failed = suite.assertions.iter().filter(|a| !a.passed).count();
-            
+
             total_passed += passed;
             total_failed += failed;
             total_suites += 1;
-            
+
             if failed > 0 {
                 failed_suites += 1;
                 println!("❌ {}", suite_name);
@@ -99,7 +99,7 @@ impl Reporter {
         println!("\n📈 Results:");
         println!("  {} test suites: {} passed, {} failed", total_suites, total_suites - failed_suites, failed_suites);
         println!("  {} assertions: {} passed, {} failed", total_passed + total_failed, total_passed, total_failed);
-        
+
         if total_failed == 0 {
             println!("🎉 All tests passed!");
         } else {
@@ -131,7 +131,7 @@ impl AssertionBuilder {
     {
         let result = test_fn();
         let duration = self.start_time.elapsed().as_millis() as u64;
-        
+
         let assertion = match &result {
             Ok(_) => {
                 println!("    ✓ {} ({} ms)", self.description, duration);
@@ -169,7 +169,7 @@ impl AssertionBuilder {
     {
         let result = test_fn().await;
         let duration = self.start_time.elapsed().as_millis() as u64;
-        
+
         let assertion = match &result {
             Ok(_) => {
                 println!("    ✓ {} ({} ms)", self.description, duration);
@@ -200,3 +200,4 @@ impl AssertionBuilder {
         result
     }
 }
+

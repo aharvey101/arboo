@@ -1,13 +1,9 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-// Test Data Fixtures and Scenarios
-// Provides predefined test data for consistent and comprehensive testing
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Comprehensive test scenario that combines multiple components
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestScenario {
     pub name: String,
@@ -45,18 +41,18 @@ pub struct TestTokenConfig {
     pub symbol: String,
     pub address: String,
     pub decimals: u8,
-    pub total_supply: String, // String to handle large numbers
+    pub total_supply: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestPoolConfig {
-    pub pool_type: String, // "UniswapV2" or "UniswapV3"
+    pub pool_type: String,
     pub address: String,
     pub token0: String,
     pub token1: String,
     pub fee: u32,
     pub reserves: PoolReserves,
-    pub price: String, // Current price as string
+    pub price: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,9 +64,9 @@ pub struct PoolReserves {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketConditions {
-    pub volatility: f64, // 0.0 to 1.0
+    pub volatility: f64,
     pub trend: MarketTrend,
-    pub liquidity_factor: f64, // multiplier for base liquidity
+    pub liquidity_factor: f64,
     pub price_impact_factor: f64,
 }
 
@@ -84,7 +80,7 @@ pub enum MarketTrend {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GasConditions {
-    pub base_fee: u64, // in wei
+    pub base_fee: u64,
     pub max_fee: u64,
     pub priority_fee: u64,
     pub gas_limit: u64,
@@ -93,16 +89,16 @@ pub struct GasConditions {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CongestionLevel {
-    Low,     // Fast confirmation
-    Medium,  // Normal confirmation
-    High,    // Slow confirmation
-    Extreme, // Very slow confirmation
+    Low,
+    Medium,
+    High,
+    Extreme,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpectedOutcomes {
     pub should_detect_opportunity: bool,
-    pub expected_profit_range: Option<(f64, f64)>, // min, max profit in USD
+    pub expected_profit_range: Option<(f64, f64)>,
     pub should_execute_transaction: bool,
     pub expected_gas_used: Option<u64>,
     pub max_execution_time_ms: u64,
@@ -124,11 +120,10 @@ pub struct ScenarioCleanup {
     pub reset_gas_conditions: bool,
 }
 
-/// Predefined test scenarios
 pub struct PredefinedScenarios;
 
 impl PredefinedScenarios {
-    /// High-profit arbitrage opportunity (ideal conditions)
+
     pub fn profitable_weth_usdc_arbitrage() -> TestScenario {
         TestScenario {
             name: "profitable_weth_usdc_arbitrage".to_string(),
@@ -158,11 +153,11 @@ impl PredefinedScenarios {
                         token1: "USDC".to_string(),
                         fee: 300,
                         reserves: PoolReserves {
-                            token0_reserve: "1000000000000000000000".to_string(), // 1000 WETH
-                            token1_reserve: "3000000000000".to_string(), // 3M USDC
+                            token0_reserve: "1000000000000000000000".to_string(),
+                            token1_reserve: "3000000000000".to_string(),
                             liquidity: "54772255750516612".to_string(),
                         },
-                        price: "3000.0".to_string(), // $3000 per ETH
+                        price: "3000.0".to_string(),
                     },
                     TestPoolConfig {
                         pool_type: "UniswapV3".to_string(),
@@ -171,11 +166,11 @@ impl PredefinedScenarios {
                         token1: "USDC".to_string(),
                         fee: 500,
                         reserves: PoolReserves {
-                            token0_reserve: "500000000000000000000".to_string(), // 500 WETH
-                            token1_reserve: "1530000000000".to_string(), // 1.53M USDC
+                            token0_reserve: "500000000000000000000".to_string(),
+                            token1_reserve: "1530000000000".to_string(),
                             liquidity: "38729833462074168851".to_string(),
                         },
-                        price: "3060.0".to_string(), // $3060 per ETH (2% difference)
+                        price: "3060.0".to_string(),
                     },
                 ],
                 market_conditions: MarketConditions {
@@ -185,16 +180,16 @@ impl PredefinedScenarios {
                     price_impact_factor: 0.02,
                 },
                 gas_conditions: GasConditions {
-                    base_fee: 20_000_000_000, // 20 gwei
-                    max_fee: 50_000_000_000,  // 50 gwei
-                    priority_fee: 2_000_000_000, // 2 gwei
+                    base_fee: 20_000_000_000,
+                    max_fee: 50_000_000_000,
+                    priority_fee: 2_000_000_000,
                     gas_limit: 500_000,
                     congestion_level: CongestionLevel::Low,
                 },
             },
             expected_outcomes: ExpectedOutcomes {
                 should_detect_opportunity: true,
-                expected_profit_range: Some((50.0, 200.0)), // $50-$200 profit
+                expected_profit_range: Some((50.0, 200.0)),
                 should_execute_transaction: true,
                 expected_gas_used: Some(350_000),
                 max_execution_time_ms: 5000,
@@ -208,7 +203,6 @@ impl PredefinedScenarios {
         }
     }
 
-    /// Low liquidity scenario that should be avoided
     pub fn low_liquidity_scenario() -> TestScenario {
         TestScenario {
             name: "low_liquidity_scenario".to_string(),
@@ -238,8 +232,8 @@ impl PredefinedScenarios {
                         token1: "RARE".to_string(),
                         fee: 300,
                         reserves: PoolReserves {
-                            token0_reserve: "10000000000000000000".to_string(), // 10 WETH
-                            token1_reserve: "1000000000000000000000".to_string(), // 1000 RARE
+                            token0_reserve: "10000000000000000000".to_string(),
+                            token1_reserve: "1000000000000000000000".to_string(),
                             liquidity: "31622776601683793319".to_string(),
                         },
                         price: "100.0".to_string(),
@@ -251,18 +245,18 @@ impl PredefinedScenarios {
                         token1: "RARE".to_string(),
                         fee: 3000,
                         reserves: PoolReserves {
-                            token0_reserve: "5000000000000000000".to_string(), // 5 WETH
-                            token1_reserve: "520000000000000000000".to_string(), // 520 RARE
+                            token0_reserve: "5000000000000000000".to_string(),
+                            token1_reserve: "520000000000000000000".to_string(),
                             liquidity: "16124515496597247758".to_string(),
                         },
-                        price: "104.0".to_string(), // 4% difference but low liquidity
+                        price: "104.0".to_string(),
                     },
                 ],
                 market_conditions: MarketConditions {
                     volatility: 0.8,
                     trend: MarketTrend::Volatile,
-                    liquidity_factor: 0.1, // Very low liquidity
-                    price_impact_factor: 0.15, // High price impact
+                    liquidity_factor: 0.1,
+                    price_impact_factor: 0.15,
                 },
                 gas_conditions: GasConditions {
                     base_fee: 25_000_000_000,
@@ -273,9 +267,9 @@ impl PredefinedScenarios {
                 },
             },
             expected_outcomes: ExpectedOutcomes {
-                should_detect_opportunity: true, // Detects but shouldn't execute
-                expected_profit_range: Some((-50.0, 10.0)), // Likely unprofitable
-                should_execute_transaction: false, // Too risky
+                should_detect_opportunity: true,
+                expected_profit_range: Some((-50.0, 10.0)),
+                should_execute_transaction: false,
                 expected_gas_used: None,
                 max_execution_time_ms: 3000,
                 risk_assessment: RiskLevel::High,
@@ -288,7 +282,6 @@ impl PredefinedScenarios {
         }
     }
 
-    /// Gas price spike scenario
     pub fn gas_price_spike() -> TestScenario {
         TestScenario {
             name: "gas_price_spike".to_string(),
@@ -318,8 +311,8 @@ impl PredefinedScenarios {
                         token1: "DAI".to_string(),
                         fee: 300,
                         reserves: PoolReserves {
-                            token0_reserve: "800000000000000000000".to_string(), // 800 WETH
-                            token1_reserve: "2400000000000000000000000".to_string(), // 2.4M DAI
+                            token0_reserve: "800000000000000000000".to_string(),
+                            token1_reserve: "2400000000000000000000000".to_string(),
                             liquidity: "43817805383034611231".to_string(),
                         },
                         price: "3000.0".to_string(),
@@ -331,11 +324,11 @@ impl PredefinedScenarios {
                         token1: "DAI".to_string(),
                         fee: 500,
                         reserves: PoolReserves {
-                            token0_reserve: "600000000000000000000".to_string(), // 600 WETH
-                            token1_reserve: "1845000000000000000000000".to_string(), // 1.845M DAI
+                            token0_reserve: "600000000000000000000".to_string(),
+                            token1_reserve: "1845000000000000000000000".to_string(),
                             liquidity: "33281279921715669949".to_string(),
                         },
-                        price: "3075.0".to_string(), // 2.5% difference
+                        price: "3075.0".to_string(),
                     },
                 ],
                 market_conditions: MarketConditions {
@@ -345,19 +338,19 @@ impl PredefinedScenarios {
                     price_impact_factor: 0.03,
                 },
                 gas_conditions: GasConditions {
-                    base_fee: 150_000_000_000, // 150 gwei (very high)
-                    max_fee: 300_000_000_000,  // 300 gwei
-                    priority_fee: 20_000_000_000, // 20 gwei
+                    base_fee: 150_000_000_000,
+                    max_fee: 300_000_000_000,
+                    priority_fee: 20_000_000_000,
                     gas_limit: 500_000,
                     congestion_level: CongestionLevel::Extreme,
                 },
             },
             expected_outcomes: ExpectedOutcomes {
                 should_detect_opportunity: true,
-                expected_profit_range: Some((75.0, 150.0)), // Good profit but high gas
-                should_execute_transaction: false, // Gas too expensive
+                expected_profit_range: Some((75.0, 150.0)),
+                should_execute_transaction: false,
                 expected_gas_used: Some(400_000),
-                max_execution_time_ms: 8000, // Slower due to congestion
+                max_execution_time_ms: 8000,
                 risk_assessment: RiskLevel::High,
             },
             cleanup: Some(ScenarioCleanup {
@@ -368,7 +361,6 @@ impl PredefinedScenarios {
         }
     }
 
-    /// MEV competition scenario
     pub fn mev_competition() -> TestScenario {
         TestScenario {
             name: "mev_competition".to_string(),
@@ -398,8 +390,8 @@ impl PredefinedScenarios {
                         token1: "USDC".to_string(),
                         fee: 300,
                         reserves: PoolReserves {
-                            token0_reserve: "1200000000000000000000".to_string(), // 1200 WETH
-                            token1_reserve: "3600000000000".to_string(), // 3.6M USDC
+                            token0_reserve: "1200000000000000000000".to_string(),
+                            token1_reserve: "3600000000000".to_string(),
                             liquidity: "65727320076075600".to_string(),
                         },
                         price: "3000.0".to_string(),
@@ -411,34 +403,34 @@ impl PredefinedScenarios {
                         token1: "USDC".to_string(),
                         fee: 500,
                         reserves: PoolReserves {
-                            token0_reserve: "700000000000000000000".to_string(), // 700 WETH
-                            token1_reserve: "2184000000000".to_string(), // 2.184M USDC
+                            token0_reserve: "700000000000000000000".to_string(),
+                            token1_reserve: "2184000000000".to_string(),
                             liquidity: "44159041652537165527".to_string(),
                         },
-                        price: "3120.0".to_string(), // 4% difference (big opportunity)
+                        price: "3120.0".to_string(),
                     },
                 ],
                 market_conditions: MarketConditions {
                     volatility: 0.5,
                     trend: MarketTrend::Volatile,
-                    liquidity_factor: 1.2, // Good liquidity
+                    liquidity_factor: 1.2,
                     price_impact_factor: 0.02,
                 },
                 gas_conditions: GasConditions {
-                    base_fee: 30_000_000_000, // 30 gwei
-                    max_fee: 100_000_000_000, // 100 gwei
-                    priority_fee: 15_000_000_000, // 15 gwei (high due to competition)
+                    base_fee: 30_000_000_000,
+                    max_fee: 100_000_000_000,
+                    priority_fee: 15_000_000_000,
                     gas_limit: 500_000,
                     congestion_level: CongestionLevel::High,
                 },
             },
             expected_outcomes: ExpectedOutcomes {
                 should_detect_opportunity: true,
-                expected_profit_range: Some((100.0, 300.0)), // Large opportunity
+                expected_profit_range: Some((100.0, 300.0)),
                 should_execute_transaction: true,
                 expected_gas_used: Some(380_000),
-                max_execution_time_ms: 2000, // Must be fast to win
-                risk_assessment: RiskLevel::Medium, // Competitive but profitable
+                max_execution_time_ms: 2000,
+                risk_assessment: RiskLevel::Medium,
             },
             cleanup: Some(ScenarioCleanup {
                 reset_pools: true,
@@ -448,7 +440,6 @@ impl PredefinedScenarios {
         }
     }
 
-    /// Edge case: Extreme decimal differences
     pub fn extreme_decimal_differences() -> TestScenario {
         TestScenario {
             name: "extreme_decimal_differences".to_string(),
@@ -460,14 +451,14 @@ impl PredefinedScenarios {
                     TestTokenConfig {
                         symbol: "WBTC".to_string(),
                         address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599".to_string(),
-                        decimals: 8, // Bitcoin has 8 decimals
-                        total_supply: "2100000000000000".to_string(), // 21M WBTC
+                        decimals: 8,
+                        total_supply: "2100000000000000".to_string(),
                     },
                     TestTokenConfig {
                         symbol: "SHIB".to_string(),
                         address: "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE".to_string(),
-                        decimals: 18, // High decimal token
-                        total_supply: "1000000000000000000000000000000000".to_string(), // 1 quadrillion
+                        decimals: 18,
+                        total_supply: "1000000000000000000000000000000000".to_string(),
                     },
                 ],
                 pools: vec![
@@ -478,11 +469,11 @@ impl PredefinedScenarios {
                         token1: "SHIB".to_string(),
                         fee: 300,
                         reserves: PoolReserves {
-                            token0_reserve: "100000000".to_string(), // 1 WBTC (8 decimals)
-                            token1_reserve: "4000000000000000000000000000".to_string(), // 4B SHIB
+                            token0_reserve: "100000000".to_string(),
+                            token1_reserve: "4000000000000000000000000000".to_string(),
                             liquidity: "20000000000000000".to_string(),
                         },
-                        price: "40000000000000000000000000.0".to_string(), // SHIB per WBTC
+                        price: "40000000000000000000000000.0".to_string(),
                     },
                     TestPoolConfig {
                         pool_type: "UniswapV3".to_string(),
@@ -491,33 +482,33 @@ impl PredefinedScenarios {
                         token1: "SHIB".to_string(),
                         fee: 3000,
                         reserves: PoolReserves {
-                            token0_reserve: "50000000".to_string(), // 0.5 WBTC
-                            token1_reserve: "2040000000000000000000000000".to_string(), // 2.04B SHIB
+                            token0_reserve: "50000000".to_string(),
+                            token1_reserve: "2040000000000000000000000000".to_string(),
                             liquidity: "14142135623730950488".to_string(),
                         },
-                        price: "40800000000000000000000000.0".to_string(), // 2% difference
+                        price: "40800000000000000000000000.0".to_string(),
                     },
                 ],
                 market_conditions: MarketConditions {
-                    volatility: 0.9, // Very volatile due to SHIB
+                    volatility: 0.9,
                     trend: MarketTrend::Volatile,
-                    liquidity_factor: 0.3, // Lower liquidity for this exotic pair
+                    liquidity_factor: 0.3,
                     price_impact_factor: 0.08,
                 },
                 gas_conditions: GasConditions {
                     base_fee: 25_000_000_000,
                     max_fee: 60_000_000_000,
                     priority_fee: 3_000_000_000,
-                    gas_limit: 600_000, // Higher gas for complex calculations
+                    gas_limit: 600_000,
                     congestion_level: CongestionLevel::Medium,
                 },
             },
             expected_outcomes: ExpectedOutcomes {
                 should_detect_opportunity: true,
-                expected_profit_range: Some((5.0, 25.0)), // Smaller profit due to complexity
+                expected_profit_range: Some((5.0, 25.0)),
                 should_execute_transaction: true,
                 expected_gas_used: Some(450_000),
-                max_execution_time_ms: 7000, // Slower due to complex math
+                max_execution_time_ms: 7000,
                 risk_assessment: RiskLevel::Medium,
             },
             cleanup: Some(ScenarioCleanup {
@@ -528,7 +519,6 @@ impl PredefinedScenarios {
         }
     }
 
-    /// Get all predefined scenarios
     pub fn all_scenarios() -> Vec<TestScenario> {
         vec![
             Self::profitable_weth_usdc_arbitrage(),
@@ -539,7 +529,6 @@ impl PredefinedScenarios {
         ]
     }
 
-    /// Get scenarios by type
     pub fn scenarios_by_type(scenario_type: ScenarioType) -> Vec<TestScenario> {
         Self::all_scenarios()
             .into_iter()
@@ -548,18 +537,17 @@ impl PredefinedScenarios {
     }
 }
 
-/// Historical market data replays
 pub struct HistoricalReplays;
 
 impl HistoricalReplays {
-    /// Black Thursday (March 12, 2020) - crypto market crash
+
     pub fn black_thursday_crash() -> TestScenario {
         TestScenario {
             name: "black_thursday_crash".to_string(),
             description: "Recreating the market conditions during the March 2020 crypto crash".to_string(),
             scenario_type: ScenarioType::EdgeCase,
             setup: ScenarioSetup {
-                initial_block: 9796778, // Around Black Thursday block
+                initial_block: 9796778,
                 tokens: vec![
                     TestTokenConfig {
                         symbol: "WETH".to_string(),
@@ -582,21 +570,21 @@ impl HistoricalReplays {
                         token1: "DAI".to_string(),
                         fee: 300,
                         reserves: PoolReserves {
-                            token0_reserve: "200000000000000000000".to_string(), // 200 WETH
-                            token1_reserve: "32000000000000000000000".to_string(), // 32k DAI (ETH crashed to $160)
+                            token0_reserve: "200000000000000000000".to_string(),
+                            token1_reserve: "32000000000000000000000".to_string(),
                             liquidity: "8000000000000000000000".to_string(),
                         },
-                        price: "160.0".to_string(), // Crashed price
+                        price: "160.0".to_string(),
                     },
                 ],
                 market_conditions: MarketConditions {
-                    volatility: 1.0, // Maximum volatility
+                    volatility: 1.0,
                     trend: MarketTrend::Bearish,
-                    liquidity_factor: 0.2, // Liquidity dried up
-                    price_impact_factor: 0.25, // Massive slippage
+                    liquidity_factor: 0.2,
+                    price_impact_factor: 0.25,
                 },
                 gas_conditions: GasConditions {
-                    base_fee: 100_000_000_000, // 100 gwei (network congested from panic)
+                    base_fee: 100_000_000_000,
                     max_fee: 500_000_000_000,
                     priority_fee: 50_000_000_000,
                     gas_limit: 500_000,
@@ -604,7 +592,7 @@ impl HistoricalReplays {
                 },
             },
             expected_outcomes: ExpectedOutcomes {
-                should_detect_opportunity: false, // Too chaotic
+                should_detect_opportunity: false,
                 expected_profit_range: None,
                 should_execute_transaction: false,
                 expected_gas_used: None,
@@ -620,34 +608,31 @@ impl HistoricalReplays {
     }
 }
 
-/// Utility functions for working with test scenarios
 impl TestScenario {
-    /// Save scenario to JSON file
+
     pub fn save_to_file(&self, path: &str) -> Result<()> {
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(path, json)?;
         Ok(())
     }
 
-    /// Load scenario from JSON file
     pub fn load_from_file(path: &str) -> Result<Self> {
         let json = std::fs::read_to_string(path)?;
         let scenario = serde_json::from_str(&json)?;
         Ok(scenario)
     }
 
-    /// Get estimated execution time based on scenario complexity
     pub fn estimated_execution_time(&self) -> u64 {
-        let base_time = 1000; // 1 second base
+        let base_time = 1000;
         let complexity_factor = match self.scenario_type {
             ScenarioType::ProfitableArbitrage => 1.0,
             ScenarioType::LowLiquidity => 1.5,
             ScenarioType::GasSpike => 2.0,
-            ScenarioType::MEVCompetition => 0.5, // Must be fast
+            ScenarioType::MEVCompetition => 0.5,
             ScenarioType::EdgeCase => 3.0,
             _ => 1.0,
         };
-        
+
         (base_time as f64 * complexity_factor) as u64
     }
 }
@@ -660,7 +645,7 @@ mod tests {
     fn test_predefined_scenarios() {
         let scenarios = PredefinedScenarios::all_scenarios();
         assert!(!scenarios.is_empty());
-        
+
         for scenario in scenarios {
             assert!(!scenario.name.is_empty());
             assert!(!scenario.description.is_empty());
@@ -674,7 +659,7 @@ mod tests {
         let scenario = PredefinedScenarios::profitable_weth_usdc_arbitrage();
         let json = serde_json::to_string(&scenario).unwrap();
         let deserialized: TestScenario = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(scenario.name, deserialized.name);
         assert_eq!(scenario.description, deserialized.description);
     }
@@ -683,7 +668,7 @@ mod tests {
     fn test_scenarios_by_type() {
         let profitable = PredefinedScenarios::scenarios_by_type(ScenarioType::ProfitableArbitrage);
         assert!(!profitable.is_empty());
-        
+
         let edge_cases = PredefinedScenarios::scenarios_by_type(ScenarioType::EdgeCase);
         assert!(!edge_cases.is_empty());
     }
@@ -695,3 +680,4 @@ mod tests {
         assert_eq!(black_thursday.expected_outcomes.risk_assessment, RiskLevel::Extreme);
     }
 }
+

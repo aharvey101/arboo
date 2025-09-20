@@ -2,9 +2,6 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-// Contract Deployment Test Utilities
-// Provides infrastructure for deploying test contracts in various configurations
-
 use anyhow::Result;
 use alloy::primitives::{Address, U256};
 use alloy::signers::local::PrivateKeySigner;
@@ -14,7 +11,6 @@ use std::sync::Arc;
 use log::{info, debug};
 use std::collections::HashMap;
 
-// Mock contract types for testing
 #[derive(Debug, Clone)]
 pub struct TestTokenContract {
     pub address: Address,
@@ -60,23 +56,21 @@ where
     pub fn new(provider: Arc<P>, private_key: &str) -> Result<Self> {
         let signer = PrivateKeySigner::from_slice(&hex::decode(private_key.trim_start_matches("0x"))?)?;
         let wallet = EthereumWallet::from(signer);
-        
+
         Ok(Self {
             provider,
             wallet,
         })
     }
 
-    /// Deploy multiple test tokens based on provided configurations
     pub async fn deploy_test_tokens(&self, configs: &[TokenConfig]) -> Result<Vec<TestTokenContract>> {
         let mut deployed_tokens = Vec::new();
-        
+
         for (i, config) in configs.iter().enumerate() {
             info!("Deploying test token: {} ({})", config.name, config.symbol);
-            
-            // For testing purposes, generate deterministic mock addresses
+
             let mock_address = Address::from([i as u8; 20]);
-            
+
             let token = TestTokenContract {
                 address: mock_address,
                 name: config.name.clone(),
@@ -84,15 +78,14 @@ where
                 decimals: config.decimals,
                 total_supply: config.initial_supply,
             };
-            
+
             debug!("Deployed {} at address: {:?}", config.symbol, token.address);
             deployed_tokens.push(token);
         }
-        
+
         Ok(deployed_tokens)
     }
 
-    /// Deploy a Uniswap V2 test pair with the given token addresses
     pub async fn deploy_v2_test_pair(
         &self,
         token0: Address,
@@ -101,8 +94,7 @@ where
         _initial_liquidity_token1: U256,
     ) -> Result<TestPoolContract> {
         info!("Deploying Uniswap V2 test pair for tokens {:?} and {:?}", token0, token1);
-        
-        // Generate deterministic mock address based on token addresses
+
         let mut addr_bytes = [0u8; 20];
         for (i, (a, b)) in token0.as_slice().iter().zip(token1.as_slice().iter()).enumerate() {
             if i < 20 {
@@ -110,19 +102,18 @@ where
             }
         }
         let pair_address = Address::from(addr_bytes);
-        
+
         let pool = TestPoolContract {
             address: pair_address,
             token0,
             token1,
-            fee: 3000, // 0.3% for V2
+            fee: 3000,
         };
-        
+
         debug!("Deployed V2 pair at address: {:?}", pool.address);
         Ok(pool)
     }
 
-    /// Deploy a Uniswap V3 test pool with the given parameters
     pub async fn deploy_v3_test_pool(
         &self,
         token0: Address,
@@ -131,8 +122,7 @@ where
         _initial_price: Option<U256>,
     ) -> Result<TestPoolContract> {
         info!("Deploying Uniswap V3 test pool for tokens {:?} and {:?} with fee {}", token0, token1, fee);
-        
-        // Generate deterministic mock address
+
         let mut addr_bytes = [0u8; 20];
         for (i, (a, b)) in token0.as_slice().iter().zip(token1.as_slice().iter()).enumerate() {
             if i < 20 {
@@ -140,19 +130,18 @@ where
             }
         }
         let pool_address = Address::from(addr_bytes);
-        
+
         let pool = TestPoolContract {
             address: pool_address,
             token0,
             token1,
             fee,
         };
-        
+
         debug!("Deployed V3 pool at address: {:?}", pool.address);
         Ok(pool)
     }
 
-    /// Add liquidity to an existing pool (mock implementation)
     pub async fn add_liquidity_to_pool(
         &self,
         _pair_address: &Address,
@@ -162,15 +151,13 @@ where
         amount1: U256,
     ) -> Result<()> {
         info!("Adding liquidity: {} token0, {} token1", amount0, amount1);
-        // Mock implementation - in real deployment this would interact with the pool contract
+
         Ok(())
     }
 
-    /// Set up a complete test environment with tokens and pools
     pub async fn setup_test_environment(&self) -> Result<TestEnvironment> {
         info!("Setting up complete test environment");
-        
-        // Create standard test tokens
+
         let token_configs = vec![
             TokenConfig {
                 name: "Test Token A".to_string(),
@@ -191,31 +178,30 @@ where
                 initial_supply: U256::from(10_000) * U256::from(10).pow(U256::from(18)),
             },
         ];
-        
+
         let tokens = self.deploy_test_tokens(&token_configs).await?;
-        
-        // Create test pools
+
         let v2_pool = self.deploy_v2_test_pair(
             tokens[0].address,
             tokens[1].address,
             U256::from(1000) * U256::from(10).pow(U256::from(18)),
             U256::from(1000) * U256::from(10).pow(U256::from(18)),
         ).await?;
-        
+
         let v3_pool_500 = self.deploy_v3_test_pool(
             tokens[0].address,
-            tokens[2].address, // TTA/WETH
+            tokens[2].address,
             500,
-            Some(U256::from(1000000000000000000u64)), // 1:1 price
+            Some(U256::from(1000000000000000000u64)),
         ).await?;
-        
+
         let v3_pool_3000 = self.deploy_v3_test_pool(
             tokens[1].address,
-            tokens[2].address, // TTB/WETH  
+            tokens[2].address,
             3000,
-            Some(U256::from(2000000000000000000u64)), // 2:1 price
+            Some(U256::from(2000000000000000000u64)),
         ).await?;
-        
+
         Ok(TestEnvironment {
             tokens,
             v2_pools: vec![v2_pool],
@@ -232,35 +218,32 @@ pub struct TestEnvironment {
 }
 
 impl TestEnvironment {
-    /// Get token by symbol
+
     pub fn get_token_by_symbol(&self, symbol: &str) -> Option<&TestTokenContract> {
         self.tokens.iter().find(|token| token.symbol == symbol)
     }
-    
-    /// Get all pools involving a specific token
+
     pub fn get_pools_for_token(&self, token_address: Address) -> Vec<&TestPoolContract> {
         let mut pools = Vec::new();
-        
+
         for pool in &self.v2_pools {
             if pool.token0 == token_address || pool.token1 == token_address {
                 pools.push(pool);
             }
         }
-        
+
         for pool in &self.v3_pools {
             if pool.token0 == token_address || pool.token1 == token_address {
                 pools.push(pool);
             }
         }
-        
+
         pools
     }
-    
-    /// Get arbitrage opportunities (mock analysis)
+
     pub fn find_arbitrage_opportunities(&self) -> Vec<ArbitrageOpportunity> {
         let mut opportunities = Vec::new();
-        
-        // Mock arbitrage opportunity between V2 and V3 pools
+
         if let (Some(tta), Some(ttb)) = (
             self.get_token_by_symbol("TTA"),
             self.get_token_by_symbol("TTB")
@@ -274,7 +257,7 @@ impl TestEnvironment {
                 expected_profit: U256::from(50) * U256::from(10).pow(U256::from(18)),
             });
         }
-        
+
         opportunities
     }
 }
@@ -288,3 +271,4 @@ pub struct ArbitrageOpportunity {
     pub amount_in: U256,
     pub expected_profit: U256,
 }
+

@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use log::warn;
+use log::{info, warn};
 
 #[derive(Clone, Debug)]
 pub struct ConnectionPool {
@@ -29,7 +29,7 @@ impl ConnectionPool {
         let mut pool = self.pool.lock().await;
         
         if let Some(provider) = pool.pop_front() {
-            log::debug!("Reusing existing WebSocket connection");
+            info!("Reusing existing WebSocket connection");
             return Ok(PooledProvider {
                 provider: Some(provider),
                 pool: self.clone(),
@@ -47,7 +47,7 @@ impl ConnectionPool {
         *current_size += 1;
         drop(current_size);
         
-        log::debug!("Creating new WebSocket connection for pool");
+        info!("Creating new WebSocket connection for pool");
         let provider = self.create_provider().await?;
         
         Ok(PooledProvider {
@@ -76,9 +76,9 @@ impl ConnectionPool {
         let mut pool = self.pool.lock().await;
         if pool.len() < self.max_connections {
             pool.push_back(provider);
-            log::debug!("Provider returned to pool");
+            info!("Provider returned to pool");
         } else {
-            log::debug!("Pool full, dropping provider");
+            info!("Pool full, dropping provider");
         }
     }
 }
@@ -102,7 +102,6 @@ impl Drop for PooledProvider {
     fn drop(&mut self) {
         if let Some(provider) = self.provider.take() {
             let pool = self.pool.clone();
-            // Return provider to pool asynchronously
             tokio::spawn(async move {
                 pool.return_provider(provider).await;
             });

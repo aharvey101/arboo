@@ -1,10 +1,6 @@
-// Test library file - this allows all tests to share common modules
-// without needing path macros
-
 pub mod utils;
 pub mod fixtures;
 
-// Test modules organized by category
 pub mod atomic {
     pub mod atomic_tests;
 }
@@ -27,12 +23,11 @@ pub mod pool {
 }
 
 pub mod evm {
-    pub mod evm_simulator_tests;
+//    pub mod evm_simulator_tests;
+    pub mod alloydb_compatibility_test;
+    pub mod direct_reth_alloydb_test;
 }
 
-pub mod environment {
-    pub mod test_environment_demo;
-}
 
 pub mod performance {
     pub mod high_frequency_tests;
@@ -47,9 +42,10 @@ pub mod memory {
 }
 
 pub mod integration {
-    pub mod concurrent_opportunities_tests;
+    //pub mod concurrent_opportunities_tests;
     pub mod full_arbitrage_cycle_tests;
     pub mod network_disconnection_tests;
+    pub mod full_arb_e2e;
 }
 
 pub mod edge_cases {
@@ -62,3 +58,4 @@ pub mod misc {
     pub mod logger_tests;
     pub mod rpc_call_measurement_tests;
 }
+

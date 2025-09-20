@@ -9,6 +9,7 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::signers::local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use anyhow::{anyhow, Error, Result};
+use revm::inspector_handle_register;
 
 use revm::db::{AlloyDB, CacheDB};
 use revm::primitives::{Bytes, Log};
@@ -65,18 +66,17 @@ pub struct TxResult {
 // type My_Evm_Context = EvmContext<CacheDB<AlloyDB<Client, AnyNetwork, RootProvider<PubSubFrontend>>>>;
 
 #[derive(Debug)]
-pub struct EvmSimulator {
+pub struct EvmSimulator<'a> {
     pub owner: Address,
     pub contract_address: Address,
     pub evm: Evm<
-        'static,
-        (),
-        //CacheDB<AlloyDB<PubSubFrontend, Ethereum, RootProvider<PubSubFrontend, Ethereum>>>,
+        'a,
+        revm_inspector::RevmInspector,
         CacheDB<AlloyDB<PubSubFrontend, Ethereum, RootProvider<PubSubFrontend, Ethereum>>>,
     >,
     pub block_number: U64,
 }
-impl EvmSimulator {
+impl EvmSimulator<'_> {
     pub fn new(
         provider: RootProvider<PubSubFrontend, Ethereum>,
         owner: Option<Address>,
@@ -130,22 +130,24 @@ impl EvmSimulator {
             None => PrivateKeySigner::random().address(),
         };
         let contract_wallet = PrivateKeySigner::random();
-        let _inspector = revm_inspector::RevmInspector::new();
+        let inspector = revm_inspector::RevmInspector::new();
 
-        let alloy_db = CacheDB::new(
-            AlloyDB::new(provider, BlockId::from(block_number))
-                .ok_or_else(|| anyhow::anyhow!("Failed to create AlloyDB: provider or block unavailable"))?
-        );
+        // Create AlloyDB without creating a new runtime - use the current runtime context
+        let alloy_db = AlloyDB::new(provider, BlockId::from(block_number)).ok_or_else(|| {
+            anyhow::anyhow!("Failed to create AlloyDB - current runtime may be incompatible")
+        })?;
+
+        let cache_db = CacheDB::new(alloy_db);
 
         let evm = Evm::builder()
-            .with_db(alloy_db)
-            //.with_external_context(EmptyDB::new())
-            //.with_external_context(inspector)
-            //.append_handler_register(inspector_handle_register)
+            .with_db(cache_db)
+            .with_external_context(inspector)
+            .append_handler_register(inspector_handle_register)
             .modify_env(|env| {
                 env.block.number = U256::from(block_number);
-                env.block.coinbase = Address::from_str("0xDAFEA492D9c6733ae3d56b7Ed1ADB60692c98Bc5")
-                    .unwrap_or_else(|_| Address::ZERO); // Use zero address as fallback
+                env.block.coinbase =
+                    Address::from_str("0xDAFEA492D9c6733ae3d56b7Ed1ADB60692c98Bc5")
+                        .unwrap_or_else(|_| Address::ZERO); // Use zero address as fallback
             })
             .build();
 
@@ -176,11 +178,21 @@ impl EvmSimulator {
     }
 
     pub fn staticcall(&mut self, tx: Tx) -> Result<TxResult> {
-        self._call(tx, false)
+        let result = self._call(tx, false);
+
+        // Generate and log the inspector report after the call
+        self.generate_inspector_report();
+
+        result
     }
 
     pub fn call(&mut self, tx: Tx) -> Result<TxResult> {
-        self._call(tx, true)
+        let result = self._call(tx, true);
+
+        // Generate and log the inspector report after the call
+        self.generate_inspector_report();
+
+        result
     }
 
     pub fn _call(&mut self, tx: Tx, commit: bool) -> Result<TxResult> {
@@ -227,13 +239,33 @@ impl EvmSimulator {
                 },
             },
             ExecutionResult::Revert { gas_used, output } => {
+                // Log failure analysis automatically on revert
+                let failure_analysis = self.evm.context.external.analyze_failures();
+                if !failure_analysis.is_empty() {
+                    log::error!(
+                        "Transaction reverted - Failure Analysis:\n{}",
+                        failure_analysis
+                    );
+                }
+
                 return Err(anyhow!(
                     "EVM REVERT: {:?} / Gas used: {:?}",
                     output,
                     gas_used
-                ))
+                ));
             }
-            ExecutionResult::Halt { reason, .. } => return Err(anyhow!("EVM HALT: {:?}", reason)),
+            ExecutionResult::Halt { reason, .. } => {
+                // Log failure analysis automatically on halt
+                let failure_analysis = self.evm.context.external.analyze_failures();
+                if !failure_analysis.is_empty() {
+                    log::error!(
+                        "Transaction halted - Failure Analysis:\n{}",
+                        failure_analysis
+                    );
+                }
+
+                return Err(anyhow!("EVM HALT: {:?}", reason));
+            }
         };
 
         Ok(output)
@@ -266,7 +298,12 @@ impl EvmSimulator {
         self.insert_account_info(target, contract_info).await;
     }
     pub async fn get_account(&mut self, address: Address) -> Result<AccountInfo, Error> {
-        let account = self.evm.context.evm.db.basic(address)
+        let account = self
+            .evm
+            .context
+            .evm
+            .db
+            .basic(address)
             .map_err(|e| anyhow::anyhow!("Database error accessing account {}: {}", address, e))?
             .ok_or_else(|| anyhow::anyhow!("Account {} not found", address))?;
         Ok(account)
@@ -294,7 +331,11 @@ impl EvmSimulator {
             .load_account(address)
             .map(|account| account.info.balance)
             .unwrap_or_else(|e| {
-                log::warn!("Failed to load account {} for balance check: {}", address, e);
+                log::warn!(
+                    "Failed to load account {} for balance check: {}",
+                    address,
+                    e
+                );
                 U256::ZERO
             })
     }
@@ -323,9 +364,18 @@ impl EvmSimulator {
         _token: Address,
         index: U256,
     ) -> U256 {
-        self.evm.context.evm.db.storage(address, index)
+        self.evm
+            .context
+            .evm
+            .db
+            .storage(address, index)
             .unwrap_or_else(|e| {
-                log::warn!("Failed to get storage for {} at index {}: {}", address, index, e);
+                log::warn!(
+                    "Failed to get storage for {} at index {}: {}",
+                    address,
+                    index,
+                    e
+                );
                 U256::ZERO
             })
     }
@@ -385,16 +435,15 @@ impl EvmSimulator {
             gas_limit: *latest_gas_limit,
         };
 
-        let result = self.call(tx)
-            .unwrap_or_else(|e| {
-                log::error!("Failed to call balanceOf: {}", e);
-                TxResult {
-                    output: Bytes::new(),
-                    logs: None,
-                    gas_used: 0,
-                    gas_refunded: 0,
-                }
-            });
+        let result = self.call(tx).unwrap_or_else(|e| {
+            log::error!("Failed to call balanceOf: {}", e);
+            TxResult {
+                output: Bytes::new(),
+                logs: None,
+                gas_used: 0,
+                gas_refunded: 0,
+            }
+        });
 
         print!("result from balance of call: {:?}", result);
 
@@ -640,6 +689,23 @@ impl EvmSimulator {
             .insert_account_storage(token1_addr, balance1_slot, balance1)?;
 
         Ok(())
+    }
+
+    /// Generate and log the inspector report
+    pub fn generate_inspector_report(&mut self) {
+        let report = self.evm.context.external.generate_report();
+
+        //log::debug!("Inspector Report:\n{}", report);
+    }
+
+    /// Get detailed analysis of any failed calls
+    pub fn analyze_failures(&mut self) -> String {
+        self.evm.context.external.analyze_failures()
+    }
+
+    /// Clear the inspector data (useful for multiple test runs)
+    pub fn clear_inspector_data(&mut self) {
+        self.evm.context.external = revm_inspector::RevmInspector::new();
     }
 }
 // Helper function to calculate balance slot for an address

@@ -28,21 +28,26 @@ impl DefaultStrategyFactory {
     }
 }
 
+impl DefaultStrategyFactory {
+    /// Create arbitrage strategy asynchronously 
+    pub async fn create_arbitrage_strategy(&self, config: StrategyConfig, ws_url: String, max_connections: usize) -> Result<UniswapArbitrageStrategy> {
+        UniswapArbitrageStrategy::new(config, ws_url, max_connections).await
+    }
+}
+
 impl StrategyFactory for DefaultStrategyFactory {
     fn create_strategy(&self, strategy_type: &str, config: StrategyConfig) -> Result<Box<dyn MevStrategy>> {
         match strategy_type.to_lowercase().as_str() {
-            "arbitrage" | "uniswap_arbitrage" | "uniswap-arbitrage" => {
-                Ok(Box::new(UniswapArbitrageStrategy::new(
-                    config,
-                    self.pools_map.clone(),
-                    self.connection_pool.clone(),
-                )))
-            }
             "sandwich" | "sandwich_attack" | "sandwich-attack" => {
                 Ok(Box::new(SandwichStrategy::new(config)))
             }
             "liquidation" | "lending_liquidation" | "lending-liquidation" => {
                 Ok(Box::new(LiquidationStrategy::new(config)))
+            }
+            "arbitrage" | "uniswap_arbitrage" | "uniswap-arbitrage" => {
+                // Note: Arbitrage strategy requires async initialization
+                // Use create_arbitrage_strategy() method instead
+                Err(anyhow::anyhow!("Arbitrage strategy requires async initialization. Use create_arbitrage_strategy() method."))
             }
             _ => Err(anyhow::anyhow!("Unknown strategy type: {}", strategy_type)),
         }
