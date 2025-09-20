@@ -319,6 +319,7 @@ impl UniswapArbitrageStrategy {
             )
             .await
             .unwrap_or(U256::ZERO);
+
             if v3_amount_out > best_profit {
                 best_profit = v3_amount_out;
                 optimal_amount = mid;
@@ -327,6 +328,7 @@ impl UniswapArbitrageStrategy {
                 right = mid - U256::from(1);
             }
         }
+
         if best_profit == U256::ZERO {
             return Ok(ArbitrageResult {
                 optimal_amount: U256::ZERO,
@@ -471,7 +473,7 @@ impl UniswapArbitrageStrategy {
             .unwrap_or_default();
 
         debug!("Calculated optimal result in: {:?}", start_time.elapsed());
-        debug!(
+        info!(
             "Optimal amount: {} wei, Possible profit: {} wei",
             optimal_result.optimal_amount, optimal_result.possible_profit
         );
@@ -562,11 +564,6 @@ impl UniswapArbitrageStrategy {
                 return Ok(vec![]);
             }
         };
-
-        info!(
-            "🔍 Scanning for arbitrage opportunities: {} (variant: {})",
-            log_event.log_pool_address, log_event.pool_variant
-        );
 
         let arbitrage_opportunity = self.convert_to_arbitrage_opportunity(log_event).await?;
 
