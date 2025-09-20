@@ -330,6 +330,7 @@ impl UniswapArbitrageStrategy {
         }
 
         if best_profit == U256::ZERO {
+            debug!("Best Profit: {:?}", best_profit);
             return Ok(ArbitrageResult {
                 optimal_amount: U256::ZERO,
                 possible_profit: U256::ZERO,
