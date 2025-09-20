@@ -2,7 +2,7 @@
 // Based on src/arbitrage/strategy.rs
 
 use crate::arbitrage::simulation::{
-    arboo_bytecode, get_address, one_thousand_eth, simulation, AddressType,
+    arboo_bytecode, v2_flash_to_v3_swap_bytecode, get_address, one_thousand_eth, simulation, AddressType,
 };
 use crate::common::connection_pool::ConnectionPool;
 use crate::common::transaction::{create_input_data, send_transaction};
@@ -12,6 +12,7 @@ use crate::common::{
     revm::{EvmSimulator, Tx},
 };
 use crate::strategies::traits::*;
+use revm::primitives::Bytecode;
 
 use alloy::eips::BlockId;
 use alloy::network::Ethereum;
@@ -42,6 +43,15 @@ use tokio::sync::RwLock;
 pub struct ArbitrageResult {
     pub optimal_amount: U256,
     pub possible_profit: U256,
+}
+
+/// Types of arbitrage contracts we support
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArbitrageContractType {
+    /// V3→V2 arbitrage (original arboo.sol contract)
+    V3ToV2,
+    /// V2→V3 arbitrage (new V2FlashToV3Swap contract)
+    V2ToV3,
 }
 
 /// Arbitrage opportunity for test compatibility
@@ -173,6 +183,25 @@ impl UniswapArbitrageStrategy {
         Ok(pools_map)
     }
 
+    /// Get the appropriate contract bytecode based on arbitrage type
+    fn get_arbitrage_bytecode(&self, contract_type: ArbitrageContractType) -> Bytecode {
+        match contract_type {
+            ArbitrageContractType::V3ToV2 => arboo_bytecode(),
+            ArbitrageContractType::V2ToV3 => v2_flash_to_v3_swap_bytecode(),
+        }
+    }
+
+    /// Determine the best arbitrage contract type for given pools
+    fn determine_arbitrage_type(&self, log_event: &LogEvent) -> ArbitrageContractType {
+        // If the log comes from a V2 pool, we want to arbitrage to V3
+        if log_event.pool_variant == 2 {
+            ArbitrageContractType::V2ToV3
+        } else {
+            // Default to V3→V2 (original strategy)
+            ArbitrageContractType::V3ToV2
+        }
+    }
+
     /// Load specific pools using production method
     async fn load_specific_pools_optimized(
         &self,
@@ -215,6 +244,7 @@ impl UniswapArbitrageStrategy {
         &self,
         simulator: &mut EvmSimulator<'_>,
         provider: &RootProvider<PubSubFrontend, Ethereum>,
+        arbitrage_type: ArbitrageContractType,
     ) -> Result<()> {
         let latest_block = provider
             .get_block(
@@ -232,10 +262,11 @@ impl UniswapArbitrageStrategy {
                 .ok_or_else(|| anyhow::anyhow!("Block missing base_fee_per_gas"))?,
         );
 
-        // Deploy arbitrage contract
+        // Deploy arbitrage contract based on type
         let contract_address = simulator.contract_address;
+        let bytecode = self.get_arbitrage_bytecode(arbitrage_type);
         simulator
-            .deploy_code_at(contract_address, arboo_bytecode())
+            .deploy_code_at(contract_address, bytecode)
             .await;
 
         // Fund wallet with ETH
@@ -299,6 +330,7 @@ impl UniswapArbitrageStrategy {
         latest_block: &Block,
         target_pool: Address,
         provider: &RootProvider<PubSubFrontend, Ethereum>,
+        arbitrage_type: ArbitrageContractType,
     ) -> Result<ArbitrageResult> {
         let mut best_profit = U256::ZERO;
         let mut optimal_amount = U256::ZERO;
@@ -413,6 +445,10 @@ impl UniswapArbitrageStrategy {
     ) -> Result<U256> {
         let start_time = std::time::Instant::now();
 
+        // Determine which arbitrage contract to use
+        let arbitrage_type = self.determine_arbitrage_type(&message);
+        debug!("🎯 Using arbitrage contract type: {:?}", arbitrage_type);
+
         // Get pooled provider - much faster than creating new connection
         let pooled_provider = self.connection_pool.get_provider().await?;
         let provider = pooled_provider.provider();
@@ -454,7 +490,7 @@ impl UniswapArbitrageStrategy {
         debug!("Pools loaded in: {:?}", start_time.elapsed());
 
         // Setup EVM state
-        self.setup_evm_optimized(&mut simulator, provider).await?;
+        self.setup_evm_optimized(&mut simulator, provider, arbitrage_type.clone()).await?;
         debug!("Setup EVM in: {:?}", start_time.elapsed());
 
         // Find optimal arbitrage amount
@@ -469,6 +505,7 @@ impl UniswapArbitrageStrategy {
                 &latest_block,
                 message.corresponding_pool_address,
                 provider,
+                arbitrage_type, // Pass the arbitrage type
             )
             .await
             .unwrap_or_default();
@@ -565,6 +602,10 @@ impl UniswapArbitrageStrategy {
                 return Ok(vec![]);
             }
         };
+
+        // Determine which arbitrage contract type to use
+        let arbitrage_type = self.determine_arbitrage_type(&log_event);
+        debug!("🎯 Using arbitrage type: {:?}", arbitrage_type);
 
         let arbitrage_opportunity = self.convert_to_arbitrage_opportunity(log_event).await?;
 

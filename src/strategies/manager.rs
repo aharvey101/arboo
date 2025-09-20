@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 
-/// Central manager for arbitrage strategy
+/// Central manager for arbitrage strategies
 pub struct StrategyManager {
     pub arbitrage_strategy: UniswapArbitrageStrategy,
     execution_context: ExecutionContext,
@@ -57,26 +57,23 @@ impl StrategyManager {
             log_event.log_pool_address
         );
 
-        // Check if strategy is enabled
-        if !self.arbitrage_strategy.config.enabled {
-            debug!("Arbitrage strategy is disabled, skipping event");
-            return Ok(vec![]);
+        let mut all_opportunities = vec![];
+
+        // Check main arbitrage strategy - now handles both V3→V2 and V2→V3 arbitrage
+        if self.arbitrage_strategy.config.enabled {
+            match self.arbitrage_strategy.identify_opportunities(log_event.clone(), &self.execution_context).await {
+                Ok(opportunities) => {
+                    debug!("📊 Found {} arbitrage opportunities", opportunities.len());
+                    all_opportunities.extend(opportunities);
+                }
+                Err(e) => {
+                    error!("❌ Failed to scan arbitrage opportunities: {}", e);
+                }
+            }
         }
 
-        // Scan for opportunities using the arbitrage strategy
-        match self.arbitrage_strategy.identify_opportunities(log_event, &self.execution_context).await {
-            Ok(opportunities) => {
-                debug!(
-                    "📊 Found {} arbitrage opportunities",
-                    opportunities.len()
-                );
-                Ok(opportunities)
-            }
-            Err(e) => {
-                error!("❌ Failed to scan for opportunities: {}", e);
-                Err(e)
-            }
-        }
+        debug!("📊 Total opportunities found: {}", all_opportunities.len());
+        Ok(all_opportunities)
     }
 
     /// Simulate an arbitrage opportunity
@@ -86,21 +83,19 @@ impl StrategyManager {
     ) -> Result<ExecutionResult> {
         debug!("🧪 Simulating arbitrage opportunity");
 
-        // Only handle arbitrage opportunities - simple check
         match opportunity {
-            MevOpportunity::Arbitrage(_) => {
-                // This is an arbitrage opportunity, proceed
+            MevOpportunity::Arbitrage(_) | MevOpportunity::V2ToV3Arbitrage(_) => {
+                // Main arbitrage strategy now handles both V3→V2 and V2→V3 arbitrage
+                self.arbitrage_strategy
+                    .simulate_opportunity(opportunity, &self.execution_context)
+                    .await
             }
             _ => {
-                return Err(anyhow::anyhow!(
+                Err(anyhow::anyhow!(
                     "Strategy cannot handle this opportunity type"
-                ));
+                ))
             }
         }
-
-        self.arbitrage_strategy
-            .simulate_opportunity(opportunity, &self.execution_context)
-            .await
     }
 
     /// Execute an arbitrage opportunity
@@ -120,18 +115,28 @@ impl StrategyManager {
             ));
         }
 
-        if simulation_result.profit < self.arbitrage_strategy.config.min_profit_threshold {
+        // Get minimum profit threshold (same for both arbitrage types)
+        let min_profit_threshold = self.arbitrage_strategy.config.min_profit_threshold;
+
+        if simulation_result.profit < min_profit_threshold {
             return Err(anyhow::anyhow!(
                 "Opportunity not profitable enough: {} wei < {} wei",
                 simulation_result.profit,
-                self.arbitrage_strategy.config.min_profit_threshold
+                min_profit_threshold
             ));
         }
 
-        // Execute the opportunity
-        self.arbitrage_strategy
-            .execute_opportunity(opportunity, &self.execution_context)
-            .await
+        // Execute the opportunity using the arbitrage strategy (handles both V3→V2 and V2→V3)
+        match opportunity {
+            MevOpportunity::Arbitrage(_) | MevOpportunity::V2ToV3Arbitrage(_) => {
+                self.arbitrage_strategy
+                    .execute_opportunity(opportunity, &self.execution_context)
+                    .await
+            }
+            _ => {
+                Err(anyhow::anyhow!("Unknown opportunity type"))
+            }
+        }
     }
 
     /// Process a complete arbitrage cycle: scan -> simulate -> execute if profitable
@@ -150,9 +155,10 @@ impl StrategyManager {
         for opportunity in opportunities {
             match self.simulate_opportunity(&opportunity).await {
                 Ok(simulation_result) => {
-                    if simulation_result.success
-                        && simulation_result.profit >= self.arbitrage_strategy.config.min_profit_threshold
-                    {
+                    // Get minimum profit threshold (same for both arbitrage types)
+                    let min_profit_threshold = self.arbitrage_strategy.config.min_profit_threshold;
+
+                    if simulation_result.success && simulation_result.profit >= min_profit_threshold {
                         info!(
                             "✅ Profitable opportunity found! Profit: {} wei",
                             simulation_result.profit
