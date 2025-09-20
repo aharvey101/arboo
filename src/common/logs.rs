@@ -98,7 +98,7 @@ impl LogProcessor {
         let pool_address = log.address();
         // Look up the pool that generated this log
         let source_event = self.pairs.get(&pool_address)?;
-        info!("Processing log from pool: {:?}", pool_address);
+        debug!("Processing log from pool: {:?}", pool_address);
 
         match source_event {
             Event::PairCreated(v2_pool) => self.find_arbitrage_for_v2_pool(v2_pool, pool_address),

@@ -1,11 +1,11 @@
+use alloy::network::Ethereum;
 use alloy::providers::{ProviderBuilder, RootProvider, WsConnect};
 use alloy::pubsub::PubSubFrontend;
-use alloy::network::Ethereum;
 use anyhow::Result;
+use log::{debug, info, warn};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use log::{info, warn};
 
 #[derive(Clone, Debug)]
 pub struct ConnectionPool {
@@ -27,29 +27,29 @@ impl ConnectionPool {
 
     pub async fn get_provider(&self) -> Result<PooledProvider> {
         let mut pool = self.pool.lock().await;
-        
+
         if let Some(provider) = pool.pop_front() {
-            info!("Reusing existing WebSocket connection");
+            debug!("Reusing existing WebSocket connection");
             return Ok(PooledProvider {
                 provider: Some(provider),
                 pool: self.clone(),
             });
         }
-        
+
         drop(pool); // Release lock early
-        
+
         let mut current_size = self.current_size.lock().await;
         if *current_size >= self.max_connections {
             warn!("Connection pool exhausted, creating temporary connection");
             return self.create_temporary_provider().await;
         }
-        
+
         *current_size += 1;
         drop(current_size);
-        
-        info!("Creating new WebSocket connection for pool");
+
+        log::debug!("Creating new WebSocket connection for pool");
         let provider = self.create_provider().await?;
-        
+
         Ok(PooledProvider {
             provider: Some(provider),
             pool: self.clone(),
@@ -76,9 +76,9 @@ impl ConnectionPool {
         let mut pool = self.pool.lock().await;
         if pool.len() < self.max_connections {
             pool.push_back(provider);
-            info!("Provider returned to pool");
+            debug!("Provider returned to pool");
         } else {
-            info!("Pool full, dropping provider");
+            debug!("Pool full, dropping provider");
         }
     }
 }
