@@ -581,7 +581,7 @@ async fn process_arbitrage_strategy_with_results(
 
     let _factory = DefaultStrategyFactory::new(pools_map.clone(), connection_pool.clone());
 
-    let manager = StrategyManager::new(
+    let mut manager = StrategyManager::new(
         ws_url.clone(),
         4,
         address!("742d35Cc6634C0532925a3b8d1C4AC1B8b5C0000"),

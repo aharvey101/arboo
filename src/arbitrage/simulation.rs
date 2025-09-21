@@ -71,7 +71,6 @@ pub async fn simulation_with_logging(
         // Use cached data if less than 11 seconds old (one block)
         if let Some((_, _, gas_price, gas_limit, cached_at)) = cache_data {
             if cached_at.elapsed().as_secs() < 11 {
-                log::debug!("Using cached block data, age: {:?}", cached_at.elapsed());
                 (gas_limit, gas_price)
             } else {
                 // Refresh cache - do network calls without holding lock
@@ -105,6 +104,7 @@ pub async fn simulation_with_logging(
                 (gas_limit, gas_price)
             }
         } else {
+            log::debug!("Getting new block data");
             // Initialize cache - do network calls without holding lock
             let latest_block_number = provider.get_block_number().await?;
             let block_id = BlockId::from_str(latest_block_number.to_string().as_str())

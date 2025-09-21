@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| "0x5f1F5565561aC146d24B102D9CDC288992Ab2938".to_string()),
     )?;
 
-    let strategy_manager = StrategyManager::new(
+    let mut strategy_manager = StrategyManager::new(
         ws_url.clone(),
         30000, // max connections
         executor_address,
