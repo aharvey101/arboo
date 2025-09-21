@@ -287,35 +287,6 @@ pub fn five_hundred_thousand_eth() -> U256 {
 pub fn me() -> Address {
     address!("0000000000000000000000000000000000000001")
 }
-
-pub enum AddressType {
-    Weth,
-    V3Router,
-    V2Router,
-    V2Factory,
-    V3Factory,
-    V2Quoter,
-    V3Quoter,
-    UniswapV2Router,
-    UniswapV3Router,
-    Usdc,
-}
-
-pub fn get_address(address_type: AddressType) -> Address {
-    match address_type {
-        AddressType::Weth => address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-        AddressType::V3Router => address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
-        AddressType::V2Router => address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
-        AddressType::UniswapV2Router => address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
-        AddressType::UniswapV3Router => address!("E592427A0AEce92De3Edee1F18E0157C05861564"),
-        AddressType::V3Factory => address!("1F98431c8aD98523631AE4a59f267346ea31F984"),
-        AddressType::V2Factory => address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-        AddressType::V2Quoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
-        AddressType::V3Quoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
-        AddressType::Usdc => address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
-    }
-}
-
 pub enum MockAddress {
     UniV2,
     UniV3,

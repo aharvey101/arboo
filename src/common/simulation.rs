@@ -2,15 +2,14 @@
 // Supports dynamic contract deployment and execution for various arbitrage types
 
 use crate::common::revm::{EvmSimulator, Tx};
-use crate::arbitrage::simulation::{get_address, AddressType};
 use alloy::eips::BlockId;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
-use alloy_primitives::{Address, U256};
 use alloy_primitives::aliases::U24;
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
-use log::{debug, info, warn, error};
+use log::{debug, error, info, warn};
 use revm::primitives::Bytecode;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -132,7 +131,8 @@ impl MultiContractSimulator {
             execution_gas_limit: execution_gas_limit.unwrap_or(self.default_gas_limit),
         };
 
-        self.contract_registry.insert(contract_type, metadata.clone());
+        self.contract_registry
+            .insert(contract_type, metadata.clone());
         info!("📝 Registered contract type: {:?}", metadata.contract_type);
     }
 
@@ -152,20 +152,30 @@ impl MultiContractSimulator {
         }
 
         // Get contract metadata
-        let metadata = self.contract_registry
+        let metadata = self
+            .contract_registry
             .get(contract_type)
             .ok_or_else(|| anyhow::anyhow!("Contract type {:?} not registered", contract_type))?;
 
         // Deploy the contract
         let contract_address = simulator.contract_address;
-        
-        debug!("🚀 Deploying contract type: {:?} at {}", contract_type, contract_address);
-        simulator.deploy_code_at(contract_address, metadata.bytecode.clone()).await;
+
+        debug!(
+            "🚀 Deploying contract type: {:?} at {}",
+            contract_type, contract_address
+        );
+        simulator
+            .deploy_code_at(contract_address, metadata.bytecode.clone())
+            .await;
 
         // Store deployed address
-        self.deployed_contracts.insert(contract_type.clone(), contract_address);
-        
-        info!("✅ Deployed contract {:?} at: {}", contract_type, contract_address);
+        self.deployed_contracts
+            .insert(contract_type.clone(), contract_address);
+
+        info!(
+            "✅ Deployed contract {:?} at: {}",
+            contract_type, contract_address
+        );
         Ok(contract_address)
     }
 
@@ -178,16 +188,22 @@ impl MultiContractSimulator {
         approve_routers: bool,
     ) -> Result<SimulationContext> {
         // Ensure contract is deployed
-        let contract_address = self.ensure_contract_deployed(simulator, contract_type, false).await?;
+        let contract_address = self
+            .ensure_contract_deployed(simulator, contract_type, false)
+            .await?;
 
         // Fund wallet with ETH
         let wallet = simulator.owner;
         simulator.set_eth_balance(wallet, initial_eth_balance).await;
-        debug!("💰 Funded wallet {} with {} ETH", wallet, initial_eth_balance);
+        debug!(
+            "💰 Funded wallet {} with {} ETH",
+            wallet, initial_eth_balance
+        );
 
         // Convert some ETH to WETH for trading
         if initial_eth_balance > U256::ZERO {
-            self.convert_eth_to_weth(simulator, initial_eth_balance / U256::from(10)).await?;
+            self.convert_eth_to_weth(simulator, initial_eth_balance / U256::from(10))
+                .await?;
         }
 
         // Approve routers if requested
@@ -205,7 +221,10 @@ impl MultiContractSimulator {
             caller: wallet,
         };
 
-        debug!("🎯 EVM setup complete for contract type: {:?}", contract_type);
+        debug!(
+            "🎯 EVM setup complete for contract type: {:?}",
+            contract_type
+        );
         Ok(context)
     }
 
@@ -252,7 +271,8 @@ impl MultiContractSimulator {
             let approve_data = approveCall {
                 spender: router,
                 amount: U256::MAX,
-            }.abi_encode();
+            }
+            .abi_encode();
 
             let approve_tx = Tx {
                 caller: wallet,
@@ -279,9 +299,12 @@ impl MultiContractSimulator {
         value: U256,
         gas_limit: Option<u64>,
     ) -> Result<SimulationResult> {
-        let metadata = self.contract_registry
+        let metadata = self
+            .contract_registry
             .get(&context.contract_type)
-            .ok_or_else(|| anyhow::anyhow!("Contract type {:?} not registered", context.contract_type))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Contract type {:?} not registered", context.contract_type)
+            })?;
 
         let gas_limit = gas_limit.unwrap_or(metadata.execution_gas_limit);
         let execution_start = std::time::Instant::now();
@@ -315,7 +338,7 @@ impl MultiContractSimulator {
                     gas_used: result.gas_used,
                     profit,
                     error: None,
-                    logs: vec![], // TODO: Extract logs from result
+                    logs: vec![],                  // TODO: Extract logs from result
                     state_changes: HashMap::new(), // TODO: Track state changes
                     execution_time,
                     token_balances: HashMap::new(), // TODO: Track token balances
@@ -324,7 +347,7 @@ impl MultiContractSimulator {
             Err(e) => {
                 let error_msg = self.parse_execution_error(&e);
                 warn!("❌ Contract execution failed: {}", error_msg);
-                
+
                 Ok(SimulationResult {
                     success: false,
                     gas_used: gas_limit,
@@ -365,11 +388,13 @@ impl MultiContractSimulator {
         let (gas_limit, gas_price) = self.get_cached_block_data(provider).await?;
 
         // Check initial token balances
-        let initial_token_balances = self.get_multiple_token_balances(
-            simulator,
-            &[token_a, token_b, get_address(AddressType::Weth)],
-            context.caller
-        ).await?;
+        let initial_token_balances = self
+            .get_multiple_token_balances(
+                simulator,
+                &[token_a, token_b, get_address(AddressType::Weth)],
+                context.caller,
+            )
+            .await?;
 
         // Prepare arbitrage transaction based on contract type
         let transaction_data = match context.contract_type {
@@ -414,7 +439,12 @@ impl MultiContractSimulator {
                 };
                 function_call.abi_encode()
             }
-            _ => return Err(anyhow::anyhow!("Unsupported contract type for arbitrage: {:?}", context.contract_type)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported contract type for arbitrage: {:?}",
+                    context.contract_type
+                ))
+            }
         };
 
         // Execute the arbitrage transaction
@@ -430,16 +460,28 @@ impl MultiContractSimulator {
         match simulator.call(tx) {
             Ok(result) => {
                 // Check final token balances
-                let final_token_balances = self.get_multiple_token_balances(
-                    simulator,
-                    &[token_a, token_b, get_address(AddressType::Weth)],
-                    context.caller
-                ).await?;
+                let final_token_balances = self
+                    .get_multiple_token_balances(
+                        simulator,
+                        &[token_a, token_b, get_address(AddressType::Weth)],
+                        context.caller,
+                    )
+                    .await?;
 
                 // Calculate profit in target token
-                let target_token = if token_b == get_address(AddressType::Weth) { token_a } else { token_b };
-                let profit = final_token_balances.get(&target_token).unwrap_or(&U256::ZERO)
-                    .saturating_sub(*initial_token_balances.get(&target_token).unwrap_or(&U256::ZERO));
+                let target_token = if token_b == get_address(AddressType::Weth) {
+                    token_a
+                } else {
+                    token_b
+                };
+                let profit = final_token_balances
+                    .get(&target_token)
+                    .unwrap_or(&U256::ZERO)
+                    .saturating_sub(
+                        *initial_token_balances
+                            .get(&target_token)
+                            .unwrap_or(&U256::ZERO),
+                    );
 
                 let execution_time = simulation_start.elapsed();
 
@@ -464,7 +506,7 @@ impl MultiContractSimulator {
             Err(e) => {
                 let error_msg = self.parse_execution_error(&e);
                 error!("❌ Arbitrage simulation failed: {}", error_msg);
-                
+
                 Ok(SimulationResult {
                     success: false,
                     gas_used: gas_limit,
@@ -503,7 +545,7 @@ impl MultiContractSimulator {
 
         let block_id = BlockId::from_str(&latest_block_number.to_string())
             .map_err(|e| anyhow::anyhow!("Invalid block number format: {}", e))?;
-        
+
         let latest_block = provider
             .get_block(block_id, alloy::rpc::types::BlockTransactionsKind::Full)
             .await?
@@ -511,8 +553,10 @@ impl MultiContractSimulator {
 
         let gas_limit = latest_block.header.gas_limit;
         let gas_price = U256::from(
-            latest_block.header.base_fee_per_gas
-                .ok_or_else(|| anyhow::anyhow!("Block missing base fee"))?
+            latest_block
+                .header
+                .base_fee_per_gas
+                .ok_or_else(|| anyhow::anyhow!("Block missing base fee"))?,
         );
         let timestamp = latest_block.header.timestamp;
 
@@ -528,7 +572,10 @@ impl MultiContractSimulator {
             });
         }
 
-        debug!("Refreshed block cache - Gas limit: {}, Gas price: {}", gas_limit, gas_price);
+        debug!(
+            "Refreshed block cache - Gas limit: {}, Gas price: {}",
+            gas_limit, gas_price
+        );
         Ok((gas_limit, gas_price))
     }
 
@@ -575,7 +622,7 @@ impl MultiContractSimulator {
         account: Address,
     ) -> Result<HashMap<Address, U256>> {
         let mut balances = HashMap::new();
-        
+
         for &token in tokens {
             let balance = self.get_token_balance(simulator, token, account).await?;
             balances.insert(token, balance);
@@ -599,13 +646,18 @@ impl MultiContractSimulator {
         let tx = Tx {
             caller: wallet_address,
             transact_to: get_address(AddressType::Weth),
-            data: balanceOfCall { account: wallet_address }.abi_encode().into(),
+            data: balanceOfCall {
+                account: wallet_address,
+            }
+            .abi_encode()
+            .into(),
             value: U256::ZERO,
             gas_limit,
             gas_price,
         };
 
-        let result = simulator.call(tx)
+        let result = simulator
+            .call(tx)
             .map_err(|e| anyhow::anyhow!("Failed to check WETH balance: {}", e))?;
 
         Ok(U256::from_be_slice(&result.output))
@@ -614,7 +666,7 @@ impl MultiContractSimulator {
     /// Parse execution errors to extract meaningful error messages
     fn parse_execution_error(&self, error: &anyhow::Error) -> String {
         let error_str = format!("{:?}", error);
-        
+
         if error_str.contains("EVM REVERT:") {
             if let Some(start) = error_str.find("0x") {
                 if let Some(end) = error_str[start..].find(" / Gas used:") {
@@ -627,7 +679,7 @@ impl MultiContractSimulator {
                 }
             }
         }
-        
+
         error.to_string()
     }
 
@@ -651,7 +703,10 @@ impl MultiContractSimulator {
     pub fn update_gas_settings(&mut self, gas_limit: u64, gas_price: U256) {
         self.default_gas_limit = gas_limit;
         self.default_gas_price = gas_price;
-        debug!("⛽ Updated gas settings: limit={}, price={}", gas_limit, gas_price);
+        debug!(
+            "⛽ Updated gas settings: limit={}, price={}",
+            gas_limit, gas_price
+        );
     }
 }
 
@@ -664,10 +719,10 @@ impl Default for MultiContractSimulator {
 /// Helper function to create a simulator with common arbitrage contracts pre-registered
 pub fn create_arbitrage_simulator() -> MultiContractSimulator {
     let simulator = MultiContractSimulator::new();
-    
+
     // Note: Bytecode registration will be done by the calling code
     // since we need to import the actual bytecode functions
-    
+
     simulator
 }
 
@@ -744,11 +799,11 @@ pub mod parsing {
                 ParserType::U256 => U256::from_be_slice(input.data).to_string(),
                 ParserType::Address => {
                     if input.data.len() >= 20 {
-                        format!("0x{}", hex::encode(&input.data[input.data.len()-20..]))
+                        format!("0x{}", hex::encode(&input.data[input.data.len() - 20..]))
                     } else {
                         "Invalid Address".to_string()
                     }
-                },
+                }
                 ParserType::Bool => {
                     if input.data.len() >= 32 {
                         let val = U256::from_be_slice(&input.data[..32]);
@@ -756,7 +811,7 @@ pub mod parsing {
                     } else {
                         "false".to_string()
                     }
-                },
+                }
             })
             .collect()
     }
@@ -794,11 +849,11 @@ impl SimulationMetrics {
     pub fn record_result(&mut self, result: &SimulationResult) {
         self.total_simulations += 1;
         self.total_gas_used += result.gas_used;
-        
+
         if result.success {
             self.successful_simulations += 1;
             self.total_profit += result.profit;
-            
+
             if result.profit > self.best_profit {
                 self.best_profit = result.profit;
             }
@@ -808,7 +863,8 @@ impl SimulationMetrics {
         }
 
         // Update average execution time
-        let total_time = self.average_execution_time * (self.total_simulations - 1) as u32 + result.execution_time;
+        let total_time = self.average_execution_time * (self.total_simulations - 1) as u32
+            + result.execution_time;
         self.average_execution_time = total_time / self.total_simulations as u32;
     }
 
@@ -884,9 +940,38 @@ impl BatchSimulationRunner {
     }
 
     pub fn get_profitable_results(&self, min_profit: U256) -> Vec<&SimulationResult> {
-        self.results.iter()
+        self.results
+            .iter()
             .filter(|r| r.success && r.profit >= min_profit)
             .collect()
+    }
+}
+
+pub enum AddressType {
+    Weth,
+    V3Router,
+    V2Router,
+    V2Factory,
+    V3Factory,
+    V2Quoter,
+    V3Quoter,
+    UniswapV2Router,
+    UniswapV3Router,
+    Usdc,
+}
+
+pub fn get_address(address_type: AddressType) -> Address {
+    match address_type {
+        AddressType::Weth => address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        AddressType::V3Router => address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
+        AddressType::V2Router => address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
+        AddressType::UniswapV2Router => address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
+        AddressType::UniswapV3Router => address!("E592427A0AEce92De3Edee1F18E0157C05861564"),
+        AddressType::V3Factory => address!("1F98431c8aD98523631AE4a59f267346ea31F984"),
+        AddressType::V2Factory => address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+        AddressType::V2Quoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
+        AddressType::V3Quoter => address!("61fFE014bA17989E743c5F6cB21bF9697530B21e"),
+        AddressType::Usdc => address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
     }
 }
 
@@ -898,7 +983,7 @@ mod tests {
     #[test]
     fn test_contract_registration() {
         let mut simulator = MultiContractSimulator::new();
-        
+
         let bytecode = Bytecode::default();
         simulator.register_contract(
             ContractType::ArbitrageV3ToV2,
@@ -909,18 +994,20 @@ mod tests {
         );
 
         assert_eq!(simulator.get_registered_contracts().len(), 1);
-        assert!(simulator.get_registered_contracts().contains(&ContractType::ArbitrageV3ToV2));
+        assert!(simulator
+            .get_registered_contracts()
+            .contains(&ContractType::ArbitrageV3ToV2));
     }
 
     #[test]
     fn test_contract_type_equality() {
         assert_eq!(ContractType::ArbitrageV3ToV2, ContractType::ArbitrageV3ToV2);
         assert_ne!(ContractType::ArbitrageV3ToV2, ContractType::ArbitrageV2ToV3);
-        
+
         let custom1 = ContractType::Custom("test".to_string());
         let custom2 = ContractType::Custom("test".to_string());
         let custom3 = ContractType::Custom("other".to_string());
-        
+
         assert_eq!(custom1, custom2);
         assert_ne!(custom1, custom3);
     }
@@ -941,7 +1028,7 @@ mod tests {
     #[test]
     fn test_simulation_metrics() {
         let mut metrics = SimulationMetrics::default();
-        
+
         // Test successful simulation
         let successful_result = SimulationResult {
             success: true,
@@ -950,7 +1037,7 @@ mod tests {
             execution_time: std::time::Duration::from_millis(50),
             ..Default::default()
         };
-        
+
         metrics.record_result(&successful_result);
         assert_eq!(metrics.total_simulations, 1);
         assert_eq!(metrics.successful_simulations, 1);
@@ -965,7 +1052,7 @@ mod tests {
             execution_time: std::time::Duration::from_millis(25),
             ..Default::default()
         };
-        
+
         metrics.record_result(&failed_result);
         assert_eq!(metrics.total_simulations, 2);
         assert_eq!(metrics.successful_simulations, 1);
@@ -976,16 +1063,16 @@ mod tests {
     #[test]
     fn test_amount_utilities() {
         use super::amounts::*;
-        
+
         assert_eq!(one_ether(), U256::from(10).pow(U256::from(18)));
         assert_eq!(one_hundred_ether(), U256::from(100) * one_ether());
         assert_eq!(five_hundred_ether(), U256::from(500) * one_ether());
-        
+
         // Test conversions
         let wei_amount = one_ether();
         let ether_float = wei_to_ether(wei_amount);
         assert!((ether_float - 1.0).abs() < 1e-10);
-        
+
         let converted_back = ether_to_wei(ether_float);
         assert_eq!(converted_back, wei_amount);
     }
@@ -993,19 +1080,19 @@ mod tests {
     #[test]
     fn test_data_parsing() {
         use super::parsing::*;
-        
+
         // Test U256 parsing
         let u256_bytes = U256::from(12345).to_be_bytes::<32>();
         let u256_input = ParserInput::new(ParserType::U256, &u256_bytes);
         let results = parse_data(vec![u256_input]);
         assert_eq!(results[0], "12345");
-        
+
         // Test UTF8 parsing
         let utf8_bytes = b"Hello, World!";
         let utf8_input = ParserInput::new(ParserType::UTF8, utf8_bytes);
         let results = parse_data(vec![utf8_input]);
         assert_eq!(results[0], "Hello, World!");
-        
+
         // Test Bool parsing
         let bool_true_bytes = U256::from(1).to_be_bytes::<32>();
         let bool_false_bytes = U256::from(0).to_be_bytes::<32>();
@@ -1021,7 +1108,7 @@ mod tests {
         let mut runner = BatchSimulationRunner::new();
         assert_eq!(runner.metrics.total_simulations, 0);
         assert_eq!(runner.results.len(), 0);
-        
+
         // Test clearing results
         runner.clear_results();
         assert_eq!(runner.metrics.total_simulations, 0);
@@ -1031,18 +1118,18 @@ mod tests {
     #[test]
     fn test_multi_contract_simulator_gas_settings() {
         let mut simulator = MultiContractSimulator::new();
-        
+
         // Test default settings
         assert_eq!(simulator.default_gas_limit, 2_000_000);
         assert_eq!(simulator.default_gas_price, U256::from(20_000_000_000u64));
-        
+
         // Test updating settings
         simulator.update_gas_settings(3_000_000, U256::from(30_000_000_000u64));
         assert_eq!(simulator.default_gas_limit, 3_000_000);
         assert_eq!(simulator.default_gas_price, U256::from(30_000_000_000u64));
     }
 
-    #[test] 
+    #[test]
     fn test_create_arbitrage_simulator() {
         let simulator = create_arbitrage_simulator();
         assert_eq!(simulator.get_registered_contracts().len(), 0);
@@ -1052,7 +1139,7 @@ mod tests {
     #[tokio::test]
     async fn test_contract_registration_with_real_bytecode() {
         let mut simulator = MultiContractSimulator::new();
-        
+
         // Test with real arbitrage bytecode
         let arboo_bytecode = arboo_bytecode();
         simulator.register_contract(
@@ -1073,7 +1160,11 @@ mod tests {
         );
 
         assert_eq!(simulator.get_registered_contracts().len(), 2);
-        assert!(simulator.get_registered_contracts().contains(&ContractType::ArbitrageV3ToV2));
-        assert!(simulator.get_registered_contracts().contains(&ContractType::ArbitrageV2ToV3));
+        assert!(simulator
+            .get_registered_contracts()
+            .contains(&ContractType::ArbitrageV3ToV2));
+        assert!(simulator
+            .get_registered_contracts()
+            .contains(&ContractType::ArbitrageV2ToV3));
     }
 }

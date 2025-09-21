@@ -1,10 +1,5 @@
 // Production-grade arbitrage strategy adapted for test framework
 // Based on src/arbitrage/strategy.rs
-
-use crate::arbitrage::simulation::{
-    arboo_bytecode, get_address, one_thousand_eth, simulation, v2_flash_to_v3_swap_bytecode,
-    AddressType,
-};
 use crate::common::connection_pool::ConnectionPool;
 use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
@@ -15,19 +10,16 @@ use crate::common::{
     simulation_factory::SimulationFactory,
 };
 use crate::strategies::traits::*;
-use revm::primitives::Bytecode;
 
 use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
-use alloy::rpc::types::{Block, BlockTransactionsKind};
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{U256, U64};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
-use async_trait::async_trait;
 use dotenv::var;
 use log::{debug, error, info, warn};
 use revm::primitives::Address;
@@ -280,9 +272,6 @@ impl UniswapArbitrageStrategy {
             .setup_evm(&mut simulator, provider, arbitrage_type.clone())
             .await?;
         debug!("Setup EVM in: {:?}", start_time.elapsed());
-
-        // Map arbitrage type to contract type for simulation
-        let contract_type = SimulationFactory::map_arbitrage_type_to_contract_type(arbitrage_type);
 
         let max_input = U256::MAX;
 
