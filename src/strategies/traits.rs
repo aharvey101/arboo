@@ -1,6 +1,6 @@
-use async_trait::async_trait;
-use anyhow::Result;
 use alloy_primitives::U256;
+use anyhow::Result;
+use async_trait::async_trait;
 use revm::primitives::Address;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -113,36 +113,33 @@ impl Default for StrategyConfig {
 
 /// Generic trait that all MEV strategies must implement
 #[async_trait]
-pub trait MevStrategy:  Debug {
+pub trait MevStrategy: Debug {
     /// Name of the strategy
     fn name(&self) -> &str;
-    
+
     /// Strategy configuration
     fn config(&self) -> &StrategyConfig;
-    
+
     /// Update strategy configuration
     fn update_config(&mut self, config: StrategyConfig);
-    
+
     /// Scan for opportunities based on incoming events
-    async fn scan_opportunities(
-        &self,
-        event: &dyn MevEvent,
-    ) -> Result<Vec<MevOpportunity>>;
-    
+    async fn scan_opportunities(&self, event: &dyn MevEvent) -> Result<Vec<MevOpportunity>>;
+
     /// Simulate the execution of an opportunity
     async fn simulate_opportunity(
         &self,
         opportunity: &MevOpportunity,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult>;
-    
+
     /// Execute the opportunity if profitable
     async fn execute_opportunity(
         &self,
         opportunity: &MevOpportunity,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult>;
-    
+
     /// Check if this strategy can handle the given opportunity type
     fn can_handle(&self, opportunity: &MevOpportunity) -> bool;
 }
@@ -153,7 +150,6 @@ pub struct ExecutionContext {
     pub block_number: u64,
     pub gas_price: U256,
     pub base_fee: U256,
-    pub executor_address: Address,
     pub max_gas_limit: u64,
 }
 
@@ -168,7 +164,11 @@ pub trait MevEvent: Send + Sync + Debug + std::any::Any {
 
 /// Strategy factory for creating different strategy instances
 pub trait StrategyFactory: Send + Sync {
-    fn create_strategy(&self, strategy_type: &str, config: StrategyConfig) -> Result<Box<dyn MevStrategy>>;
+    fn create_strategy(
+        &self,
+        strategy_type: &str,
+        config: StrategyConfig,
+    ) -> Result<Box<dyn MevStrategy>>;
     fn supported_strategies(&self) -> Vec<String>;
 }
 
@@ -184,21 +184,21 @@ impl OpportunityQueue {
             opportunities: Vec::new(),
         }
     }
-    
+
     pub fn push(&mut self, opportunity: MevOpportunity, priority: u8) {
         self.opportunities.push((opportunity, priority));
         // Sort by priority (higher priority first)
         self.opportunities.sort_by(|a, b| b.1.cmp(&a.1));
     }
-    
+
     pub fn pop(&mut self) -> Option<MevOpportunity> {
         self.opportunities.pop().map(|(opp, _)| opp)
     }
-    
+
     pub fn len(&self) -> usize {
         self.opportunities.len()
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.opportunities.is_empty()
     }

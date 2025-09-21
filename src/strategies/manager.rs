@@ -12,17 +12,12 @@ pub struct StrategyManager {
 }
 
 impl StrategyManager {
-    pub async fn new(
-        ws_url: String,
-        max_connections: usize,
-        executor_address: Address,
-    ) -> Result<Self> {
+    pub async fn new(ws_url: String, max_connections: usize) -> Result<Self> {
         // Create default execution context
         let execution_context = ExecutionContext {
             block_number: 0,                          // Will be updated dynamically
             gas_price: U256::from(20_000_000_000u64), // 20 gwei default
             base_fee: U256::from(15_000_000_000u64),  // 15 gwei default
-            executor_address,
             max_gas_limit: 2_000_000,
         };
 

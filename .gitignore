@@ -17,3 +17,6 @@ Cargo.lock
 .env
 .evm_cache
 .env.*
+
+# Contracts:
+out/
