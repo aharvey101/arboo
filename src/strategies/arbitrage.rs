@@ -22,7 +22,7 @@ use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
 use log::{debug, error, info, warn};
-use revm::primitives::Address;
+use revm::primitives::{address, Address};
 use std::{
     collections::HashMap,
     fs::File,
@@ -278,12 +278,11 @@ impl UniswapArbitrageStrategy {
         let mut best_profit = U256::ZERO;
         let mut optimal_amount = U256::ZERO;
         let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
-        let mut right = max_input;
+        let mut right = max_input - left;
 
         // Binary search for optimal amount
         while left <= right {
             let mid = (left + right) / U256::from(2);
-
             let sim_result = self
                 .multi_simulator
                 .execute_arbitrage_simulation(
@@ -293,11 +292,12 @@ impl UniswapArbitrageStrategy {
                     message.log_pool_address,
                     message.token0,
                     message.token1,
-                    right,
+                    mid,
                     message.fee,
-                    true,
+                    false,
                 )
                 .await
+                .inspect_err(|error| info!("Simulation Failed {:?}", error))
                 .unwrap_or_default();
 
             if sim_result.profit > best_profit {
@@ -308,12 +308,8 @@ impl UniswapArbitrageStrategy {
                 right = mid - U256::from(1);
             }
         }
-        info!("Best Profit {:?}", best_profit);
-        if best_profit == U256::ZERO {
-            return Ok(best_profit);
-        }
 
-        Ok(U256::ZERO)
+        Ok(best_profit)
     }
 
     /// Calculate realistic gas cost
@@ -515,7 +511,6 @@ impl UniswapArbitrageStrategy {
         })
     }
 
-    /// Test interface: execute opportunity
     pub async fn execute_opportunity(
         &self,
         opportunity: &MevOpportunity,
@@ -560,7 +555,14 @@ impl UniswapArbitrageStrategy {
         };
 
         // Step 2: Calculate transaction parameters
-        let contract_address = arbitrage_opp.pool_a; // Use pool_a as contract address
+        //let contract_address = arbitrage_opp.pool_a; // Use pool_a as contract address
+        let contract_address = match opportunity {
+            MevOpportunity::Arbitrage(_) => var("V3_FlASH")?,
+            _ => var("V2_FLASH")?,
+        };
+
+        let contract_address = Address::from_str(&contract_address).unwrap();
+
         let gas_price = Some(context.gas_price.to::<u128>());
         let gas_limit = Some(context.max_gas_limit as u64);
         let base_fee = Some(context.base_fee.to::<u128>());
@@ -678,15 +680,22 @@ pub struct StrategyWorkerPool {
 }
 
 impl StrategyWorkerPool {
-    pub async fn new(_sender: tokio::sync::broadcast::Sender<LogEvent>, ws_url: String, max_connections: usize) -> Result<Self> {
+    pub async fn new(
+        _sender: tokio::sync::broadcast::Sender<LogEvent>,
+        ws_url: String,
+        max_connections: usize,
+    ) -> Result<Self> {
         let (tx, _rx) = mpsc::channel::<LogEvent>(1000);
         let connection_pool = ConnectionPool::new(ws_url, max_connections);
-        
+
         // Load pools map once and cache it
         let pools_map = Arc::new(RwLock::new(Self::load_pools_map().await?));
-        
-        info!("StrategyWorkerPool initialized with {} pools", pools_map.read().await.len());
-        
+
+        info!(
+            "StrategyWorkerPool initialized with {} pools",
+            pools_map.read().await.len()
+        );
+
         Ok(Self {
             sender: tx,
             connection_pool,
@@ -706,53 +715,66 @@ impl StrategyWorkerPool {
 
         let cache_dir = var("CACHE_DIR").unwrap_or_else(|_| "/tmp/arboo-cache".to_string());
         let cache_path = format!("{}/.cached-pools.csv", cache_dir);
-        
+
         let mut pools_map = HashMap::new();
         let path = Path::new(&cache_path);
-        
+
         if !path.exists() {
-            info!("Cache file not found at {}, using empty pools map", cache_path);
+            info!(
+                "Cache file not found at {}, using empty pools map",
+                cache_path
+            );
             return Ok(pools_map);
         }
-        
+
         let file = File::open(path)?;
         let reader = io::BufReader::new(file);
 
         for line in reader.lines().skip(1) {
             let line = line?;
             let fields: Vec<&str> = line.split(',').collect();
-            if fields.len() < 6 { continue; }
+            if fields.len() < 6 {
+                continue;
+            }
 
             match fields[2] {
                 "2" => {
-                    let pair_address = Address::from_str(fields[1])
-                        .map_err(|e| anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e))?;
+                    let pair_address = Address::from_str(fields[1]).map_err(|e| {
+                        anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e)
+                    })?;
                     pools_map.insert(
                         pair_address,
                         Event::PairCreated(V2PoolCreated {
                             pair_address,
-                            token0: Address::from_str(fields[3])
-                                .map_err(|e| anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e))?,
-                            token1: Address::from_str(fields[4])
-                                .map_err(|e| anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e))?,
-                            fee: fields[5].parse::<u32>()
-                                .map_err(|e| anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e))?,
+                            token0: Address::from_str(fields[3]).map_err(|e| {
+                                anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e)
+                            })?,
+                            token1: Address::from_str(fields[4]).map_err(|e| {
+                                anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e)
+                            })?,
+                            fee: fields[5].parse::<u32>().map_err(|e| {
+                                anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e)
+                            })?,
                         }),
                     );
                 }
                 "3" => {
-                    let pair_address = Address::from_str(fields[1])
-                        .map_err(|e| anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e))?;
+                    let pair_address = Address::from_str(fields[1]).map_err(|e| {
+                        anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e)
+                    })?;
                     pools_map.insert(
                         pair_address,
                         Event::PoolCreated(V3PoolCreated {
                             pair_address,
-                            token0: Address::from_str(fields[3])
-                                .map_err(|e| anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e))?,
-                            token1: Address::from_str(fields[4])
-                                .map_err(|e| anyhow::anyhow!("Invalid V3 token1 address '{}': {}", fields[4], e))?,
-                            fee: fields[5].parse::<u32>()
-                                .map_err(|e| anyhow::anyhow!("Invalid V3 fee '{}': {}", fields[5], e))?,
+                            token0: Address::from_str(fields[3]).map_err(|e| {
+                                anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e)
+                            })?,
+                            token1: Address::from_str(fields[4]).map_err(|e| {
+                                anyhow::anyhow!("Invalid V3 token1 address '{}': {}", fields[4], e)
+                            })?,
+                            fee: fields[5].parse::<u32>().map_err(|e| {
+                                anyhow::anyhow!("Invalid V3 fee '{}': {}", fields[5], e)
+                            })?,
                             tick_spacing: 0i32,
                         }),
                     );
@@ -779,29 +801,35 @@ pub async fn process_strategy_optimized(
     pools_map: &Arc<RwLock<HashMap<Address, Event>>>,
 ) -> Result<()> {
     // Implementation moved from arbitrage/strategy.rs
-    info!("Processing optimized strategy for pool: {}", message.log_pool_address);
-    
+    info!(
+        "Processing optimized strategy for pool: {}",
+        message.log_pool_address
+    );
+
     // Get pooled provider
     let pooled_provider = connection_pool.get_provider().await?;
     let provider = pooled_provider.provider();
-    
+
     // Quick pool lookup check
     let pools_guard = pools_map.read().await;
     let has_corresponding_pool = pools_guard.contains_key(&message.corresponding_pool_address);
     drop(pools_guard);
-    
+
     if !has_corresponding_pool {
-        debug!("Corresponding pool {} not found in cache", message.corresponding_pool_address);
+        debug!(
+            "Corresponding pool {} not found in cache",
+            message.corresponding_pool_address
+        );
         return Ok(());
     }
-    
+
     info!("Found corresponding pool, continuing with strategy processing");
     Ok(())
 }
 
 /// Initialize the strategy pool
 pub async fn initialize_strategy_pool(
-    sender: tokio::sync::broadcast::Sender<LogEvent>, 
+    sender: tokio::sync::broadcast::Sender<LogEvent>,
     ws_url: String,
     max_connections: usize,
 ) -> Result<StrategyWorkerPool> {
@@ -810,12 +838,12 @@ pub async fn initialize_strategy_pool(
 
 /// Legacy function for backward compatibility
 pub async fn process_strategy(message: LogEvent, ws_url: String) -> Result<()> {
-    log::warn!("Using legacy process_strategy - switch to optimized version for better performance");
-    
+    log::warn!(
+        "Using legacy process_strategy - switch to optimized version for better performance"
+    );
+
     let pool = ConnectionPool::new(ws_url, 1);
-    let pools_map = Arc::new(RwLock::new(
-        StrategyWorkerPool::load_pools_map().await?
-    ));
+    let pools_map = Arc::new(RwLock::new(StrategyWorkerPool::load_pools_map().await?));
     process_strategy_optimized(message, &pool, &pools_map).await
 }
 

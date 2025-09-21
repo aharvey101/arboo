@@ -142,16 +142,9 @@ async fn main() -> Result<()> {
         skipped_count
     );
 
-    // Initialize the generalized strategy manager
-    let executor_address = Address::from_str(
-        &var("EXECUTOR_ADDRESS")
-            .unwrap_or_else(|_| "0x5f1F5565561aC146d24B102D9CDC288992Ab2938".to_string()),
-    )?;
-
     let mut strategy_manager = StrategyManager::new(
         ws_url.clone(),
         30000, // max connections
-        executor_address,
     )
     .await?;
 
