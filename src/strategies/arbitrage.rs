@@ -278,12 +278,11 @@ impl UniswapArbitrageStrategy {
         let mut best_profit = U256::ZERO;
         let mut optimal_amount = U256::ZERO;
         let mut left = U256::from(10).pow(U256::from(18)); // Start with 1 token
-        let mut right = max_input;
+        let mut right = max_input - left;
 
         // Binary search for optimal amount
         while left <= right {
             let mid = (left + right) / U256::from(2);
-
             let sim_result = self
                 .multi_simulator
                 .execute_arbitrage_simulation(
@@ -293,11 +292,12 @@ impl UniswapArbitrageStrategy {
                     message.log_pool_address,
                     message.token0,
                     message.token1,
-                    right,
+                    mid,
                     message.fee,
-                    true,
+                    false,
                 )
                 .await
+                .inspect_err(|error| info!("Simulation Failed {:?}", error))
                 .unwrap_or_default();
 
             if sim_result.profit > best_profit {
@@ -308,12 +308,8 @@ impl UniswapArbitrageStrategy {
                 right = mid - U256::from(1);
             }
         }
-        info!("Best Profit {:?}", best_profit);
-        if best_profit == U256::ZERO {
-            return Ok(best_profit);
-        }
 
-        Ok(U256::ZERO)
+        Ok(best_profit)
     }
 
     /// Calculate realistic gas cost

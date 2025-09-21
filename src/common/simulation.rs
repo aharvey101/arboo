@@ -377,12 +377,12 @@ impl MultiContractSimulator {
     ) -> Result<SimulationResult> {
         let simulation_start = std::time::Instant::now();
 
-        if enable_logging {
-            info!(
+
+        enable_logging.then(|| 
+            debug!(
                 "🚀 Starting arbitrage simulation - Pool: {}, Token A: {}, Token B: {}, Amount: {} wei, Fee: {}",
                 target_pool, token_a, token_b, amount, fee
-            );
-        }
+            ));
 
         // Get latest block data (cached for performance)
         let (gas_limit, gas_price) = self.get_cached_block_data(provider).await?;
@@ -395,7 +395,7 @@ impl MultiContractSimulator {
                 context.caller,
             )
             .await?;
-
+        enable_logging.then(|| info!("Initial Token Balance {:?}", initial_token_balances));
         // Prepare arbitrage transaction based on contract type
         let transaction_data = match context.contract_type {
             ContractType::ArbitrageV3ToV2 => {
