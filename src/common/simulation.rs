@@ -6,7 +6,7 @@ use alloy::eips::BlockId;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 use alloy_primitives::aliases::U24;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -978,7 +978,7 @@ pub fn get_address(address_type: AddressType) -> Address {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arbitrage::simulation::{arboo_bytecode, v2_flash_to_v3_swap_bytecode};
+    use crate::common::bytecode::{arboo_bytecode, v2_flash_to_v3_swap_bytecode};
 
     #[test]
     fn test_contract_registration() {

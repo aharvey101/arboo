@@ -1,7 +1,7 @@
 // Factory for creating pre-configured simulation environments
 // Bridges the gap between specific contract bytecode and the generic simulation framework
 
-use crate::arbitrage::simulation::{arboo_bytecode, v2_flash_to_v3_swap_bytecode};
+use crate::common::bytecode::{arboo_bytecode, v2_flash_to_v3_swap_bytecode};
 use crate::common::simulation::{MultiContractSimulator, ContractType};
 use anyhow::Result;
 use log::info;
