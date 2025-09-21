@@ -2,6 +2,7 @@ use crate::strategies::traits::*;
 use crate::strategies::arbitrage::UniswapArbitrageStrategy;
 use crate::strategies::sandwich::SandwichStrategy;
 use crate::strategies::liquidation::LiquidationStrategy;
+use crate::strategies::v2_to_v3_arbitrage::V2FlashToV3ArbitrageStrategy;
 use crate::common::pairs::Event;
 use crate::common::connection_pool::ConnectionPool;
 use anyhow::Result;
@@ -33,21 +34,31 @@ impl DefaultStrategyFactory {
     pub async fn create_arbitrage_strategy(&self, config: StrategyConfig, ws_url: String, max_connections: usize) -> Result<UniswapArbitrageStrategy> {
         UniswapArbitrageStrategy::new(config, ws_url, max_connections).await
     }
+
+    /// Create V2 flash to V3 arbitrage strategy asynchronously
+    pub async fn create_v2_to_v3_arbitrage_strategy(&self, config: StrategyConfig, rpc_url: String) -> Result<V2FlashToV3ArbitrageStrategy> {
+        V2FlashToV3ArbitrageStrategy::new(config, rpc_url).await
+    }
 }
 
 impl StrategyFactory for DefaultStrategyFactory {
     fn create_strategy(&self, strategy_type: &str, config: StrategyConfig) -> Result<Box<dyn MevStrategy>> {
         match strategy_type.to_lowercase().as_str() {
-            "sandwich" | "sandwich_attack" | "sandwich-attack" => {
+            "sandwich" => {
                 Ok(Box::new(SandwichStrategy::new(config)))
             }
-            "liquidation" | "lending_liquidation" | "lending-liquidation" => {
+            "liquidation" => {
                 Ok(Box::new(LiquidationStrategy::new(config)))
             }
-            "arbitrage" | "uniswap_arbitrage" | "uniswap-arbitrage" => {
+            "arbitrage" => {
                 // Note: Arbitrage strategy requires async initialization
                 // Use create_arbitrage_strategy() method instead
                 Err(anyhow::anyhow!("Arbitrage strategy requires async initialization. Use create_arbitrage_strategy() method."))
+            }
+            "v2_to_v3" => {
+                // Note: V2 flash to V3 arbitrage strategy requires async initialization
+                // Use create_v2_to_v3_arbitrage_strategy() method instead
+                Err(anyhow::anyhow!("V2 flash to V3 arbitrage strategy requires async initialization. Use create_v2_to_v3_arbitrage_strategy() method."))
             }
             _ => Err(anyhow::anyhow!("Unknown strategy type: {}", strategy_type)),
         }
@@ -58,6 +69,7 @@ impl StrategyFactory for DefaultStrategyFactory {
             "arbitrage".to_string(),
             "sandwich".to_string(),
             "liquidation".to_string(),
+            "v2_to_v3".to_string(),
         ]
     }
 }

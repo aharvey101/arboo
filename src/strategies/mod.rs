@@ -1,12 +1,11 @@
-pub mod traits;
 pub mod arbitrage;
-pub mod sandwich;
 pub mod liquidation;
 pub mod manager;
-pub mod factory;
+pub mod sandwich;
+pub mod traits;
 
-pub use traits::*;
+pub use arbitrage::UniswapArbitrageStrategy;
 pub use manager::StrategyManager;
-pub use factory::DefaultStrategyFactory;
-pub use arbitrage::{UniswapArbitrageStrategy, process_arbitrage_strategy};
 pub use traits::ArbitrageOpportunity;
+pub use traits::*;
+

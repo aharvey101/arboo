@@ -11,6 +11,8 @@ use tokio::sync::broadcast;
 pub enum MevOpportunity {
     /// Arbitrage between different DEX pools
     Arbitrage(ArbitrageOpportunity),
+    /// V2 flash loan to V3 arbitrage
+    V2ToV3Arbitrage(V2ToV3ArbitrageOpportunity),
     /// Sandwich attack opportunity
     Sandwich(SandwichOpportunity),
     /// Liquidation opportunity
@@ -34,6 +36,18 @@ pub struct ArbitrageOpportunity {
     pub pool_variant_b: PoolVersion,
     pub fee_a: u32,
     pub fee_b: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct V2ToV3ArbitrageOpportunity {
+    pub v2_pair: Address,
+    pub v3_pool: Address,
+    pub token_a: Address,
+    pub token_b: Address,
+    pub amount_in: U256,
+    pub expected_profit: U256,
+    pub v2_fee: u32, // Usually 3000 (0.3%)
+    pub v3_fee: u32, // 500, 3000, or 10000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,9 +9,9 @@ use alloy::{
 use log::info;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::arbitrage::simulation::{
-    arboo_bytecode, get_address, one_thousand_eth, AddressType,
-};
+use crate::common::bytecode::arboo_bytecode;
+use crate::common::constants::one_thousand_eth;
+use crate::common::simulation::{get_address, AddressType};
 use crate::common::revm::Tx;
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{address, U160, U256};
@@ -500,3 +500,75 @@ pub async fn sim_test(
 //    }
 //    Ok(false)
 //}
+
+/// Token balance checking utilities
+
+pub async fn check_weth_balance(
+    wallet_address: alloy_primitives::Address,
+    simulator: &mut EvmSimulator<'_>,
+    latest_gas_limit: &u64,
+    latest_gas_price: &U256,
+    caller: Option<alloy_primitives::Address>,
+) -> Result<U256, anyhow::Error> {
+    alloy::sol! {
+        function balanceOf(address account) external view returns (uint256);
+    }
+
+    let function_call = balanceOfCall {
+        account: wallet_address,
+    };
+
+    let function_call_data = function_call.abi_encode();
+
+    let caller = caller.unwrap_or(wallet_address);
+
+    let new_tx = Tx {
+        caller,
+        transact_to: crate::common::simulation::get_address(crate::common::simulation::AddressType::Weth),
+        data: function_call_data.into(),
+        value: U256::ZERO,
+        gas_limit: *latest_gas_limit,
+        gas_price: *latest_gas_price,
+    };
+
+    let result = simulator
+        .call(new_tx)
+        .inspect_err(|e| log::debug!("There was an error {e}"))?;
+
+    let balance = U256::from_be_slice(&result.output);
+
+    Ok(balance)
+}
+
+pub async fn get_token_balance(
+    simulator: &mut EvmSimulator<'_>,
+    token: alloy_primitives::Address,
+    account: alloy_primitives::Address,
+) -> Result<U256> {
+    alloy::sol! {
+        function balanceOf(address account) external view returns (uint256);
+    }
+
+    let balance_call = balanceOfCall { account };
+    let call_data = balance_call.abi_encode();
+
+    let tx = Tx {
+        caller: simulator.owner,
+        transact_to: token,
+        data: call_data.into(),
+        value: U256::ZERO,
+        gas_limit: 100_000,
+        gas_price: U256::from(20_000_000_000u64),
+    };
+
+    match simulator.staticcall(tx) {
+        Ok(result) => {
+            if result.output.len() >= 32 {
+                Ok(U256::from_be_slice(&result.output[..32]))
+            } else {
+                Ok(U256::ZERO)
+            }
+        }
+        Err(_) => Ok(U256::ZERO),
+    }
+}

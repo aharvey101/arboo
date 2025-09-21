@@ -1,5 +1,6 @@
-use crate::arbitrage::simulation::{arboo_bytecode, get_address, AddressType};
+use crate::common::bytecode::arboo_bytecode;
 use crate::common::revm_inspector;
+use crate::common::simulation::{get_address, AddressType};
 use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
 use alloy::network::{AnyNetwork, Ethereum};
@@ -389,7 +390,6 @@ impl EvmSimulator<'_> {
             .map(|account| account.info.clone())
             .map_err(|e| anyhow::anyhow!("Failed to load account {} for storage: {}", address, e))
     }
-
     pub async fn insert_account_storage(&mut self, target: Address, index: U256, value: U256) {
         self.evm
             .context
@@ -398,64 +398,6 @@ impl EvmSimulator<'_> {
             .insert_account_storage(target, index, value)
             .map_err(|e| log::warn!("Failed to insert account storage for {}: {}", target, e))
             .ok();
-    }
-    // NOTE: probably want to change this and not have to get the abi from that folder
-    pub fn get_weth_balance(
-        &mut self,
-        address: Address,
-        token: Address,
-        provider: Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
-        latest_gas_limit: &u64,
-        latest_gas_price: &U256,
-    ) {
-        alloy::sol! {
-            function balanceOf(address account) external view returns (uint256);
-        }
-
-        let abi = serde_json::from_str(include_str!("../arbitrage/weth.json"))
-            .expect("Hard-coded WETH ABI should be valid JSON");
-
-        let contract = ContractInstance::<
-            Address,
-            Arc<RootProvider<PubSubFrontend, AnyNetwork>>,
-            Interface,
-        >::new(self.owner, provider, Interface::new(abi));
-
-        // create a transaction, call the balanceOf function of the token contract
-        let data = balanceOfCall { account: address };
-
-        let data = data.abi_encode();
-
-        let tx = Tx {
-            caller: self.owner,
-            transact_to: token,
-            data: data.into(),
-            value: U256::ZERO,
-            gas_price: *latest_gas_price,
-            gas_limit: *latest_gas_limit,
-        };
-
-        let result = self.call(tx).unwrap_or_else(|e| {
-            log::error!("Failed to call balanceOf: {}", e);
-            TxResult {
-                output: Bytes::new(),
-                logs: None,
-                gas_used: 0,
-                gas_refunded: 0,
-            }
-        });
-
-        print!("result from balance of call: {:?}", result);
-
-        let res = contract
-            .decode_output("balanceOf", &result.output, false)
-            .map_err(|e| log::error!("Failed to decode balanceOf output: {}", e))
-            .unwrap_or_default();
-
-        let balance = res[0].clone();
-
-        log::debug!("balance: {:?}", balance);
-        // decode result
     }
 
     pub async fn get_accounts(&mut self) {
