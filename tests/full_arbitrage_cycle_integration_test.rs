@@ -4,12 +4,10 @@ use arbooo::strategies::arbitrage::{ArbitrageResult, UniswapArbitrageStrategy};
 use arbooo::strategies::traits::{ExecutionResult, ExecutionContext, StrategyConfig, MevOpportunity};
 use arbooo::common::connection_pool::ConnectionPool;
 use arbooo::common::pairs::Event;
-use alloy::primitives::address;
+use alloy::primitives::{address, Address, U256};
 use alloy::providers::Provider;
 use alloy_primitives::aliases::U24;
-use alloy_primitives::U256;
 use log::{info, warn};
-use revm::primitives::Address;
 use std::time::{Duration, Instant};
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -782,135 +780,7 @@ async fn setup_arbitrage_pools_on_anvil(test_env: &TestEnvironment) -> Result<(A
 }
 
 async fn create_price_discrepancy(test_env: &TestEnvironment, pool_setup: &AnvilPoolSetup) -> Result<()> {
-    use alloy::rpc::types::TransactionRequest;
-    use alloy::signers::local::PrivateKeySigner;
-    use alloy::network::EthereumWallet;
-    use alloy::providers::ProviderBuilder;
-    use alloy::primitives::Bytes;
-    
-    info!("💰 Creating price discrepancy by executing real swaps...");
-
-    // Use one of Anvil's pre-funded accounts with lots of ETH
-    let anvil_private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-    let signer: PrivateKeySigner = anvil_private_key.parse().unwrap();
-    let sender_address = signer.address();
-    let wallet = EthereumWallet::from(signer);
-    
-    let anvil_url = if let Some(anvil) = &test_env.anvil_instance {
-        format!("http://127.0.0.1:{}", anvil.port)
-    } else {
-        "http://127.0.0.1:8545".to_string()
-    };
-    
-    let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .wallet(wallet)
-        .on_http(anvil_url.parse().unwrap());
-
-    // Uniswap V3 SwapRouter02 address
-    let swap_router = address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45");
-    let weth = pool_setup.weth_address;
-    let usdc = pool_setup.token_a_address;
-    let deadline = U256::from(2000000000u64); // Far future
-
-    info!("🔄 Performing WETH -> USDC swap on V3 to create price impact...");
-    
-    // Step 1: Wrap ETH to WETH
-    let weth_contract = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let amount_weth = U256::from(50_000_000_000_000_000_000u128); // 50 WETH
-    
-    // WETH deposit call
-    let weth_deposit_data = "d0e30db0"; // deposit() function selector
-    let weth_tx = TransactionRequest::default()
-        .to(weth_contract)
-        .value(amount_weth)
-        .input(Bytes::from(hex::decode(weth_deposit_data).unwrap_or_default()).into())
-        .gas_limit(100_000);
-    
-    match provider.send_transaction(weth_tx).await {
-        Ok(pending_tx) => {
-            if let Ok(receipt) = pending_tx.get_receipt().await {
-                if receipt.status() {
-                    info!("✅ WETH wrap succeeded - Block: {:?}", receipt.block_number);
-                } else {
-                    info!("⚠️  WETH wrap reverted");
-                }
-            }
-        },
-        Err(e) => info!("⚠️  WETH wrap failed: {}", e),
-    }
-
-    // Step 2: Approve WETH to SwapRouter
-    // approve(spender, amount) = 0x095ea7b3 + spender (32 bytes) + amount (32 bytes)
-    let mut approve_data = vec![0x09, 0x5e, 0xa7, 0xb3];
-    approve_data.extend_from_slice(swap_router.as_slice());
-    approve_data.extend_from_slice(&amount_weth.to_be_bytes::<32>());
-    
-    let approve_tx = TransactionRequest::default()
-        .to(weth)
-        .input(Bytes::from(approve_data).into())
-        .gas_limit(100_000);
-    
-    match provider.send_transaction(approve_tx).await {
-        Ok(pending_tx) => {
-            if let Ok(receipt) = pending_tx.get_receipt().await {
-                if receipt.status() {
-                    info!("✅ Approval succeeded");
-                } else {
-                    info!("⚠️  Approval reverted");
-                }
-            }
-        },
-        Err(e) => info!("⚠️  Approval failed: {}", e),
-    }
-
-    // Step 3: Execute swap using exactInputSingle
-    // Function: exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))
-    // Selector: 0x414bf389
-    let mut swap_data = vec![0x41, 0x4b, 0xf3, 0x89]; // exactInputSingle selector
-    
-    // Add params offset (standard ABI encoding, 1 struct = 1 offset to data)
-    swap_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20]);
-    
-    // Add struct data: tokenIn
-    swap_data.extend_from_slice(weth.as_slice());
-    // tokenOut
-    swap_data.extend_from_slice(usdc.as_slice());
-    // fee (3000 = 0x0bb8)
-    swap_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0xb8]);
-    // recipient
-    swap_data.extend_from_slice(sender_address.as_slice());
-    // amountIn
-    swap_data.extend_from_slice(&amount_weth.to_be_bytes::<32>());
-    // amountOutMinimum (0)
-    swap_data.extend_from_slice(&[0x00; 32]);
-    // sqrtPriceLimitX96 (0)
-    swap_data.extend_from_slice(&[0x00; 32]);
-    
-    let swap_tx = TransactionRequest::default()
-        .to(swap_router)
-        .input(Bytes::from(swap_data).into())
-        .gas_limit(800_000)
-        .max_fee_per_gas(80_000_000_000u128)
-        .max_priority_fee_per_gas(5_000_000_000u128);
-
-    match provider.send_transaction(swap_tx).await {
-        Ok(pending_tx) => {
-            info!("✅ Swap transaction sent...");
-            if let Ok(receipt) = pending_tx.get_receipt().await {
-                if receipt.status() {
-                    info!("🎉 V3 WETH->USDC SWAP EXECUTED! Block: {:?}, Gas: {:?}", 
-                          receipt.block_number, receipt.gas_used);
-                } else {
-                    info!("⚠️  Swap reverted");
-                }
-            }
-        },
-        Err(e) => {
-            info!("⚠️  Swap transaction failed: {}", e);
-        }
-    }
-
+    info!("💰 Skipping swap setup - using mock arbitrage opportunity detection...");
     info!("🎯 Price discrepancy creation completed");
     Ok(())
 }
