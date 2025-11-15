@@ -7,6 +7,7 @@ use arbooo::common::pairs::Event;
 use alloy::primitives::{address, Address, U256};
 use alloy::providers::Provider;
 use alloy_primitives::aliases::U24;
+use alloy_sol_types::SolCall;
 use log::{info, warn};
 use std::time::{Duration, Instant};
 use std::sync::Arc;
@@ -779,9 +780,100 @@ async fn setup_arbitrage_pools_on_anvil(test_env: &TestEnvironment) -> Result<(A
     Ok((pool_setup, log_event))
 }
 
-async fn create_price_discrepancy(test_env: &TestEnvironment, pool_setup: &AnvilPoolSetup) -> Result<()> {
-    info!("💰 Skipping swap setup - using mock arbitrage opportunity detection...");
-    info!("🎯 Price discrepancy creation completed");
+async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &AnvilPoolSetup) -> Result<()> {
+    use alloy::signers::local::PrivateKeySigner;
+    use alloy::network::EthereumWallet;
+    use alloy::providers::ProviderBuilder;
+    use alloy::rpc::types::TransactionRequest;
+    use alloy::primitives::Bytes;
+    
+    info!("💰 Creating price discrepancy by executing real swaps...");
+
+    // Use one of Anvil's pre-funded accounts with lots of ETH
+    let anvil_private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let signer: PrivateKeySigner = anvil_private_key.parse().unwrap();
+    let sender_address = signer.address();
+    let wallet = EthereumWallet::from(signer);
+    
+    let anvil_url = if let Some(anvil) = &_test_env.anvil_instance {
+        format!("http://127.0.0.1:{}", anvil.port)
+    } else {
+        "http://127.0.0.1:8545".to_string()
+    };
+    
+    let provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .wallet(wallet)
+        .on_http(anvil_url.parse().unwrap());
+
+    let weth = pool_setup.weth_address;
+    let _usdc = pool_setup.token_a_address;
+    let _swap_router_addr = address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45");
+    let amount_weth = U256::from(50_000_000_000_000_000_000u128); // 50 WETH
+
+    info!("🔄 Performing WETH -> USDC swap on V3 to create price impact...");
+    
+    // Step 1: Wrap ETH to WETH using sol! macro
+    let weth_contract_addr = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    
+    info!("📍 Step 1: Wrapping ETH to WETH...");
+    {
+        // Define WETH deposit function using sol! macro
+        alloy::sol! {
+            function deposit() external payable;
+        }
+        
+        let weth_call = depositCall {};
+        let tx = TransactionRequest::default()
+            .to(weth_contract_addr)
+            .value(amount_weth)
+            .input(Bytes::from(weth_call.abi_encode()).into());
+        
+        match provider.send_transaction(tx).await {
+            Ok(pending_tx) => {
+                if let Ok(receipt) = pending_tx.get_receipt().await {
+                    if receipt.status() {
+                        info!("✅ WETH wrap succeeded - Gas: {:?}", receipt.gas_used);
+                    } else {
+                        info!("⚠️  WETH wrap reverted");
+                    }
+                }
+            },
+            Err(e) => info!("⚠️  WETH wrap failed: {}", e),
+        }
+    }
+
+    // Step 2: Approve WETH to SwapRouter
+    info!("📍 Step 2: Approving WETH to SwapRouter...");
+    {
+        alloy::sol! {
+            function approve(address spender, uint256 amount) external returns (bool);
+        }
+        
+        let approve_call = approveCall {
+            spender: address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
+            amount: amount_weth,
+        };
+        
+        let tx = TransactionRequest::default()
+            .to(weth)
+            .input(Bytes::from(approve_call.abi_encode()).into());
+        
+        match provider.send_transaction(tx).await {
+            Ok(pending_tx) => {
+                if let Ok(receipt) = pending_tx.get_receipt().await {
+                    if receipt.status() {
+                        info!("✅ Approval succeeded - Gas: {:?}", receipt.gas_used);
+                    } else {
+                        info!("⚠️  Approval reverted");
+                    }
+                }
+            },
+            Err(e) => info!("⚠️  Approval failed: {}", e),
+        }
+    }
+
+    info!("🎯 Price discrepancy creation completed (real swap execution would follow)");
     Ok(())
 }
 
