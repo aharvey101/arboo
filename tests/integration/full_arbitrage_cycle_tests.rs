@@ -1046,7 +1046,7 @@ async fn test_strategy_manager_arbitrage_cycle() -> Result<()> {
 
     let test_env = TestEnvironment::new_with_config(TestConfig {
         ws_url: "ws://127.0.0.1:8545".to_string(),
-        fork_block_number: None,
+        fork_block_number: Some(23800000), // Use a fixed mainnet block instead of trying to fetch latest
         test_timeout_secs: 100,
 
     }).await?;
