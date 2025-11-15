@@ -43,9 +43,13 @@ impl Default for TestConfig {
         println!("  Final ws_url: [will use anvil]");
         println!("  Always using local fork (anvil)");
 
+        let fork_block_number = std::env::var("FORK_BLOCK_NUMBER")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+
         Self {
             ws_url,
-            fork_block_number: None, // Use latest block instead of hardcoded 23000000
+            fork_block_number,
             test_timeout_secs: std::env::var("TEST_TIMEOUT_SECS")
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
