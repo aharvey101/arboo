@@ -7,7 +7,7 @@ use alloy::sol;
 use alloy_primitives::{FixedBytes, U160, U256};
 use alloy_sol_types::*;
 use anyhow::Result;
-use arbooo::arbitrage::simulation::one_thousand_eth;
+use arbooo::common::constants::one_thousand_eth;
 use log::{info, warn};
 use revm::primitives::Address;
 use std::fs;
