@@ -30,6 +30,7 @@ pub mod memory {
 
 pub mod integration {
     pub mod anvil_setup_test;
+    pub mod simple_e2e_test;
     //pub mod concurrent_opportunities_tests;
     //pub mod full_arbitrage_cycle_tests;
     //pub mod full_arb_e2e;
