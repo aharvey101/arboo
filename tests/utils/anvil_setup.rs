@@ -112,7 +112,7 @@ impl AnvilInstance {
         sleep(Duration::from_millis(2000)).await;
 
         let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 60;
+        const MAX_ATTEMPTS: u32 = 240; // Increased from 60 to 120 seconds for remote fork initialization
         const DELAY_MS: u64 = 500;
 
         while attempts < MAX_ATTEMPTS {

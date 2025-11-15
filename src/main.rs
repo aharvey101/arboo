@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("Hello World");
     dotenv()?;
     logger::setup_logger();
     info!("🚀 Starting Generalized MEV Bot");

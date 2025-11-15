@@ -113,7 +113,7 @@ impl StrategyManager {
             return Ok(results);
         }
 
-        info!(
+        debug!(
             "🔍 Found {} opportunities, processing with enhanced simulation",
             opportunities.len()
         );

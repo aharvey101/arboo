@@ -23,10 +23,10 @@ use utils::anvil_setup::AnvilConfig;
 
 #[tokio::test]
 async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
-    env_logger::builder()
+    let _ = env_logger::builder()
         .is_test(true)
         .filter_level(log::LevelFilter::Info)
-        .init();
+        .try_init();
     info!("🚀 Starting FULL E2E arbitrage test with mainnet fork and real arbitrage opportunity");
 
     // Kill any existing anvil/arboo processes to ensure clean test environment
