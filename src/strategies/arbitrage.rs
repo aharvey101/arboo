@@ -5,7 +5,7 @@ use crate::common::transaction::{create_input_data, send_transaction};
 use crate::common::{
     logs::LogEvent,
     pairs::{Event, V2PoolCreated, V3PoolCreated},
-    revm::{EvmSimulator, Tx},
+    revm::EvmSimulator,
     simulation::{MultiContractSimulator, SimulationContext},
     simulation_factory::SimulationFactory,
 };
@@ -18,11 +18,10 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::aliases::U24;
 use alloy_primitives::{U256, U64};
-use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
-use log::{debug, error, info, warn};
-use revm::primitives::{address, Address};
+use log::{debug, info, warn};
+use revm::primitives::Address;
 use std::{
     collections::HashMap,
     fs::File,

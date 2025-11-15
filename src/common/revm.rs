@@ -1,9 +1,8 @@
 use crate::common::bytecode::arboo_bytecode;
 use crate::common::revm_inspector;
 use crate::common::simulation::{get_address, AddressType};
-use alloy::contract::{ContractInstance, Interface};
 use alloy::eips::BlockId;
-use alloy::network::{AnyNetwork, Ethereum};
+use alloy::network::Ethereum;
 use alloy::primitives::{Address, U64};
 use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
@@ -19,7 +18,6 @@ use revm::{
     Database, Evm,
 };
 use std::str::FromStr;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Default)]
 pub struct VictimTx {

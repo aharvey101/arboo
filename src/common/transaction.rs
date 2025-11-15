@@ -5,7 +5,7 @@ use alloy::{
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };
-use alloy_primitives::{address, aliases::U24};
+use alloy_primitives::aliases::U24;
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
