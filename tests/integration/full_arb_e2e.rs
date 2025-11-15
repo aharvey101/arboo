@@ -36,6 +36,23 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
         .output();
     tokio::time::sleep(Duration::from_secs(2)).await;
 
+    // Wrap the test in a timeout to prevent hanging
+    let test_future = run_e2e_test();
+    match tokio::time::timeout(Duration::from_secs(180), test_future).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(_) => {
+            warn!("⚠️  E2E test timed out after 180 seconds");
+            let _ = std::process::Command::new("pkill")
+                .args(&["-f", "arboo"])
+                .output();
+            Err(anyhow::anyhow!("E2E test execution timeout after 180 seconds"))
+        }
+    }
+}
+
+async fn run_e2e_test() -> Result<()> {
+
     // Phase 1: Setup Anvil with mainnet fork for real arbitrage testing
     info!("📦 PHASE 1: Setting up Anvil with mainnet fork");
     let config = AnvilConfig {
@@ -65,13 +82,18 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
 
     info!("📦 Initial block number: {}", initial_block);
 
-    // Get WebSocket URL from anvil instance
-    info!("🔗 Anvil WebSocket URL: {}", ws_url);
+     // Get WebSocket URL from anvil instance
+     info!("🔗 Anvil WebSocket URL: {}", ws_url);
 
-    // Phase 2: Setup basic arbitrage environment with real mainnet pools
-    info!("💰 PHASE 2: Setting up real arbitrage environment");
-    let arbitrage_setup = setup_basic_test_environment(&provider).await?;
-    info!("✅ Real mainnet arbitrage environment setup complete");
+     // Phase 2: Setup basic arbitrage environment with real mainnet pools
+     info!("💰 PHASE 2: Setting up real arbitrage environment");
+     let arbitrage_setup = setup_basic_test_environment(&provider).await?;
+     info!("✅ Real mainnet arbitrage environment setup complete");
+
+     // Get initial WETH balance for the funded account
+     let funded_account = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+     let initial_weth_balance = get_token_balance(&provider, funded_account, arbitrage_setup.weth_address).await?;
+     info!("💰 Initial WETH balance: {} WETH", initial_weth_balance / U256::from(10u128.pow(18)));
 
     // Phase 3: Start arboo program in background to monitor for opportunities
     info!("⚙️  PHASE 3: Starting arboo program to monitor for arbitrage opportunities");
@@ -79,16 +101,16 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
     let mut arboo_handle = start_arboo_binary(arboo_output_path, &ws_url).await?;
     info!("✅ Arboo started and logging to: {}", arboo_output_path);
 
-    // Give arboo a moment to initialize and start listening for events
-    info!("⏳ Waiting 15 seconds for arboo to fully initialize and start event monitoring...");
-    tokio::time::sleep(Duration::from_secs(15)).await;
+     // Give arboo a moment to initialize and start listening for events
+     info!("⏳ Waiting 5 seconds for arboo to fully initialize and start event monitoring...");
+     tokio::time::sleep(Duration::from_secs(5)).await;
 
-     // Phase 4: Wait longer to ensure arboo is fully subscribed, then execute swaps
-      info!("💰 PHASE 4: Executing swaps to create arbitrage opportunities");
-      
-      // Wait additional 20 seconds to be ABSOLUTELY certain arboo is subscribed to logs
-      info!("⏳ Waiting additional 20 seconds to ensure arboo log subscription is fully active...");
-      tokio::time::sleep(Duration::from_secs(20)).await;
+      // Phase 4: Wait longer to ensure arboo is fully subscribed, then execute swaps
+       info!("💰 PHASE 4: Executing swaps to create arbitrage opportunities");
+       
+       // Wait additional 5 seconds to be ABSOLUTELY certain arboo is subscribed to logs
+       info!("⏳ Waiting additional 5 seconds to ensure arboo log subscription is fully active...");
+       tokio::time::sleep(Duration::from_secs(5)).await;
 
       // Get current block number for reference
       let block_before_swap = provider.get_block_number().await?;
@@ -104,25 +126,25 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
       info!("📍 Block after swap: {}", block_after_swap);
       info!("📊 Blocks mined during swap: {}", block_after_swap - block_before_swap);
 
-      // Give events time to propagate through the WebSocket subscription
-      info!("⏳ Waiting 5 seconds for events to propagate through WebSocket...");
+       // Give events time to propagate through the WebSocket subscription
+       info!("⏳ Waiting 3 seconds for events to propagate through WebSocket...");
+       tokio::time::sleep(Duration::from_secs(3)).await;
+
+       // Execute another swap to generate more events
+       info!("🔄 Executing second swap for additional event generation...");
+       let _ = execute_market_moving_swap(&provider, &arbitrage_setup, &anvil).await;
+       info!("✅ Second swap executed");
+
+       // Give events time to propagate
+       info!("⏳ Waiting 3 seconds for second batch of events...");
+       tokio::time::sleep(Duration::from_secs(3)).await;
+
+      // Phase 5: Wait for arboo to process and check output
+      info!("🔍 PHASE 5: Waiting for arboo to detect and process the swap events");
+
+      // Wait for arboo to process the swap events we just generated
+      info!("⏳ Waiting 5 seconds for arboo to process the swap events and detect arbitrage opportunities...");
       tokio::time::sleep(Duration::from_secs(5)).await;
-
-      // Execute another swap to generate more events
-      info!("🔄 Executing second swap for additional event generation...");
-      let _ = execute_market_moving_swap(&provider, &arbitrage_setup, &anvil).await;
-      info!("✅ Second swap executed");
-
-      // Give events time to propagate
-      info!("⏳ Waiting 5 seconds for second batch of events...");
-      tokio::time::sleep(Duration::from_secs(5)).await;
-
-     // Phase 5: Wait for arboo to process and check output
-     info!("🔍 PHASE 5: Waiting for arboo to detect and process the swap events");
-
-     // Wait for arboo to process the swap events we just generated
-     info!("⏳ Waiting 10 seconds for arboo to process the swap events and detect arbitrage opportunities...");
-     tokio::time::sleep(Duration::from_secs(10)).await;
 
     // Read arboo output to check for successful simulations
     let arboo_output = match fs::read_to_string(arboo_output_path) {
@@ -141,11 +163,25 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
         }
     };
 
-    // Analyze the output for successful simulations and validate requirements
-    analyze_arboo_output(&arboo_output)?;
+     // Analyze the output for successful simulations and validate requirements
+     analyze_arboo_output(&arboo_output)?;
 
-    // Cleanup: terminate arboo process and remove log file
-    info!("🧹 Cleaning up: terminating arboo process and removing log file");
+     // Check final WETH balance to see if arbitrage executed
+     let final_weth_balance = get_token_balance(&provider, funded_account, arbitrage_setup.weth_address).await?;
+     let weth_balance_change = if final_weth_balance > initial_weth_balance {
+         let diff = final_weth_balance - initial_weth_balance;
+         format!("+{} WETH", diff / U256::from(10u128.pow(18)))
+     } else if final_weth_balance < initial_weth_balance {
+         let diff = initial_weth_balance - final_weth_balance;
+         format!("-{} WETH", diff / U256::from(10u128.pow(18)))
+     } else {
+         "0 WETH".to_string()
+     };
+     info!("💰 Final WETH balance: {} WETH", final_weth_balance / U256::from(10u128.pow(18)));
+     info!("📊 WETH balance change: {}", weth_balance_change);
+
+     // Cleanup: terminate arboo process and remove log file
+     info!("🧹 Cleaning up: terminating arboo process and removing log file");
 
     // Remove the log file to prevent accumulation of large files
     if let Err(e) = fs::remove_file(arboo_output_path) {
@@ -170,6 +206,38 @@ async fn test_full_arbitrage_e2e_with_anvil() -> Result<()> {
 
     Ok(())
 }
+
+/// Get the balance of an ERC20 token for a given account
+async fn get_token_balance(
+    provider: &Arc<RootProvider<PubSubFrontend>>,
+    account: Address,
+    token_address: Address,
+) -> Result<U256> {
+    use alloy::sol_types::SolCall;
+    
+    alloy::sol! {
+        function balanceOf(address account) external view returns (uint256);
+    }
+    
+    let call_data = balanceOfCall { account }.abi_encode();
+    
+    let result = provider
+        .call(
+            &alloy::rpc::types::TransactionRequest::default()
+                .to(token_address)
+                .input(call_data.into()),
+        )
+        .await?;
+    
+    // Parse the result (32 bytes for uint256)
+    if result.len() >= 32 {
+        let balance_bytes = &result[0..32];
+        Ok(U256::from_be_slice(balance_bytes))
+    } else {
+        Err(anyhow::anyhow!("Invalid balance response from token contract"))
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ArbitrageSetup {
     v3_pool_address: Address,
@@ -446,7 +514,7 @@ async fn start_arboo_binary(output_path: &str, ws_url: &str) -> Result<Child> {
         .env("RUST_LOG", "debug")
         .env("WS_URL", ws_url)
         .env("CACHE_DIR", "cache")
-        .env("ENABLE_DETAILED_INSPECTOR", "true")
+        .env("ENABLE_DETAILED_INSPECTOR", "false")
         .env("HTTP_URL", "https://mevshare-rpc.beaverbuild.org")
         .stdout(output_file)
         .stderr(Stdio::from(stderr_file))
@@ -458,7 +526,7 @@ async fn start_arboo_binary(output_path: &str, ws_url: &str) -> Result<Child> {
     info!("   RUST_LOG=info");
     info!("   WS_URL={}", ws_url);
     info!("   CACHE_DIR=cache");
-    info!("   ENABLE_DETAILED_INSPECTOR=true");
+    info!("   ENABLE_DETAILED_INSPECTOR=false");
     info!("   HTTP_URL=https://mevshare-rpc.beaverbuild.org");
     Ok(child)
 }
