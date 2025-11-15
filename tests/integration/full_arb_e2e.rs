@@ -188,9 +188,11 @@ async fn setup_basic_test_environment(
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH
     let usdc_address = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // USDC
 
-    // Real Uniswap pool addresses that are in arboo's cache for profitable arbitrage
-    let v3_pool_address = address!("0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"); // USDC/WETH V3 pool (fee: 300)
-    let v2_pool_address = address!("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"); // USDC/WETH V2 pool (fee: 300)
+    // Use pools that are ACTUALLY in our cache (not the most liquid ones)
+    // V2 Pool: USDC/WETH 0.3% fee (in cache at block 20497505)
+    let v2_pool_address = address!("0xbd504d0a4b16a77e531722c3aea770161347dea7");
+    // V3 Pool: USDC/WETH 0.01% fee (in cache at block 20791480)
+    let v3_pool_address = address!("0xa6d2aac68cafa72c5249aa4d0a379390fe1d40d8");
 
     // Create arbitrage opportunity by executing a large swap on V2
     info!("💰 Creating arbitrage opportunity with large V2 swap...");
