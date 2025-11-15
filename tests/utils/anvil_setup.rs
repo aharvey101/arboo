@@ -109,10 +109,10 @@ impl AnvilInstance {
     async fn wait_for_ready(&self) -> Result<()> {
         debug!("⏳ Waiting for Anvil to become ready...");
 
-        sleep(Duration::from_millis(2000)).await;
+        sleep(Duration::from_millis(3000)).await;
 
         let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 60; // 30 seconds max wait for Anvil to be ready
+        const MAX_ATTEMPTS: u32 = 120; // 60 seconds max wait for Anvil to be ready (doubled for fork scenarios)
         const DELAY_MS: u64 = 500;
 
         while attempts < MAX_ATTEMPTS {
@@ -125,7 +125,7 @@ impl AnvilInstance {
                     "params": [],
                     "id": 1
                 }))
-                .timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(10))
                 .send()
                 .await;
 
@@ -176,8 +176,9 @@ impl AnvilInstance {
         }
 
         Err(anyhow::anyhow!(
-            "Anvil failed to become ready after {} attempts at {}",
+            "Anvil failed to become ready after {} attempts ({} seconds) at {}",
             MAX_ATTEMPTS,
+            (MAX_ATTEMPTS as u64 * DELAY_MS) / 1000,
             self.rpc_url
         ))
     }

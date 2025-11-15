@@ -174,6 +174,7 @@ async fn main() -> Result<()> {
                 log_event = log_receiver.recv() => {
                     match log_event {
                         Ok(log_event) => {
+                            info!("📥 Received log event from pool: {}", log_event.log_pool_address);
                             // Process each log event for arbitrage opportunities
                             match strategy_manager.process_arbitrage_cycle(log_event).await {
                                 Ok(results) => {

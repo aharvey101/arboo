@@ -94,12 +94,19 @@ impl LogProcessor {
 
     /// Process a single log event and attempt to create arbitrage opportunities
     pub fn process_log(&self, log: &Log) -> Option<LogEvent> {
-        //debug!("Processing logs!: {:?}", log);
         let pool_address = log.address();
+        
+        // Check if pool exists in our cache
+        if !self.pairs.contains_key(&pool_address) {
+            debug!("Log from unknown pool: {:?}", pool_address);
+            return None;
+        }
+        
         // Look up the pool that generated this log
         let source_event = self.pairs.get(&pool_address)?;
-        debug!("Processing log from pool: {:?}", pool_address);
+        debug!("Processing swap log from known pool: {:?}", pool_address);
 
+        // Now that we know this pool exists, find potential arbitrage with the other version
         match source_event {
             Event::PairCreated(v2_pool) => self.find_arbitrage_for_v2_pool(v2_pool, pool_address),
             Event::PoolCreated(v3_pool) => self.find_arbitrage_for_v3_pool(v3_pool, pool_address),
@@ -112,37 +119,37 @@ impl LogProcessor {
         v2_pool: &super::pairs::V2PoolCreated,
         pool_address: Address,
     ) -> Option<LogEvent> {
-        //        let token_pair = TokenPair::new(v2_pool.token0, v2_pool.token1);
-        //
-        //        // Find all pools with the same token pair
-        //        let matching_pools = self.token_pair_index.get(&token_pair)?;
-        //        // Look for a V3 pool among the matching pools
-        //        for &candidate_address in matching_pools {
-        //            if candidate_address == pool_address {
-        //                continue; // Skip self
-        //            }
-        //
-        //            if let Some(Event::PoolCreated(v3_pool)) = self.pairs.get(&candidate_address) {
-        //                // Validate token pair consistency
-        //                if Self::is_valid_token_pair(v3_pool.token0, v3_pool.token1) {
-        //                    debug!(
-        //                        "Found V2->V3 arbitrage: {:?} -> {:?}",
-        //                        pool_address, candidate_address
-        //                    );
-        //
-        //                    return Some(LogEvent {
-        //                        pool_variant: 2, // V2 pool generated the log
-        //                        corresponding_pool_address: v3_pool.pair_address,
-        //                        log_pool_address: pool_address,
-        //                        token0: v2_pool.token0,
-        //                        token1: v2_pool.token1,
-        //                        fee: U24::from(v2_pool.fee),
-        //                    });
-        //                }
-        //            }
-        //        }
-        //
-        //        debug!("No V3 counterpart found for V2 pool: {:?}", pool_address);
+        let token_pair = TokenPair::new(v2_pool.token0, v2_pool.token1);
+
+        // Find all pools with the same token pair
+        let matching_pools = self.token_pair_index.get(&token_pair)?;
+        // Look for a V3 pool among the matching pools
+        for &candidate_address in matching_pools {
+            if candidate_address == pool_address {
+                continue; // Skip self
+            }
+
+            if let Some(Event::PoolCreated(v3_pool)) = self.pairs.get(&candidate_address) {
+                // Validate token pair consistency
+                if Self::is_valid_token_pair(v3_pool.token0, v3_pool.token1) {
+                    debug!(
+                        "Found V2->V3 arbitrage: {:?} -> {:?}",
+                        pool_address, candidate_address
+                    );
+
+                    return Some(LogEvent {
+                        pool_variant: 2, // V2 pool generated the log
+                        corresponding_pool_address: v3_pool.pair_address,
+                        log_pool_address: pool_address,
+                        token0: v2_pool.token0,
+                        token1: v2_pool.token1,
+                        fee: U24::from(v2_pool.fee),
+                    });
+                }
+            }
+        }
+
+        debug!("No V3 counterpart found for V2 pool: {:?}", pool_address);
         None
     }
 
@@ -153,13 +160,18 @@ impl LogProcessor {
         pool_address: Address,
     ) -> Option<LogEvent> {
         let token_pair = TokenPair::new(v3_pool.token0, v3_pool.token1);
+        
+        debug!("Looking for arbitrage for V3 pool {} with tokens: {:?} - {:?}", 
+               pool_address, v3_pool.token0, v3_pool.token1);
 
         // Find all pools with the same token pair
         let matching_pools = self.token_pair_index.get(&token_pair)?;
+        debug!("Found {} pools with matching token pair", matching_pools.len());
+        
         // Look for a V2 pool among the matching pools
         for &candidate_address in matching_pools {
             if candidate_address == pool_address {
-                debug!("candidate address = pool address");
+                debug!("candidate address = pool address, skipping");
                 continue; // Skip self
             }
 
@@ -260,8 +272,19 @@ pub async fn get_logs(
         );
     });
 
-    // Create event signature filters
-    let filter = create_swap_event_filter();
+    // Get current block number to ensure we capture all logs from this point forward
+    let current_block = match client.get_block_number().await {
+        Ok(block) => block,
+        Err(e) => {
+            warn!("Failed to get current block number: {}. Using 'latest' instead.", e);
+            u64::MAX // Use MAX as sentinel, will be interpreted as 'latest'
+        }
+    };
+    
+    // Create event signature filters from the current block onward
+    let filter = create_swap_event_filter(current_block);
+    info!("Log subscription will capture events from block {} onward", current_block);
+    
     // Subscribe to logs
     let stream = match subscribe_to_logs(&client, filter).await {
         Ok(stream) => stream,
@@ -276,8 +299,8 @@ pub async fn get_logs(
     process_log_stream(stream, processor, cancellation_token).await;
 }
 
-/// Create a filter for V2 and V3 Swap events
-fn create_swap_event_filter() -> Filter {
+/// Create a filter for V2 and V3 Swap events starting from a specific block
+fn create_swap_event_filter(from_block_num: u64) -> Filter {
     let v2_swap_signature =
         keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
     let v3_swap_signature =
@@ -286,10 +309,18 @@ fn create_swap_event_filter() -> Filter {
     info!("V2 Swap signature: 0x{}", hex::encode(v2_swap_signature));
     info!("V3 Swap signature: 0x{}", hex::encode(v3_swap_signature));
 
+    let block_tag = if from_block_num == u64::MAX {
+        BlockNumberOrTag::Latest
+    } else {
+        BlockNumberOrTag::Number(from_block_num)
+    };
+    
+    info!("Creating filter to capture logs from block: {:?}", block_tag);
+
     Filter::new()
-        //.event_signature(vec![v2_swap_signature, v3_swap_signature])
-        // Subscribe to ALL new blocks, not just latest
-        .from_block(BlockNumberOrTag::Latest)
+        .event_signature(vec![v2_swap_signature, v3_swap_signature])
+        // Subscribe from the current block onward to capture all new events
+        .from_block(block_tag)
 }
 
 /// Subscribe to blockchain logs with error handling
@@ -321,6 +352,7 @@ async fn process_log_stream<S>(
         tokio::select! {
             Some(log) = stream.next() => {
                 processed_count += 1;
+                info!("📥 Received log #{} from address: {:?}", processed_count, log.address());
                 // Process the log and potentially create an arbitrage opportunity
                 if let Some(log_event) = processor.process_log(&log) {
                     opportunity_count += 1;
