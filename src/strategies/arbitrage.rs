@@ -556,7 +556,7 @@ impl UniswapArbitrageStrategy {
         // Step 2: Calculate transaction parameters
         //let contract_address = arbitrage_opp.pool_a; // Use pool_a as contract address
         let contract_address = match opportunity {
-            MevOpportunity::Arbitrage(_) => var("V3_FlASH")?,
+            MevOpportunity::Arbitrage(_) => var("V3_FLASH")?,
             _ => var("V2_FLASH")?,
         };
 

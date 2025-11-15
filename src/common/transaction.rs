@@ -39,17 +39,22 @@ pub async fn send_transaction(
         .wallet(wallet.clone())
         .on_http(http_url);
 
-    let input_as_bytes = revm::primitives::Bytes::from(input);
+     let input_as_bytes = revm::primitives::Bytes::from(input);
+
+    // Get the address from the signer instead of using a hardcoded address
+    let from_address = signer.address();
 
     log::debug!(
         "Sending transaction with parameters:\n\
         contract_address: {}\n\
+        from_address: {}\n\
         gas_price: {:?}\n\
         gas_limit: {:?}\n\
         base_fee: {:?}\n\
         bribe: {:?}\n\
         nonce: {}",
         contract_address,
+        from_address,
         gas_price,
         gas_limit,
         base_fee,
@@ -59,7 +64,7 @@ pub async fn send_transaction(
     //NOTE:  gas limit should be the amount of gas that was simulated for hte transaction to have taken up
 
     let tx = TransactionRequest::default()
-        .with_from(address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"))
+        .with_from(from_address)
         .with_chain_id(1)
         .with_value(U256::ZERO)
         .with_input(input_as_bytes)
@@ -83,10 +88,24 @@ pub async fn send_transaction(
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {}", e))?
         .with_timeout(Some(std::time::Duration::from_secs_f32(20_f32)));
 
-    let res = pending.watch().await?;
-
-    log::debug!("Res: {:?}", res);
-    Ok(())
+    // Use tokio::time::timeout to wrap the watch() call with a timeout
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        pending.watch()
+    ).await {
+        Ok(Ok(receipt)) => {
+            log::debug!("Transaction confirmed with receipt: {:?}", receipt);
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            log::error!("Transaction failed with error: {:?}", e);
+            Err(anyhow::anyhow!("Transaction execution failed: {}", e))
+        }
+        Err(_) => {
+            log::error!("Transaction confirmation timeout - no receipt received within 25 seconds");
+            Err(anyhow::anyhow!("Transaction timeout: failed to confirm within 25 seconds"))
+        }
+    }
 }
 
 pub async fn create_input_data(

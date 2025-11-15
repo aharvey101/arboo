@@ -216,6 +216,21 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
     assert!(!profitable_opportunities.is_empty(), 
            "❌ EXECUTION SETUP FAILED: No profitable opportunities to execute after profitability requirement passed");
     
+    // 🔧 Set environment variables to route transactions to local Anvil fork
+    if let Some(anvil) = &test_env.anvil_instance {
+        let http_url = format!("http://127.0.0.1:{}", anvil.port);
+        std::env::set_var("HTTP_URL", &http_url);
+        std::env::set_var("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        // Set mock contract addresses for local Anvil (these contracts don't actually need to exist for testing)
+        std::env::set_var("V3_FLASH", "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"); // Default Anvil test account
+        std::env::set_var("V2_FLASH", "0x70997970c51812e339d9b73b0245ad59e1ff7ac1"); // Another Anvil test account
+        info!("🔧 Set HTTP_URL to local Anvil: {}", http_url);
+        info!("🔧 Set PRIVATE_KEY to Anvil's default test account");
+        info!("🔧 Set V3_FLASH and V2_FLASH to mock contract addresses");
+    } else {
+        return Err(anyhow::anyhow!("No Anvil instance available for transaction routing"));
+    }
+    
     info!("💰 Executing {} profitable opportunities...", profitable_opportunities.len());
     
     for (i, (opportunity, _sim_result)) in profitable_opportunities.iter().enumerate() {
