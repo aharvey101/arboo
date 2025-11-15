@@ -29,12 +29,12 @@ pub async fn deploy_contract_bytecode(
     
     info!("📍 Deploying from address: {}", from_address);
     
-    // Create HTTP provider
+     // Create HTTP provider WITHOUT wallet for deployment
     let url = http_url.parse()?;
+    info!("🔧 Creating provider for deployment...");
     let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .wallet(wallet.clone())
         .on_http(url);
+    info!("✅ Provider created successfully");
     
     // Get current nonce before sending transaction
     let nonce_before = provider.get_transaction_count(from_address).await?;

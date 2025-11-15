@@ -1,11 +1,11 @@
 use alloy::{
-    network::{EthereumWallet, TransactionBuilder},
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
+    network::{EthereumWallet, TransactionBuilder},
 };
-use alloy_primitives::aliases::U24;
+use alloy_primitives::{aliases::U24, TxKind};
 use alloy_sol_types::SolCall;
 use anyhow::Result;
 use dotenv::var;
@@ -30,21 +30,19 @@ pub async fn send_transaction(
         .map_err(|e| anyhow::anyhow!("PRIVATE_KEY environment variable not set: {}", e))?;
     let signer = PrivateKeySigner::from_str(&private_key)
         .map_err(|e| anyhow::anyhow!("Invalid private key format: {}", e))?;
-    let wallet = EthereumWallet::from(signer.clone());
 
     let http_url = Url::from_str(http_url)
         .map_err(|e| anyhow::anyhow!("Invalid HTTP_URL format '{}': {}", http_url, e))?;
+    // Create provider WITHOUT wallet - we'll sign manually
     let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .wallet(wallet.clone())
-        .on_http(http_url);
+        .on_http(http_url.clone());
 
      let input_as_bytes = revm::primitives::Bytes::from(input);
 
-    // Get the address from the signer instead of using a hardcoded address
+    // Get the address from the signer
     let from_address = signer.address();
 
-    // Get the actual nonce from the provider instead of using a passed-in value
+    // Get the actual nonce from the provider
     let actual_nonce = provider
         .get_transaction_count(from_address)
         .await
@@ -67,32 +65,38 @@ pub async fn send_transaction(
         base_fee,
         bribe.unwrap_or(0)
     );
-    //NOTE:  gas limit should be the amount of gas that was simulated for hte transaction to have taken up
 
-    let tx = TransactionRequest::default()
-        .with_from(from_address)
-        .with_chain_id(1)
-        .with_value(U256::ZERO)
-        .with_input(input_as_bytes)
-        .with_to(contract_address)
-        .with_nonce(actual_nonce)
-        // NOTE: this should be gas price?
-        .with_max_fee_per_gas(base_fee.ok_or_else(|| anyhow::anyhow!("Base fee is required"))?)
-        // NOTE: This too
-        .with_max_priority_fee_per_gas(bribe.ok_or_else(|| anyhow::anyhow!("Priority fee (bribe) is required"))?)
-        .with_gas_limit(gas_limit.ok_or_else(|| anyhow::anyhow!("Gas limit is required"))?);
+    // Build transaction - provide all required fields to avoid filler issues
+    let tx_req = alloy::rpc::types::TransactionRequest {
+        from: Some(from_address),
+        to: Some(TxKind::Call(contract_address)),
+        value: Some(U256::ZERO),
+        input: alloy::rpc::types::TransactionInput::new(input_as_bytes),
+        nonce: Some(actual_nonce),
+        gas: Some(gas_limit.ok_or_else(|| anyhow::anyhow!("Gas limit is required"))?),
+        max_priority_fee_per_gas: Some(bribe.ok_or_else(|| anyhow::anyhow!("Priority fee (bribe) is required"))?),
+        max_fee_per_gas: Some(base_fee.ok_or_else(|| anyhow::anyhow!("Base fee is required"))?),
+        chain_id: Some(1),
+        ..Default::default()
+    };
 
-    log::debug!("TX: {:?}", tx);
+    log::debug!("TX Request built: {:?}", tx_req);
 
-    let envelope = tx.build(&wallet).await?;
-    let tx_hash = format!("{:?}", envelope.tx_hash());
+    // Create a provider with wallet to sign the transaction
+    let provider_with_wallet = ProviderBuilder::new()
+        .wallet(EthereumWallet::from(signer))
+        .on_http(http_url.clone());
 
-    log::debug!("Pending TX Hash: {}", tx_hash);
-
-    let pending = provider
-        .send_tx_envelope(envelope)
+    // Sign the transaction 
+    let signed_tx = provider_with_wallet
+        .send_transaction(tx_req)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to send transaction: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction: {}", e))?;
+
+    let tx_hash_str = signed_tx.tx_hash().to_string();
+    log::debug!("Signed TX Hash: {}", tx_hash_str);
+
+    let pending = signed_tx
         .with_timeout(Some(std::time::Duration::from_secs_f32(20_f32)));
 
     // Use tokio::time::timeout to wrap the watch() call with a timeout
@@ -102,7 +106,7 @@ pub async fn send_transaction(
     ).await {
         Ok(Ok(receipt)) => {
             log::debug!("Transaction confirmed with receipt: {:?}", receipt);
-            Ok(tx_hash)
+            Ok(tx_hash_str)
         }
         Ok(Err(e)) => {
             log::error!("Transaction failed with error: {:?}", e);
@@ -124,21 +128,21 @@ pub async fn create_input_data(
 ) -> Result<Vec<u8>> {
     alloy::sol! {
         #[derive(Debug)]
-        function flashSwap_V3_to_V2(
-            address pool0,
-            uint24 fee1,
+        function flashSwap_V2_to_V3(
+            address v2Pool,
             address tokenIn,
             address tokenOut,
             uint256 amountIn,
+            uint24 v3Fee
         ) external;
     };
 
-    let function_call = flashSwap_V3_to_V2Call {
-        pool0: target_pool,
-        fee1: fee,
+    let function_call = flashSwap_V2_to_V3Call {
+        v2Pool: target_pool,
         tokenIn: token_in,
         tokenOut: token_out,
         amountIn: amount,
+        v3Fee: fee,
     }
     .abi_encode();
 

@@ -7,6 +7,8 @@ use arbooo::common::pairs::Event;
 use alloy::primitives::{address, Address, U256};
 use alloy::providers::Provider;
 use alloy_primitives::aliases::U24;
+use alloy_primitives::TxKind;
+use alloy::rpc::types::TransactionRequest;
 use alloy_sol_types::SolCall;
 use log::{info, warn};
 use std::time::{Duration, Instant};
@@ -19,6 +21,7 @@ mod utils {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
 }
 use utils::test_env::{TestEnvironment, TestConfig};
+use utils::contract_bytecode_deployer::deploy_arbitrage_contracts;
 
 #[tokio::test]
 async fn test_complete_arbitrage_cycle() -> Result<()> {
@@ -220,16 +223,21 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
     if let Some(anvil) = &test_env.anvil_instance {
         let http_url = format!("http://127.0.0.1:{}", anvil.port);
         std::env::set_var("HTTP_URL", &http_url);
-        std::env::set_var("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-        
-        // Use the real flash swap contract deployed on mainnet
-        std::env::set_var("V3_FLASH", "0x6d83CE4bAb510B5dF6d1F8185b024b140a6Bf0be");  // Real flash contract
-        std::env::set_var("V2_FLASH", "0x6d83CE4bAb510B5dF6d1F8185b024b140a6Bf0be");  // Real flash contract
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        std::env::set_var("PRIVATE_KEY", private_key);
         
         info!("🔧 Set HTTP_URL to local Anvil: {}", http_url);
         info!("🔧 Set PRIVATE_KEY to Anvil's default test account");
-        info!("✅ Set V3_FLASH to real flash contract: 0x6d83CE4bAb510B5dF6d1F8185b024b140a6Bf0be");
-        info!("✅ Set V2_FLASH to real flash contract: 0x6d83CE4bAb510B5dF6d1F8185b024b140a6Bf0be");
+        
+        // Deploy arbitrage contracts to Anvil
+        info!("🚀 Deploying V2FlashToV3Swap contracts to Anvil...");
+        let (v3_contract, v2_contract) = deploy_arbitrage_contracts(&http_url, private_key).await?;
+        
+        std::env::set_var("V3_FLASH", v3_contract.to_string());
+        std::env::set_var("V2_FLASH", v2_contract.to_string());
+        
+        info!("✅ Deployed V3 Flash Contract to: {}", v3_contract);
+        info!("✅ Deployed V2 Flash Contract to: {}", v2_contract);
     } else {
         return Err(anyhow::anyhow!("No Anvil instance available for transaction routing"));
     }
@@ -802,7 +810,6 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
     };
     
     let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
         .wallet(wallet)
         .on_http(anvil_url.parse().unwrap());
 
@@ -817,17 +824,20 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
     let weth_contract_addr = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     
     info!("📍 Step 1: Wrapping ETH to WETH...");
-    {
+     {
         // Define WETH deposit function using sol! macro
         alloy::sol! {
             function deposit() external payable;
         }
         
         let weth_call = depositCall {};
-        let tx = TransactionRequest::default()
-            .to(weth_contract_addr)
-            .value(amount_weth)
-            .input(Bytes::from(weth_call.abi_encode()).into());
+        let tx = alloy::rpc::types::TransactionRequest {
+            from: Some(sender_address),
+            to: Some(TxKind::Call(weth_contract_addr)),
+            value: Some(amount_weth),
+            input: alloy::rpc::types::TransactionInput::new(Bytes::from(weth_call.abi_encode())),
+            ..Default::default()
+        };
         
         match provider.send_transaction(tx).await {
             Ok(pending_tx) => {
@@ -845,7 +855,7 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
 
     // Step 2: Approve WETH to SwapRouter
     info!("📍 Step 2: Approving WETH to SwapRouter...");
-    {
+     {
         alloy::sol! {
             function approve(address spender, uint256 amount) external returns (bool);
         }
@@ -855,9 +865,12 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
             amount: amount_weth,
         };
         
-        let tx = TransactionRequest::default()
-            .to(weth)
-            .input(Bytes::from(approve_call.abi_encode()).into());
+        let tx = alloy::rpc::types::TransactionRequest {
+            from: Some(sender_address),
+            to: Some(TxKind::Call(weth)),
+            input: alloy::rpc::types::TransactionInput::new(Bytes::from(approve_call.abi_encode())),
+            ..Default::default()
+        };
         
         match provider.send_transaction(tx).await {
             Ok(pending_tx) => {
