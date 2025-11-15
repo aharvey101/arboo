@@ -15,12 +15,11 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+
 mod utils {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/mod.rs"));
 }
-use utils::test_env::TestEnvironment;
-
-use crate::integration::full_arbitrage_cycle_tests::utils::test_env::TestConfig;
+use utils::test_env::{TestEnvironment, TestConfig};
 
 #[tokio::test]
 async fn test_complete_arbitrage_cycle() -> Result<()> {
