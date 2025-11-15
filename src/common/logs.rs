@@ -9,15 +9,17 @@ use futures::StreamExt;
 use log::{debug, error, info, warn};
 use revm::primitives::keccak256;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{broadcast::Sender, mpsc};
+use tokio::sync::{broadcast::Sender, mpsc, RwLock};
 
 /// Core log processing service for arbitrage opportunity detection
 pub struct LogProcessor {
-    pairs: HashMap<Address, Event>,
-    token_pair_index: HashMap<TokenPair, Vec<Address>>,
+    pairs: Arc<RwLock<HashMap<Address, Event>>>,
+    token_pair_index: Arc<RwLock<HashMap<TokenPair, Vec<Address>>>>,
     event_sender: Sender<LogEvent>,
     // Add queue for better performance and backpressure handling
     event_queue_tx: mpsc::Sender<LogEvent>,
+    // Add provider for dynamic pool discovery
+    provider: Arc<RootProvider<PubSubFrontend>>,
 }
 
 /// Represents a token pair for efficient indexing
@@ -49,6 +51,7 @@ impl LogProcessor {
     pub fn new(
         pairs: HashMap<Address, Event>,
         event_sender: Sender<LogEvent>,
+        provider: Arc<RootProvider<PubSubFrontend>>,
     ) -> (Self, mpsc::Receiver<LogEvent>) {
         let token_pair_index = Self::build_token_pair_index(&pairs);
 
@@ -61,12 +64,14 @@ impl LogProcessor {
             token_pair_index.len()
         );
         info!("Event queue initialized with capacity: 2000");
+        info!("Dynamic pool discovery enabled");
 
         let processor = Self {
-            pairs,
-            token_pair_index,
+            pairs: Arc::new(RwLock::new(pairs)),
+            token_pair_index: Arc::new(RwLock::new(token_pair_index)),
             event_sender,
             event_queue_tx,
+            provider,
         };
 
         (processor, event_queue_rx)
@@ -93,28 +98,56 @@ impl LogProcessor {
     }
 
     /// Process a single log event and attempt to create arbitrage opportunities
-    pub fn process_log(&self, log: &Log) -> Option<LogEvent> {
+    pub async fn process_log(&self, log: &Log) -> Option<LogEvent> {
         let pool_address = log.address();
         
         // Check if pool exists in our cache
-        if !self.pairs.contains_key(&pool_address) {
-            debug!("Log from unknown pool: {:?}", pool_address);
-            return None;
+        let pairs_guard = self.pairs.read().await;
+        if !pairs_guard.contains_key(&pool_address) {
+            drop(pairs_guard); // Release read lock before attempting discovery
+            debug!("Log from unknown pool: {:?}, attempting dynamic discovery", pool_address);
+            
+            // Try to discover the pool dynamically
+            if let Some(event) = self.discover_pool_from_logs(pool_address).await {
+                // Add discovered pool to cache
+                let mut pairs_mut = self.pairs.write().await;
+                pairs_mut.insert(pool_address, event.clone());
+                drop(pairs_mut);
+                
+                // Update token pair index
+                let token_pair = match &event {
+                    Event::PairCreated(pair) => TokenPair::new(pair.token0, pair.token1),
+                    Event::PoolCreated(pool) => TokenPair::new(pool.token0, pool.token1),
+                };
+                let mut index = self.token_pair_index.write().await;
+                index
+                    .entry(token_pair)
+                    .or_insert_with(Vec::new)
+                    .push(pool_address);
+                info!("✨ Dynamically discovered and cached pool: {:?}", pool_address);
+                
+                // Continue processing with the newly discovered pool
+            } else {
+                debug!("Failed to discover pool: {:?}", pool_address);
+                return None;
+            }
         }
         
         // Look up the pool that generated this log
-        let source_event = self.pairs.get(&pool_address)?;
+        let pairs_guard = self.pairs.read().await;
+        let source_event = pairs_guard.get(&pool_address)?.clone();
+        drop(pairs_guard);
         debug!("Processing swap log from known pool: {:?}", pool_address);
 
         // Now that we know this pool exists, find potential arbitrage with the other version
         match source_event {
-            Event::PairCreated(v2_pool) => self.find_arbitrage_for_v2_pool(v2_pool, pool_address),
-            Event::PoolCreated(v3_pool) => self.find_arbitrage_for_v3_pool(v3_pool, pool_address),
+            Event::PairCreated(v2_pool) => self.find_arbitrage_for_v2_pool(&v2_pool, pool_address).await,
+            Event::PoolCreated(v3_pool) => self.find_arbitrage_for_v3_pool(&v3_pool, pool_address).await,
         }
     }
 
     /// Find V3 counterpart for a V2 pool to create arbitrage opportunity
-    fn find_arbitrage_for_v2_pool(
+    async fn find_arbitrage_for_v2_pool(
         &self,
         v2_pool: &super::pairs::V2PoolCreated,
         pool_address: Address,
@@ -122,14 +155,19 @@ impl LogProcessor {
         let token_pair = TokenPair::new(v2_pool.token0, v2_pool.token1);
 
         // Find all pools with the same token pair
-        let matching_pools = self.token_pair_index.get(&token_pair)?;
+        let index_guard = self.token_pair_index.read().await;
+        let matching_pools = index_guard.get(&token_pair)?;
         // Look for a V3 pool among the matching pools
         for &candidate_address in matching_pools {
             if candidate_address == pool_address {
                 continue; // Skip self
             }
 
-            if let Some(Event::PoolCreated(v3_pool)) = self.pairs.get(&candidate_address) {
+            let pairs_guard = self.pairs.read().await;
+            if let Some(Event::PoolCreated(v3_pool)) = pairs_guard.get(&candidate_address) {
+                let v3_pool = v3_pool.clone();
+                drop(pairs_guard);
+                
                 // Validate token pair consistency
                 if Self::is_valid_token_pair(v3_pool.token0, v3_pool.token1) {
                     debug!(
@@ -154,7 +192,7 @@ impl LogProcessor {
     }
 
     /// Find V2 counterpart for a V3 pool to create arbitrage opportunity
-    fn find_arbitrage_for_v3_pool(
+    async fn find_arbitrage_for_v3_pool(
         &self,
         v3_pool: &super::pairs::V3PoolCreated,
         pool_address: Address,
@@ -165,7 +203,8 @@ impl LogProcessor {
                pool_address, v3_pool.token0, v3_pool.token1);
 
         // Find all pools with the same token pair
-        let matching_pools = self.token_pair_index.get(&token_pair)?;
+        let index_guard = self.token_pair_index.read().await;
+        let matching_pools = index_guard.get(&token_pair)?;
         debug!("Found {} pools with matching token pair", matching_pools.len());
         
         // Look for a V2 pool among the matching pools
@@ -175,7 +214,11 @@ impl LogProcessor {
                 continue; // Skip self
             }
 
-            if let Some(Event::PairCreated(v2_pool)) = self.pairs.get(&candidate_address) {
+            let pairs_guard = self.pairs.read().await;
+            if let Some(Event::PairCreated(v2_pool)) = pairs_guard.get(&candidate_address) {
+                let v2_pool = v2_pool.clone();
+                drop(pairs_guard);
+                
                 debug!(
                     "Found V3->V2 arbitrage: {:?} -> {:?}",
                     pool_address, candidate_address
@@ -199,6 +242,152 @@ impl LogProcessor {
     /// Validate that token pair is valid (different tokens)
     fn is_valid_token_pair(token0: Address, token1: Address) -> bool {
         token0 != token1
+    }
+
+    /// Discover pool details from blockchain when pool is not in cache
+    /// Attempts to determine if pool is V2 or V3 and extract token pair
+    async fn discover_pool_from_logs(&self, pool_address: Address) -> Option<Event> {
+        debug!("Attempting to discover pool {} from historical logs", pool_address);
+        
+        // Get a few recent blocks to search for pool creation events
+        let current_block = match self.provider.get_block_number().await {
+            Ok(block) => block,
+            Err(e) => {
+                warn!("Failed to get current block for discovery: {}", e);
+                return None;
+            }
+        };
+        
+        // Search back up to 100 blocks for PoolCreated/PairCreated events from this address
+        let from_block = current_block.saturating_sub(100);
+        
+        // Try V3 PoolCreated event first
+        if let Ok(event) = self.try_discover_v3_pool(pool_address, from_block, current_block).await {
+            return Some(event);
+        }
+        
+        // Try V2 PairCreated event
+        if let Ok(event) = self.try_discover_v2_pool(pool_address, from_block, current_block).await {
+            return Some(event);
+        }
+        
+        debug!("Could not discover pool {} in recent blocks", pool_address);
+        None
+    }
+
+    /// Try to discover V3 pool by looking for PoolCreated events
+    async fn try_discover_v3_pool(
+        &self,
+        pool_address: Address,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Event, Box<dyn std::error::Error>> {
+        let v3_factory = crate::common::pools::UNISWAP_V3_FACTORY;
+        let pool_created_sig = keccak256("PoolCreated(address,address,uint24,int24,address)".as_bytes());
+        
+        let filter = Filter::new()
+            .address(v3_factory)
+            .event_signature(vec![pool_created_sig])
+            .from_block(from_block)
+            .to_block(to_block);
+        
+        let logs = self.provider.get_logs(&filter).await?;
+        
+        for log in logs {
+            // Check if this log contains our pool address in the data
+            let log_data = &log.inner.data.data;
+            
+            // V3 PoolCreated: (uint24 fee, int24 tickSpacing, address pool)
+            use alloy_sol_types::SolValue;
+            match <(u32, i32, Address)>::abi_decode(log_data, false) {
+                Ok((fee, _tick_spacing, discovered_pool)) => {
+                    if discovered_pool == pool_address {
+                        // Found it! Extract token addresses from topics
+                        if log.topics().len() >= 3 {
+                            use alloy::primitives::FixedBytes;
+                            
+                            if let Ok(token0_bytes) = FixedBytes::<20>::try_from(&log.topics()[1][12..32]) {
+                                if let Ok(token1_bytes) = FixedBytes::<20>::try_from(&log.topics()[2][12..32]) {
+                                    let token0 = Address::from(token0_bytes);
+                                    let token1 = Address::from(token1_bytes);
+                                    
+                                    info!("✅ Discovered V3 pool: {:?} (token0: {:?}, token1: {:?}, fee: {})",
+                                          pool_address, token0, token1, fee);
+                                    
+                                    return Ok(Event::PoolCreated(super::pairs::V3PoolCreated {
+                                        pair_address: pool_address,
+                                        token0,
+                                        token1,
+                                        fee,
+                                        tick_spacing: 0,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        
+        Err("V3 pool not found".into())
+    }
+
+    /// Try to discover V2 pair by looking for PairCreated events
+    async fn try_discover_v2_pool(
+        &self,
+        pool_address: Address,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Event, Box<dyn std::error::Error>> {
+        let v2_factory = crate::common::pools::UNISWAP_V2_FACTORY;
+        let pair_created_sig = keccak256("PairCreated(address,address,address,uint256)".as_bytes());
+        
+        let filter = Filter::new()
+            .address(v2_factory)
+            .event_signature(vec![pair_created_sig])
+            .from_block(from_block)
+            .to_block(to_block);
+        
+        let logs = self.provider.get_logs(&filter).await?;
+        
+        for log in logs {
+            // Check if this log contains our pool address
+            let log_data = log.inner.data.data.to_vec();
+            
+            // V2 PairCreated: (address pair, uint idx)
+            use alloy_sol_types::SolValue;
+            match <(Address, u32)>::abi_decode(&log_data, false) {
+                Ok((discovered_pair, _idx)) => {
+                    if discovered_pair == pool_address {
+                        // Found it! Extract token addresses from topics
+                        if log.topics().len() >= 3 {
+                            use alloy::primitives::FixedBytes;
+                            
+                            if let Ok(token0_bytes) = FixedBytes::<20>::try_from(&log.topics()[1][12..32]) {
+                                if let Ok(token1_bytes) = FixedBytes::<20>::try_from(&log.topics()[2][12..32]) {
+                                    let token0 = Address::from(token0_bytes);
+                                    let token1 = Address::from(token1_bytes);
+                                    
+                                    info!("✅ Discovered V2 pair: {:?} (token0: {:?}, token1: {:?})",
+                                          pool_address, token0, token1);
+                                    
+                                    return Ok(Event::PairCreated(super::pairs::V2PoolCreated {
+                                        pair_address: pool_address,
+                                        token0,
+                                        token1,
+                                        fee: 3000, // V2 default fee
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        
+        Err("V2 pair not found".into())
     }
 
     /// Send a log event using the queue for better reliability
@@ -232,11 +421,14 @@ pub async fn get_logs(
 ) {
     info!("Starting log subscription service...");
 
-    let (processor, mut event_queue_rx) = LogProcessor::new(pairs, event_sender.clone());
+    let (processor, mut event_queue_rx) = LogProcessor::new(pairs, event_sender.clone(), client.clone());
 
     // Spawn queue processor task to handle events from queue to broadcast
     let sender_clone = event_sender.clone();
     let cancellation_token_clone = cancellation_token.clone();
+    let processor = Arc::new(processor);
+    let processor_for_stream = processor.clone();
+    
     tokio::spawn(async move {
         let mut processed_count = 0u64;
         let mut dropped_count = 0u64;
@@ -296,7 +488,7 @@ pub async fn get_logs(
     info!("Log subscription established, processing incoming events...");
 
     // Process incoming log stream
-    process_log_stream(stream, processor, cancellation_token).await;
+    process_log_stream(stream, processor_for_stream, cancellation_token).await;
 }
 
 /// Create a filter for V2 and V3 Swap events starting from a specific block
@@ -339,7 +531,7 @@ async fn subscribe_to_logs(
 /// Enhanced log processing loop with batching for high-frequency scenarios
 async fn process_log_stream<S>(
     mut stream: S,
-    processor: LogProcessor,
+    processor: Arc<LogProcessor>,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) where
     S: futures::Stream<Item = Log> + Unpin,
@@ -354,7 +546,7 @@ async fn process_log_stream<S>(
                 processed_count += 1;
                 info!("📥 Received log #{} from address: {:?}", processed_count, log.address());
                 // Process the log and potentially create an arbitrage opportunity
-                if let Some(log_event) = processor.process_log(&log) {
+                if let Some(log_event) = processor.process_log(&log).await {
                     opportunity_count += 1;
 
                     info!("Arbitrage opportunity detected #{}: V{} pool {:?} -> V{} counterpart {:?}",
