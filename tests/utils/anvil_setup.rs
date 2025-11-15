@@ -31,8 +31,8 @@ impl Default for AnvilConfig {
         Self {
             fork_url: std::env::var("MAINNET_RPC_URL").ok(),
             chain_id: 1,
-            accounts: 10,
-            balance: 10000,
+            accounts: 2,
+            balance: 1000,
         }
     }
 }
@@ -57,7 +57,7 @@ impl AnvilInstance {
             .arg(config.accounts.to_string())
             .arg("--balance")
             .arg(config.balance.to_string())
-            .arg("--silent")
+            // Removed --silent to see Anvil logs for debugging
             .arg("--host")
             .arg("127.0.0.1");
 
@@ -112,7 +112,7 @@ impl AnvilInstance {
         sleep(Duration::from_millis(2000)).await;
 
         let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 240; // Increased from 60 to 120 seconds for remote fork initialization
+        const MAX_ATTEMPTS: u32 = 60; // 30 seconds max wait for Anvil to be ready
         const DELAY_MS: u64 = 500;
 
         while attempts < MAX_ATTEMPTS {
@@ -337,13 +337,23 @@ pub async fn create_mainnet_fork(block_number: Option<u64>) -> Result<AnvilInsta
 pub async fn get_latest_mainnet_block() -> Result<u64> {
     use alloy::providers::{Provider, ProviderBuilder};
 
-    let rpc_url =
-        std::env::var("MAINNET_RPC_URL").unwrap_or_else(|_| "http://192.168.0.14:8545".to_string());
+    // Try to use MAINNET_RPC_URL if set, otherwise fall back to a public RPC
+    let rpc_url = std::env::var("MAINNET_RPC_URL").unwrap_or_else(|_| {
+        // Use Ankr's public RPC endpoint as fallback
+        "https://rpc.ankr.com/eth".to_string()
+    });
 
     info!("🔍 Getting latest block from: {}", rpc_url);
 
-    let provider = ProviderBuilder::new().on_http(rpc_url.parse().unwrap());
-    let latest_block = provider.get_block_number().await?;
+    let provider = ProviderBuilder::new().on_http(rpc_url.parse()?);
+    
+    // Add a timeout to prevent hanging indefinitely
+    let latest_block = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        provider.get_block_number()
+    ).await
+    .map_err(|_| anyhow::anyhow!("Timeout getting latest mainnet block after 15 seconds"))?
+    .map_err(|e| anyhow::anyhow!("Failed to get latest mainnet block: {}", e))?;
 
     info!("📦 Latest mainnet block: {}", latest_block);
     Ok(latest_block)

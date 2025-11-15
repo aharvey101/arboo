@@ -221,12 +221,16 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
         let http_url = format!("http://127.0.0.1:{}", anvil.port);
         std::env::set_var("HTTP_URL", &http_url);
         std::env::set_var("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-        // Set mock contract addresses for local Anvil (these contracts don't actually need to exist for testing)
-        std::env::set_var("V3_FLASH", "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"); // Default Anvil test account
-        std::env::set_var("V2_FLASH", "0x70997970c51812e339d9b73b0245ad59e1ff7ac1"); // Another Anvil test account
+        
+        // Use Anvil test accounts as placeholder for flash swap contracts
+        // In a real scenario, these would be deployed flash swap contracts
+        std::env::set_var("V3_FLASH", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8");  // Anvil account 1
+        std::env::set_var("V2_FLASH", "0x3C44CdDdB6a900c5E140ccB803B4A5239F534370");  // Anvil account 2
+        
         info!("🔧 Set HTTP_URL to local Anvil: {}", http_url);
         info!("🔧 Set PRIVATE_KEY to Anvil's default test account");
-        info!("🔧 Set V3_FLASH and V2_FLASH to mock contract addresses");
+        info!("✅ Set V3_FLASH to Anvil account 1");
+        info!("✅ Set V2_FLASH to Anvil account 2");
     } else {
         return Err(anyhow::anyhow!("No Anvil instance available for transaction routing"));
     }

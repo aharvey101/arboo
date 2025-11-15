@@ -20,8 +20,8 @@ pub async fn send_transaction(
     base_fee: Option<u128>,
     bribe: Option<u128>,
     input: Vec<u8>,
-    nonce: u64,
-) -> Result<()> {
+    _nonce: u64,
+) -> Result<String> {
     let http_url = var::<&str>("HTTP_URL")
         .map_err(|e| anyhow::anyhow!("HTTP_URL environment variable not set: {}", e))?;
     let http_url = http_url.as_str();
@@ -44,22 +44,28 @@ pub async fn send_transaction(
     // Get the address from the signer instead of using a hardcoded address
     let from_address = signer.address();
 
+    // Get the actual nonce from the provider instead of using a passed-in value
+    let actual_nonce = provider
+        .get_transaction_count(from_address)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get transaction nonce: {}", e))?;
+
     log::debug!(
         "Sending transaction with parameters:\n\
-        contract_address: {}\n\
-        from_address: {}\n\
-        gas_price: {:?}\n\
-        gas_limit: {:?}\n\
-        base_fee: {:?}\n\
-        bribe: {:?}\n\
-        nonce: {}",
+         contract_address: {}\n\
+         from_address: {}\n\
+         actual_nonce: {}\n\
+         gas_price: {:?}\n\
+         gas_limit: {:?}\n\
+         base_fee: {:?}\n\
+         bribe: {:?}",
         contract_address,
         from_address,
+        actual_nonce,
         gas_price,
         gas_limit,
         base_fee,
-        bribe.unwrap_or(0),
-        nonce
+        bribe.unwrap_or(0)
     );
     //NOTE:  gas limit should be the amount of gas that was simulated for hte transaction to have taken up
 
@@ -69,7 +75,7 @@ pub async fn send_transaction(
         .with_value(U256::ZERO)
         .with_input(input_as_bytes)
         .with_to(contract_address)
-        .with_nonce(nonce)
+        .with_nonce(actual_nonce)
         // NOTE: this should be gas price?
         .with_max_fee_per_gas(base_fee.ok_or_else(|| anyhow::anyhow!("Base fee is required"))?)
         // NOTE: This too
@@ -79,8 +85,9 @@ pub async fn send_transaction(
     log::debug!("TX: {:?}", tx);
 
     let envelope = tx.build(&wallet).await?;
+    let tx_hash = format!("{:?}", envelope.tx_hash());
 
-    log::debug!("Pending TX Hash: {:?}", envelope.tx_hash());
+    log::debug!("Pending TX Hash: {}", tx_hash);
 
     let pending = provider
         .send_tx_envelope(envelope)
@@ -95,7 +102,7 @@ pub async fn send_transaction(
     ).await {
         Ok(Ok(receipt)) => {
             log::debug!("Transaction confirmed with receipt: {:?}", receipt);
-            Ok(())
+            Ok(tx_hash)
         }
         Ok(Err(e)) => {
             log::error!("Transaction failed with error: {:?}", e);

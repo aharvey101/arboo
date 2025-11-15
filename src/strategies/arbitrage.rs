@@ -594,17 +594,18 @@ impl UniswapArbitrageStrategy {
         )
         .await
         {
-            Ok(()) => {
+            Ok(tx_hash) => {
                 let profit = U256::from(500_000u128); // Mock profit for successful execution
 
                 info!("🎉 Arbitrage transaction executed successfully!");
                 info!("💰 Estimated profit: {} wei", profit);
+                info!("📝 Transaction hash: {}", tx_hash);
 
                 Ok(ExecutionResult {
                     success: true,
                     profit,
                     gas_used: U256::from(350_000), // Realistic gas usage
-                    tx_hash: Some(format!("0x{:064x}", context.block_number)), // Mock tx hash
+                    tx_hash: Some(tx_hash), // Use actual tx hash from send_transaction
                     error: None,
                 })
             }
