@@ -157,73 +157,73 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
     info!("  📊 Profitable simulations: {}/{}", profitable_simulations, simulation_results.len());
     info!("  💎 Total potential profit: {} wei", total_potential_profit);
     
-    // Note: Mainnet pools may be equilibrated, so profitability isn't guaranteed
-    // The test validates the infrastructure (detection -> simulation -> execution)
-    info!("📊 Profitability check: {}/{} simulations were profitable", 
-          profitable_simulations, simulation_results.len());
-    if profitable_simulations == 0 {
-        info!("ℹ️  No profitable opportunities found (expected with equilibrated mainnet)");
+    // Assert that at least one simulation was profitable
+    assert!(profitable_simulations > 0, 
+           "❌ PROFITABILITY REQUIREMENT FAILED: No profitable simulations found! \
+            This test requires at least one simulation to show positive profit. \
+            Found: {}/{} successful simulations, but 0 were profitable.", 
+            successful_simulations, simulation_results.len());
+    
+    let avg_profit = total_potential_profit / U256::from(profitable_simulations);
+    info!("  📈 Average profit per opportunity: {} wei", avg_profit);
+    
+    // Assert minimum profitability thresholds
+    assert!(total_potential_profit > U256::ZERO, 
+           "❌ PROFITABILITY FAILED: Total potential profit is zero");
+    
+    // Ensure profits are realistic (not absurdly high)
+    let max_reasonable_profit = U256::from(100_000_000_000_000_000_000u128); // 100 ETH
+    assert!(total_potential_profit <= max_reasonable_profit,
+           "❌ PROFITABILITY FAILED: Total profit {} exceeds reasonable maximum {}", 
+           total_potential_profit, max_reasonable_profit);
+    
+    // Check that individual profits are above dust levels
+    for (i, result) in simulation_results.iter().enumerate() {
+        if result.success && result.profit > U256::ZERO {
+            let min_dust_threshold = U256::from(1000u64); // 1000 wei minimum
+            assert!(result.profit >= min_dust_threshold,
+                   "❌ PROFITABILITY FAILED: Simulation {} profit {} below dust threshold {}", 
+                   i + 1, result.profit, min_dust_threshold);
+        }
     }
     
-    if profitable_simulations > 0 {
-        let avg_profit = total_potential_profit / U256::from(profitable_simulations);
-        info!("  📈 Average profit per opportunity: {} wei", avg_profit);
-        
-        // Assert minimum profitability thresholds
-        assert!(total_potential_profit > U256::ZERO, 
-               "❌ PROFITABILITY FAILED: Total potential profit is zero");
-        
-        // Ensure profits are realistic (not absurdly high)
-        let max_reasonable_profit = U256::from(100_000_000_000_000_000_000u128); // 100 ETH
-        assert!(total_potential_profit <= max_reasonable_profit,
-               "❌ PROFITABILITY FAILED: Total profit {} exceeds reasonable maximum {}", 
-               total_potential_profit, max_reasonable_profit);
-        
-        // Check that individual profits are above dust levels
-        for (i, result) in simulation_results.iter().enumerate() {
-            if result.success && result.profit > U256::ZERO {
-                let min_dust_threshold = U256::from(1000u64); // 1000 wei minimum
-                assert!(result.profit >= min_dust_threshold,
-                       "❌ PROFITABILITY FAILED: Simulation {} profit {} below dust threshold {}", 
-                       i + 1, result.profit, min_dust_threshold);
-            }
-        }
-        
-        info!("✅ PROFITABILITY ASSERTIONS PASSED: Realistic profit levels detected");
-    }
+    info!("✅ PROFITABILITY ASSERTIONS PASSED: {}/{} simulations were profitable with realistic profit levels", 
+          profitable_simulations, simulation_results.len());
 
     info!("🚀 PHASE 3: Executing profitable opportunities...");
     let mut execution_results = Vec::new();
     let mut successful_transactions = Vec::new();
 
-    // Only execute if we have profitable opportunities
-    if !profitable_opportunities.is_empty() {
-        // 🔧 Set environment variables to route transactions to local Anvil fork
-        if let Some(anvil) = &test_env.anvil_instance {
-            let http_url = format!("http://127.0.0.1:{}", anvil.port);
-            std::env::set_var("HTTP_URL", &http_url);
-            let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-            std::env::set_var("PRIVATE_KEY", private_key);
-            
-            info!("🔧 Set HTTP_URL to local Anvil: {}", http_url);
-            info!("🔧 Set PRIVATE_KEY to Anvil's default test account");
-            
-            // Deploy arbitrage contracts to Anvil
-            info!("🚀 Deploying V2FlashToV3Swap contracts to Anvil...");
-            let (v3_contract, v2_contract) = deploy_arbitrage_contracts(&http_url, private_key).await?;
-            
-            std::env::set_var("V3_FLASH", v3_contract.to_string());
-            std::env::set_var("V2_FLASH", v2_contract.to_string());
-            
-            info!("✅ Deployed V3 Flash Contract to: {}", v3_contract);
-            info!("✅ Deployed V2 Flash Contract to: {}", v2_contract);
-        } else {
-            return Err(anyhow::anyhow!("No Anvil instance available for transaction routing"));
-        }
+    // We require profitable opportunities, so execute them
+    assert!(!profitable_opportunities.is_empty(), 
+           "❌ EXECUTION SETUP FAILED: No profitable opportunities to execute after profitability requirement passed");
+    
+    // 🔧 Set environment variables to route transactions to local Anvil fork
+    if let Some(anvil) = &test_env.anvil_instance {
+        let http_url = format!("http://127.0.0.1:{}", anvil.port);
+        std::env::set_var("HTTP_URL", &http_url);
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        std::env::set_var("PRIVATE_KEY", private_key);
         
-        info!("💰 Executing {} profitable opportunities...", profitable_opportunities.len());
+        info!("🔧 Set HTTP_URL to local Anvil: {}", http_url);
+        info!("🔧 Set PRIVATE_KEY to Anvil's default test account");
         
-        for (i, (opportunity, _sim_result)) in profitable_opportunities.iter().enumerate() {
+        // Deploy arbitrage contracts to Anvil
+        info!("🚀 Deploying V2FlashToV3Swap contracts to Anvil...");
+        let (v3_contract, v2_contract) = deploy_arbitrage_contracts(&http_url, private_key).await?;
+        
+        std::env::set_var("V3_FLASH", v3_contract.to_string());
+        std::env::set_var("V2_FLASH", v2_contract.to_string());
+        
+        info!("✅ Deployed V3 Flash Contract to: {}", v3_contract);
+        info!("✅ Deployed V2 Flash Contract to: {}", v2_contract);
+    } else {
+        return Err(anyhow::anyhow!("No Anvil instance available for transaction routing"));
+    }
+    
+    info!("💰 Executing {} profitable opportunities...", profitable_opportunities.len());
+    
+    for (i, (opportunity, _sim_result)) in profitable_opportunities.iter().enumerate() {
         info!("💰 Executing profitable opportunity {}/{}", i + 1, profitable_opportunities.len());
 
         let execution_start = Instant::now();
@@ -285,53 +285,30 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
             }
         }
     }
-    } else {
-        info!("ℹ️  No profitable opportunities to execute");
-    }
 
     let total_cycle_time = start_time.elapsed();
     info!("⏱️  COMPLETE ARBITRAGE CYCLE took: {:?}", total_cycle_time);
 
     info!("🧪 FINAL E2E ASSERTIONS:");
 
-    // BRANCH 1: INFRASTRUCTURE VALIDATION (always required)
     assert!(!opportunities.is_empty(), 
            "❌ DETECTION FAILED: No opportunities detected");
     assert!(!simulation_results.is_empty(), 
            "❌ SIMULATION FAILED: No simulations performed");
+    
+    // Execution is required - we asserted profitable opportunities exist above
+    let execution_attempts = execution_results.len();
+    assert!(execution_attempts > 0, 
+           "❌ CRITICAL FAILURE: No execution attempts made!");
+
     assert!(total_cycle_time < Duration::from_secs(60), 
            "❌ PERFORMANCE FAILED: Total cycle took too long: {:?}", total_cycle_time);
-    info!("✅ INFRASTRUCTURE VALIDATION PASSED: Detection → Simulation pipeline works");
 
-    // BRANCH 2: EXECUTION VALIDATION (conditional on profitability)
-    let execution_attempts = execution_results.len();
     let valid_executions = execution_results.iter()
         .filter(|r| r.tx_hash.is_some() || r.error.is_some())
         .count();
-    
-    if !profitable_opportunities.is_empty() {
-        // Profitability branch: all profitable opportunities MUST be executed
-        assert!(execution_attempts > 0, 
-               "❌ CRITICAL FAILURE: {}/{} profitable opportunities found but no execution attempts made!", 
-               profitable_opportunities.len(), opportunities.len());
-        
-        assert!(valid_executions > 0, 
-               "❌ EXECUTION QUALITY FAILED: No valid execution attempts (no tx_hash or error)");
-        
-        assert!(!successful_transactions.is_empty(),
-               "❌ EXECUTION FAILED: No successful transactions from {} execution attempts",
-               execution_attempts);
-        
-        info!("✅ PROFITABILITY BRANCH: {}/{} opportunities executed successfully", 
-              successful_transactions.len(), execution_attempts);
-    } else {
-        // Non-profitability branch: no executions needed, infrastructure still validated
-        assert_eq!(execution_attempts, 0,
-                  "❌ UNEXPECTED EXECUTION: No profitable opportunities but {} executions were attempted",
-                  execution_attempts);
-        
-        info!("✅ NON-PROFITABILITY BRANCH: No profitable opportunities found (infrastructure validated, no execution needed)");
-    }
+    assert!(valid_executions > 0, 
+           "❌ EXECUTION QUALITY FAILED: No valid execution attempts (no tx_hash or error)");
 
     // 💰 FINAL PROFITABILITY VERIFICATION
     info!("💰 FINAL PROFITABILITY VERIFICATION:");
@@ -410,48 +387,46 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
     info!("  📊 Balance change: {} wei ({:.4} WETH)", 
           balance_change, change_weth);
     
-     if !successful_transactions.is_empty() {
-        // For a real E2E test, we should verify the wallet increased in WETH value
-        // This means arbitrage profit exceeded gas costs
-        let gas_spent = if initial_weth_balance > final_weth_balance {
-            initial_weth_balance - final_weth_balance
-        } else {
-            U256::ZERO
-        };
-        
-        info!("💰 ARBITRAGE PROFIT ANALYSIS:");
-        info!("  Initial balance: {} wei ({:.4} WETH)", initial_weth_balance, initial_balance_weth);
-        info!("  Final balance: {} wei ({:.4} WETH)", final_weth_balance, final_balance_weth);
-        info!("  Gas spent: {} wei ({:.6} WETH)", gas_spent, gas_spent.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
-        
-        // CRITICAL ASSERTION: Wallet WETH must increase for profitable arbitrage
-        // In a real E2E scenario, arbitrage should generate profit > gas costs
-        assert!(
-            final_weth_balance >= initial_weth_balance,
-            "❌ E2E ARBITRAGE PROFITABILITY FAILED: Wallet WETH balance MUST NOT DECREASE after successful arbitrage execution. \
-             Expected final balance {} >= initial balance {}. \
-             This indicates arbitrage execution did not generate sufficient profit to cover gas costs.",
-            final_weth_balance, initial_weth_balance
-        );
-        
-        let profit = if final_weth_balance > initial_weth_balance {
-            final_weth_balance - initial_weth_balance
-        } else {
-            U256::ZERO
-        };
-        let profit_weth = profit.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
-        
-        info!("✅ ARBITRAGE PROFITABILITY VERIFIED:");
-        info!("  💵 Net profit: {} wei ({:.6} WETH)", profit, profit_weth);
-        info!("  📈 Transactions executed: {}", successful_transactions.len());
-        if !successful_transactions.is_empty() {
-            info!("  🎯 Profit per transaction: {} wei ({:.6} WETH)", 
-                  profit / U256::from(successful_transactions.len() as u64),
-                  profit_weth / successful_transactions.len() as f64);
-        }
-    } else {
-        info!("ℹ️  No successful transactions executed, skipping WETH balance verification");
-    }
+     // We executed successful transactions above, so verify wallet balance increased
+     assert!(!successful_transactions.is_empty(), 
+            "❌ WALLET VERIFICATION FAILED: No successful transactions executed");
+     
+     // For a real E2E test, we must verify the wallet increased in WETH value
+     // This means arbitrage profit exceeded gas costs
+     let gas_spent = if initial_weth_balance > final_weth_balance {
+         initial_weth_balance - final_weth_balance
+     } else {
+         U256::ZERO
+     };
+     
+     info!("💰 ARBITRAGE PROFIT ANALYSIS:");
+     info!("  Initial balance: {} wei ({:.4} WETH)", initial_weth_balance, initial_balance_weth);
+     info!("  Final balance: {} wei ({:.4} WETH)", final_weth_balance, final_balance_weth);
+     info!("  Gas spent: {} wei ({:.6} WETH)", gas_spent, gas_spent.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
+     
+     // CRITICAL ASSERTION: Wallet WETH must increase for profitable arbitrage
+     // In a real E2E scenario, arbitrage should generate profit > gas costs
+     assert!(
+         final_weth_balance >= initial_weth_balance,
+         "❌ E2E ARBITRAGE PROFITABILITY FAILED: Wallet WETH balance MUST NOT DECREASE after successful arbitrage execution. \
+          Expected final balance {} >= initial balance {}. \
+          This indicates arbitrage execution did not generate sufficient profit to cover gas costs.",
+         final_weth_balance, initial_weth_balance
+     );
+     
+     let profit = if final_weth_balance > initial_weth_balance {
+         final_weth_balance - initial_weth_balance
+     } else {
+         U256::ZERO
+     };
+     let profit_weth = profit.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+     
+     info!("✅ ARBITRAGE PROFITABILITY VERIFIED:");
+     info!("  💵 Net profit: {} wei ({:.6} WETH)", profit, profit_weth);
+     info!("  📈 Transactions executed: {}", successful_transactions.len());
+     info!("  🎯 Profit per transaction: {} wei ({:.6} WETH)", 
+           profit / U256::from(successful_transactions.len() as u64),
+           profit_weth / successful_transactions.len() as f64);
 
     info!("🎉 COMPLETE ARBITRAGE CYCLE TEST PASSED!");
     Ok(())
@@ -776,7 +751,7 @@ async fn setup_arbitrage_pools_on_anvil(test_env: &TestEnvironment) -> Result<(A
 
     // Real mainnet pool addresses for USDC/WETH
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let usdc_address = address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2");
+    let usdc_address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // Real USDC address
 
     // Real Uniswap V3 USDC/WETH pool (0.3% fee)
     let pool_a_address = address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
@@ -817,7 +792,7 @@ async fn setup_arbitrage_pools_on_anvil(test_env: &TestEnvironment) -> Result<(A
 
 async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &AnvilPoolSetup) -> Result<()> {
     use alloy::signers::local::PrivateKeySigner;
-    use alloy::network::EthereumWallet;
+    use alloy::network::{EthereumWallet, TransactionBuilder};
     use alloy::providers::ProviderBuilder;
     use alloy::rpc::types::TransactionRequest;
     use alloy::primitives::Bytes;
@@ -837,34 +812,32 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
     };
     
     let provider = ProviderBuilder::new()
-        .wallet(wallet)
         .on_http(anvil_url.parse().unwrap());
-
-    let weth = pool_setup.weth_address;
-    let _usdc = pool_setup.token_a_address;
-    let _swap_router_addr = address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45");
-    let amount_weth = U256::from(50_000_000_000_000_000_000u128); // 50 WETH
 
     info!("🔄 Performing WETH -> USDC swap on V3 to create price impact...");
     
-    // Step 1: Wrap ETH to WETH using sol! macro
-    let weth_contract_addr = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    
     info!("📍 Step 1: Wrapping ETH to WETH...");
-     {
+    {
         // Define WETH deposit function using sol! macro
         alloy::sol! {
             function deposit() external payable;
         }
         
         let weth_call = depositCall {};
-        let tx = alloy::rpc::types::TransactionRequest {
-            from: Some(sender_address),
-            to: Some(TxKind::Call(weth_contract_addr)),
-            value: Some(amount_weth),
-            input: alloy::rpc::types::TransactionInput::new(Bytes::from(weth_call.abi_encode())),
-            ..Default::default()
-        };
+        
+        // Get gas price and other params - use defaults if queries fail
+        let nonce = provider.get_transaction_count(sender_address).await.unwrap_or(0u64);
+        let gas_price = 20_000_000_000u128; // Default 20 gwei
+        let gas_limit = 100_000u64;
+        
+        let tx = TransactionRequest::default()
+            .with_from(sender_address)
+            .with_to(pool_setup.weth_address)
+            .with_value(U256::from(50_000_000_000_000_000_000u128))
+            .with_input(Bytes::from(weth_call.abi_encode()))
+            .with_nonce(nonce)
+            .with_gas_limit(gas_limit)
+            .with_max_fee_per_gas(gas_price);
         
         match provider.send_transaction(tx).await {
             Ok(pending_tx) => {
@@ -882,22 +855,28 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
 
     // Step 2: Approve WETH to SwapRouter
     info!("📍 Step 2: Approving WETH to SwapRouter...");
-     {
+    {
         alloy::sol! {
             function approve(address spender, uint256 amount) external returns (bool);
         }
         
         let approve_call = approveCall {
             spender: address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
-            amount: amount_weth,
+            amount: U256::MAX,
         };
         
-        let tx = alloy::rpc::types::TransactionRequest {
-            from: Some(sender_address),
-            to: Some(TxKind::Call(weth)),
-            input: alloy::rpc::types::TransactionInput::new(Bytes::from(approve_call.abi_encode())),
-            ..Default::default()
-        };
+        // Get gas price and other params - use defaults if queries fail
+        let nonce = provider.get_transaction_count(sender_address).await.unwrap_or(0u64);
+        let gas_price = 20_000_000_000u128; // Default 20 gwei
+        let gas_limit = 100_000u64;
+        
+        let tx = TransactionRequest::default()
+            .with_from(sender_address)
+            .with_to(pool_setup.weth_address)
+            .with_input(Bytes::from(approve_call.abi_encode()))
+            .with_nonce(nonce)
+            .with_gas_limit(gas_limit)
+            .with_max_fee_per_gas(gas_price);
         
         match provider.send_transaction(tx).await {
             Ok(pending_tx) => {
@@ -912,7 +891,7 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
             Err(e) => info!("⚠️  Approval failed: {}", e),
         }
     }
-
+    
     // Step 3: Execute WETH -> USDC swap on V3 to create price impact
     info!("📍 Step 3: Executing WETH -> USDC swap on V3 pool...");
     {
@@ -933,7 +912,7 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
             function exactInputSingle(ExactInputSingleParams params) external payable returns (uint256 amountOut);
         }
         
-        let swap_amount = U256::from(10_000_000_000_000_000_000u128); // 10 WETH to swap
+        let swap_amount = U256::from(100_000_000_000_000_000_000u128); // 100 WETH to swap (much larger for price impact)
         let swap_router = address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45");
         
         let swap_params = exactInputSingleCall {
@@ -948,12 +927,18 @@ async fn create_price_discrepancy(_test_env: &TestEnvironment, pool_setup: &Anvi
             },
         };
         
-        let tx = alloy::rpc::types::TransactionRequest {
-            from: Some(sender_address),
-            to: Some(TxKind::Call(swap_router)),
-            input: alloy::rpc::types::TransactionInput::new(Bytes::from(swap_params.abi_encode())),
-            ..Default::default()
-        };
+        // Get gas price and other params - use defaults if queries fail
+        let nonce = provider.get_transaction_count(sender_address).await.unwrap_or(0u64);
+        let gas_price = 20_000_000_000u128; // Default 20 gwei
+        let gas_limit = 500_000u64; // More gas for swap
+        
+        let tx = TransactionRequest::default()
+            .with_from(sender_address)
+            .with_to(swap_router)
+            .with_input(Bytes::from(swap_params.abi_encode()))
+            .with_nonce(nonce)
+            .with_gas_limit(gas_limit)
+            .with_max_fee_per_gas(gas_price);
         
         match provider.send_transaction(tx).await {
             Ok(pending_tx) => {
