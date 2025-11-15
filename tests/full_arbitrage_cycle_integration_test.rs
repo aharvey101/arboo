@@ -409,19 +409,35 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
     info!("  📊 Balance change: {} wei ({:.4} ETH)", 
           balance_change, change_eth);
     
-    if !successful_transactions.is_empty() {
-        // If we executed transactions, the balance will decrease due to gas costs
-        // In a real profitable arbitrage scenario with actual flash swaps, it would increase
-        // For testing purposes, we just verify the transaction was sent and mined
-        info!("💡 Note: Balance decreased by ~{} wei due to gas costs", 
-              initial_eth_balance - final_eth_balance);
-        info!("💡 In production with real flash swap contracts, this would show arbitrage profit");
+     if !successful_transactions.is_empty() {
+        // For a real E2E test, we should verify the wallet increased in value
+        // This means arbitrage profit exceeded gas costs
+        let gas_spent = initial_eth_balance - final_eth_balance;
         
-        // Just verify the balance changed (indicating transaction was mined)
-        assert!(initial_eth_balance != final_eth_balance || successful_transactions.len() == 0,
-               "❌ WALLET VERIFICATION: Executed transactions should change balance or block execution");
+        info!("💰 ARBITRAGE PROFIT ANALYSIS:");
+        info!("  Initial balance: {} wei ({:.4} ETH)", initial_eth_balance, initial_balance_eth);
+        info!("  Final balance: {} wei ({:.4} ETH)", final_eth_balance, final_balance_eth);
+        info!("  Gas spent: {} wei ({:.6} ETH)", gas_spent, gas_spent.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
         
-        info!("✅ WALLET BALANCE VERIFIED: Balance change = {} wei", balance_change);
+        // CRITICAL ASSERTION: Wallet must increase in value for profitable arbitrage
+        // In a real E2E scenario, arbitrage should generate profit > gas costs
+        assert!(
+            final_eth_balance > initial_eth_balance,
+            "❌ E2E ARBITRAGE PROFITABILITY FAILED: Wallet balance MUST INCREASE after successful arbitrage execution. \
+             Expected final balance {} > initial balance {}. \
+             This indicates arbitrage execution did not generate sufficient profit to cover gas costs.",
+            final_eth_balance, initial_eth_balance
+        );
+        
+        let profit = final_eth_balance - initial_eth_balance;
+        let profit_eth = profit.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+        
+        info!("✅ ARBITRAGE PROFITABILITY VERIFIED:");
+        info!("  💵 Net profit: {} wei ({:.6} ETH)", profit, profit_eth);
+        info!("  📈 Transactions executed: {}", successful_transactions.len());
+        info!("  🎯 Profit per transaction: {} wei ({:.6} ETH)", 
+              profit / U256::from(successful_transactions.len() as u64),
+              profit_eth / successful_transactions.len() as f64);
     } else {
         info!("ℹ️  No successful transactions executed, skipping balance verification");
     }
