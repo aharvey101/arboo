@@ -68,7 +68,8 @@ pub async fn send_transaction(
         actual_nonce,
         gas_price,
         gas_limit,
-        base_fee.unwrap_or(0)
+        base_fee,
+        bribe
     );
 
     // Build transaction - provide all required fields to avoid filler issues
@@ -113,16 +114,6 @@ pub async fn send_transaction(
             log::debug!("Transaction confirmed with receipt: {:?}", receipt);
             Ok(tx_hash_str)
         }
-        Ok(Err(e)) => {
-            log::error!("Transaction failed with error: {:?}", e);
-            Err(anyhow::anyhow!("Transaction execution failed: {}", e))
-        }
-        Err(_) => {
-            log::error!("Transaction confirmation timeout - no receipt received within 25 seconds");
-            Err(anyhow::anyhow!("Transaction timeout: failed to confirm within 25 seconds"))
-        }
-    }
-}
         Ok(Err(e)) => {
             log::error!("Transaction failed with error: {:?}", e);
             Err(anyhow::anyhow!("Transaction execution failed: {}", e))

@@ -61,10 +61,11 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
 
     // 💰 WALLET TRACKING: Capture initial balances before execution
     let test_wallet = address!("5f1F5565561aC146d24B102D9CDC288992Ab2938"); // Default test wallet from transaction.rs
-    let initial_eth_balance = test_env.provider.get_balance(test_wallet).await?;
-    let initial_balance_eth = initial_eth_balance.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
-    info!("💾 Initial wallet ETH balance: {} wei ({:.4} ETH)", 
-          initial_eth_balance, initial_balance_eth);
+    let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let initial_weth_balance = get_token_balance(&test_env, test_wallet, weth_address).await?;
+    let initial_balance_weth = initial_weth_balance.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+    info!("💾 Initial wallet WETH balance: {} wei ({:.4} WETH)", 
+          initial_weth_balance, initial_balance_weth);
 
     info!("🧪 PHASE 2: Simulating arbitrage opportunities with optimization...");
     let mut simulation_results = Vec::new();
@@ -367,35 +368,37 @@ async fn test_complete_arbitrage_cycle() -> Result<()> {
 
     verify_anvil_state_after_execution(&test_env, initial_block).await?;
 
-    // 💰 WALLET BALANCE VERIFICATION: Check that wallet balance increased
+    // 💰 WALLET BALANCE VERIFICATION: Check that WETH balance increased
     info!("💼 WALLET BALANCE VERIFICATION:");
-    let final_eth_balance = test_env.provider.get_balance(test_wallet).await?;
-    let final_balance_eth = final_eth_balance.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
-    info!("  💾 Final wallet ETH balance: {} wei ({:.4} ETH)", 
-          final_eth_balance, final_balance_eth);
     
-    let balance_change = if final_eth_balance > initial_eth_balance {
-        final_eth_balance - initial_eth_balance
+    // Get final WETH balance
+    let final_weth_balance = get_token_balance(&test_env, test_wallet, weth_address).await?;
+    let final_weth_balance_eth = final_weth_balance.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+    info!("  💾 Final wallet WETH balance: {} wei ({:.4} WETH)", 
+          final_weth_balance, final_weth_balance_eth);
+    
+    let balance_change = if final_weth_balance > initial_weth_balance {
+        final_weth_balance - initial_weth_balance
     } else {
         U256::ZERO
     };
     
-    let change_eth = balance_change.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
-    info!("  📊 Balance change: {} wei ({:.4} ETH)", 
-          balance_change, change_eth);
+    let change_weth = balance_change.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+    info!("  📊 Balance change: {} wei ({:.4} WETH)", 
+          balance_change, change_weth);
     
     if !successful_transactions.is_empty() {
-        // If we executed transactions, verify the wallet balance actually increased
-        assert!(final_eth_balance >= initial_eth_balance,
-               "❌ WALLET BALANCE FAILED: Wallet balance decreased! \
-                Initial: {} wei, Final: {} wei",
-               initial_eth_balance, final_eth_balance);
+        // If we executed transactions, verify the wallet WETH balance actually increased
+        assert!(final_weth_balance >= initial_weth_balance,
+               "❌ WALLET WETH BALANCE FAILED: Wallet WETH balance decreased! \
+                 Initial: {} wei, Final: {} wei",
+                initial_weth_balance, final_weth_balance);
         
         // The balance should either increase (if profitable) or stay similar (if losses cover it)
         // In a real scenario with actual profitable arbitrage, it should increase
-        info!("✅ WALLET BALANCE VERIFIED: Balance change = {} wei", balance_change);
+        info!("✅ WALLET WETH BALANCE VERIFIED: Balance change = {} wei", balance_change);
     } else {
-        info!("ℹ️  No successful transactions executed, skipping balance increase verification");
+        info!("ℹ️  No successful transactions executed, skipping WETH balance increase verification");
     }
 
     info!("🎉 COMPLETE ARBITRAGE CYCLE TEST PASSED!");
@@ -1156,5 +1159,34 @@ async fn test_strategy_manager_arbitrage_cycle() -> Result<()> {
            "❌ CORE FUNCTIONALITY FAILED: StrategyManager must be able to detect opportunities from log events");
     
     Ok(())
+}
+
+// Helper function to get ERC20 token balance
+async fn get_token_balance(
+    test_env: &TestEnvironment,
+    account: Address,
+    token_address: Address,
+) -> Result<U256> {
+    use alloy::sol;
+    use alloy_sol_types::SolCall;
+    
+    sol! {
+        interface IERC20 {
+            function balanceOf(address account) external view returns (uint256);
+        }
+    }
+    
+    let balance = test_env.provider
+        .call(
+            &IERC20::balanceOfCall { account: account.into() }
+                .abi_encode()
+                .into(),
+        )
+        .from(account.into())
+        .to(token_address.into())
+        .await?;
+    
+    let decoded = IERC20::balanceOfCall::abi_decode_returns(&balance, true)?;
+    Ok(decoded._0)
 }
 
