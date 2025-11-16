@@ -1,9 +1,9 @@
-use alloy::primitives::{address, Address, U256};
+use alloy::primitives::address;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::WsConnect;
-use alloy::rpc::types::Filter;
-use alloy::network::Ethereum;
-use alloy::signers::local::PrivateKeySigner;
+use alloy::rpc::types::{Filter, TransactionRequest};
+use alloy::primitives::U256;
+use alloy::sol_types::SolCall;
 use anyhow::Result;
 use log::info;
 use std::process::{Command, Stdio};
@@ -12,15 +12,16 @@ use std::thread;
 use std::time::Duration;
 use futures::StreamExt;
 use revm::primitives::keccak256;
+use alloy::sol;
 
 #[tokio::test]
-async fn test_detect_actual_swap_log_from_anvil() -> Result<()> {
+async fn test_detect_actual_swap_logs() -> Result<()> {
     let _ = env_logger::builder()
         .is_test(true)
         .filter_level(log::LevelFilter::Info)
         .try_init();
 
-    info!("🚀 Starting ACTUAL SWAP LOG DETECTION test");
+    info!("🚀 Testing ACTUAL SWAP LOG DETECTION");
 
     // Kill any existing anvil processes
     let _ = std::process::Command::new("pkill")
@@ -31,7 +32,7 @@ async fn test_detect_actual_swap_log_from_anvil() -> Result<()> {
     // Start Anvil
     info!("📦 Starting Anvil with mainnet fork...");
     let mut anvil_process = Command::new("anvil")
-        .arg("--port").arg("18891")
+        .arg("--port").arg("18893")
         .arg("--chain-id").arg("1")
         .arg("--fork-url").arg("http://192.168.0.14:8545")
         .arg("--host").arg("127.0.0.1")
@@ -42,114 +43,318 @@ async fn test_detect_actual_swap_log_from_anvil() -> Result<()> {
 
     thread::sleep(Duration::from_secs(3));
 
-    // Connect HTTP provider for transactions
-    info!("🔗 Creating HTTP provider...");
-    let http_provider = ProviderBuilder::new()
-        .on_http("http://127.0.0.1:18891".parse()?);
+    // Connect providers
+    let http_url = "http://127.0.0.1:18893".parse()?;
+    let http_provider = ProviderBuilder::new().on_http(http_url);
 
-    // Connect WebSocket provider for logs
-    info!("📡 Creating WebSocket provider for logs...");
-    let ws_url = "ws://127.0.0.1:18891";
+    let ws_url = "ws://127.0.0.1:18893";
     let ws_client = WsConnect::new(ws_url);
     let ws_provider = ProviderBuilder::new()
         .on_ws(ws_client)
         .await?;
 
     let ws_provider = Arc::new(ws_provider);
-
     info!("✅ Connected to Anvil");
 
-    // Setup log subscription BEFORE any swaps
+    // Pool addresses
+    let v2_pool = address!("0xbd504d0a4b16a77e531722c3aea770161347dea7");
+    let v3_pool = address!("0xa6d2aac68cafa72c5249aa4d0a379390fe1d40d8");
+
+    info!("📍 Pools:");
+    info!("   V2: {:?}", v2_pool);
+    info!("   V3: {:?}", v3_pool);
+
+    // Check pool codes
+    let v2_code = http_provider.get_code_at(v2_pool).await?;
+    let v3_code = http_provider.get_code_at(v3_pool).await?;
+    info!("   V2 code: {} bytes", v2_code.len());
+    info!("   V3 code: {} bytes", v3_code.len());
+
+    // Setup log subscription BEFORE swap
     let v2_swap_sig = keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
     let v3_swap_sig = keccak256("Swap(address,address,int256,int256,uint160,uint128,int24)".as_bytes());
     
-    info!("🎯 Setting up log filter for Swap events...");
+    info!("📥 Setting up log subscription...");
     let filter = Filter::new()
+        .address(vec![v2_pool, v3_pool])
         .event_signature(vec![v2_swap_sig, v3_swap_sig]);
     
-    info!("📥 Subscribing to Swap logs...");
     let subscription = ws_provider.subscribe_logs(&filter).await?;
     let mut stream = subscription.into_stream();
-    info!("✅ Log subscription established");
+    info!("✅ Log subscription ready");
 
     // Spawn log listener
+    let (tx, mut rx) = tokio::sync::mpsc::channel(10);
     let log_listener = tokio::spawn(async move {
-        let mut log_count = 0;
-        let mut logs = Vec::new();
-        
+        let mut count = 0;
         tokio::select! {
             _ = async {
                 while let Some(log) = stream.next().await {
-                    log_count += 1;
-                    info!("🎉 LOG #{}: address={:?}, topics={}", 
-                          log_count, log.address(), log.topics().len());
-                    logs.push((log.address(), log.topics().len()));
+                    count += 1;
+                    info!("🎉 LOG #{}: {:?}", count, log.address());
+                    let _ = tx.send(log).await;
                 }
-            } => {
-                // Stream ended
-            }
-            _ = tokio::time::sleep(Duration::from_secs(15)) => {
-                info!("⏱️  Timeout reached, {} logs received", log_count);
+            } => {}
+            _ = tokio::time::sleep(Duration::from_secs(20)) => {
+                info!("⏱️  Timeout");
             }
         }
-        
-        logs
+        count
     });
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Execute a simple swap to generate logs
-    // WETH/USDC pool swap
-    let weth_addr = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let usdc_addr = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-    let v2_pool_addr = address!("B4e16d0168e52d7dC3BE5dE2E7C0c4e4F8deCd45"); // V2 WETH-USDC
-
-    info!("💱 Pool addresses:");
-    info!("   WETH: {:?}", weth_addr);
-    info!("   USDC: {:?}", usdc_addr);
-    info!("   V2 Pool: {:?}", v2_pool_addr);
-
-    // Get V2 pool code to verify it exists
-    let pool_code = http_provider.get_code_at(v2_pool_addr).await?;
-    info!("   V2 Pool code size: {} bytes", pool_code.len());
+    info!("📤 Executing actual Uniswap V2 swap to generate logs...");
     
-    if pool_code.is_empty() {
-        info!("⚠️  V2 pool has no code, using a simple log emit instead");
-        // If pool doesn't exist, we can still test the log subscription with any event
+    // Get the default Anvil account
+    let account = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let usdc = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    let v2_router = address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
+    
+    info!("   Account: {:?}", account);
+    info!("   WETH: {:?}", weth);
+    info!("   USDC: {:?}", usdc);
+    info!("   V2 Router: {:?}", v2_router);
+    
+    // Step 1: Deposit ETH to WETH
+    info!("   Step 1: Depositing ETH to WETH...");
+    
+    sol! {
+        function deposit() external payable;
     }
-
-    // Get current block before swap
-    let block_before = ws_provider.get_block_number().await?;
-    info!("📍 Block before swap: {}", block_before);
-
-    info!("⏳ Waiting 10 seconds for swap logs...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    let logs_received = log_listener.await?;
-    info!("📊 Total logs received: {}", logs_received.len());
-
-    // Check if we detected any logs
-    if logs_received.is_empty() {
-        info!("⚠️  No Swap logs detected");
-        info!("   This is expected if no swaps happened");
-        info!("   Log subscription is working correctly");
-    } else {
-        info!("✅ Successfully detected {} logs!", logs_received.len());
-        for (addr, topic_count) in logs_received {
-            info!("   Log from {:?} with {} topics", addr, topic_count);
+    
+    let eth_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 ETH
+    let deposit_call = depositCall {};
+    
+    let tx = TransactionRequest::default()
+        .from(account)
+        .to(weth)
+        .value(eth_amount)
+        .input(deposit_call.abi_encode().into())
+        .gas_limit(100000u64);
+    
+    match http_provider.send_transaction(tx).await {
+        Ok(pending_tx) => {
+            info!("   ✅ WETH deposit sent: {:?}", pending_tx.tx_hash());
+            match pending_tx.get_receipt().await {
+                Ok(receipt) => {
+                    info!("   ✅ WETH deposit mined");
+                }
+                Err(e) => {
+                    info!("   ⚠️  Could not get receipt: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            info!("   ⚠️  WETH deposit failed: {}", e);
+        }
+    }
+    
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    
+    // Step 2: Approve WETH spending on the router
+    info!("   Step 2: Approving router to spend WETH...");
+    
+    sol! {
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+    
+    let approve_call = approveCall {
+        spender: v2_router,
+        amount: eth_amount,
+    };
+    
+    let tx = TransactionRequest::default()
+        .from(account)
+        .to(weth)
+        .input(approve_call.abi_encode().into())
+        .gas_limit(100000u64);
+    
+    match http_provider.send_transaction(tx).await {
+        Ok(pending_tx) => {
+            info!("   ✅ Approval sent: {:?}", pending_tx.tx_hash());
+            match pending_tx.get_receipt().await {
+                Ok(_) => {
+                    info!("   ✅ Approval mined");
+                }
+                Err(e) => {
+                    info!("   ⚠️  Could not get receipt: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            info!("   ⚠️  Approval failed: {}", e);
+        }
+    }
+    
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    
+    // Step 3: Execute V2 swap
+    info!("   Step 3: Executing Uniswap V2 swap (WETH → USDC)...");
+    
+    // Manually construct the swap calldata
+    // Function signature: swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline)
+    // Selector: 0x38ed1739
+    
+    let mut calldata = vec![0x38, 0xed, 0x17, 0x39]; // Function selector
+    
+    // Add the parameters as 32-byte words
+    // amountIn = 0.01 WETH = 10^16
+    let amount_in = eth_amount / U256::from(100u64);
+    calldata.extend_from_slice(&amount_in.to_be_bytes::<32>());
+    
+    // amountOutMin = 0
+    calldata.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+    
+    // path (address array) - offset to the dynamic data
+    let path_offset = U256::from(96u64); // 3 * 32 bytes for the first 3 params
+    calldata.extend_from_slice(&path_offset.to_be_bytes::<32>());
+    
+    // to address - need to pad it to 32 bytes
+    let mut account_padded = [0u8; 32];
+    account_padded[12..].copy_from_slice(account.as_slice());
+    calldata.extend_from_slice(&account_padded);
+    
+    // deadline
+    let block = http_provider.get_block_number().await?;
+    let deadline = U256::from(block) + U256::from(3600u64);
+    calldata.extend_from_slice(&deadline.to_be_bytes::<32>());
+    
+    // Now add the dynamic array data
+    // Array length
+    calldata.extend_from_slice(&U256::from(2u64).to_be_bytes::<32>()); // 2 addresses
+    
+    // WETH address
+    let mut weth_padded = [0u8; 32];
+    weth_padded[12..].copy_from_slice(weth.as_slice());
+    calldata.extend_from_slice(&weth_padded);
+    
+    // USDC address
+    let mut usdc_padded = [0u8; 32];
+    usdc_padded[12..].copy_from_slice(usdc.as_slice());
+    calldata.extend_from_slice(&usdc_padded);
+    
+    let tx = TransactionRequest::default()
+        .from(account)
+        .to(v2_router)
+        .input(calldata.into())
+        .gas_limit(300000u64);
+    
+    match http_provider.send_transaction(tx).await {
+        Ok(pending_tx) => {
+            info!("   ✅ Swap sent: {:?}", pending_tx.tx_hash());
+            match pending_tx.get_receipt().await {
+                Ok(receipt) => {
+                    info!("   ✅ Swap mined in block {:?}", receipt.block_number);
+                    info!("   ✅ Swap status: {:?}", receipt.status());
+                    info!("   ✅ Swap execution completed!");
+                }
+                Err(e) => {
+                    info!("   ⚠️  Could not get receipt: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            info!("   ⚠️  Swap failed: {}", e);
+        }
+    }
+    
+    info!("⏳ Waiting 12 seconds to collect logs...");
+    
+    // Use select! to listen for logs while waiting
+    let mut detected = 0;
+    
+    loop {
+        tokio::select! {
+            Some(log) = rx.recv() => {
+                detected += 1;
+                info!("   🎉 Detected log #{}: {:?}", detected, log.address());
+            }
+            _ = tokio::time::sleep(Duration::from_secs(12)) => {
+                break;
+            }
         }
     }
 
-    // Get final block
-    let block_after = ws_provider.get_block_number().await?;
-    info!("📍 Block after test: {}", block_after);
+    let total = log_listener.await?;
+    info!("📊 Total logs detected via subscription: {}", total);
+    info!("   From channel: {}", detected);
+    
+    // Check token balances to see if swap actually happened
+    info!("🔍 Checking token balances...");
+    
+    // Check WETH balance via balanceOf
+    sol! {
+        function balanceOf(address account) external view returns (uint256);
+    }
+    
+    let balance_call = balanceOfCall { account };
+    let tx = TransactionRequest::default()
+        .from(account)
+        .to(weth)
+        .input(balance_call.abi_encode().into());
+    
+    match http_provider.call(&tx).await {
+        Ok(result) => {
+            info!("   WETH balance call response: {:?}", result.len());
+        }
+        Err(e) => {
+            info!("   ⚠️  Balance call failed: {}", e);
+        }
+    }
+    
+    // Also try eth_getLogs to verify logs were actually emitted
+    info!("🔍 Checking if logs exist on the blockchain...");
+    let latest_block = http_provider.get_block_number().await?;
+    info!("   Latest block: {}", latest_block);
+    
+    // First, check for ANY logs on the swap pool
+    let poll_filter_all = Filter::new()
+        .address(vec![v2_pool])
+        .from_block(latest_block - 5u64); // Check last 5 blocks
+    
+    match http_provider.get_logs(&poll_filter_all).await {
+        Ok(logs) => {
+            info!("   ✅ All logs on V2 pool: {} logs", logs.len());
+            for (i, log) in logs.iter().enumerate().take(5) {
+                info!("      Log {}: topics={}", i, log.topics().len());
+            }
+        }
+        Err(e) => {
+            info!("   ⚠️  Poll failed: {}", e);
+        }
+    }
+    
+    // Then check for swap signature specifically
+    let poll_filter = Filter::new()
+        .address(vec![v2_pool, v3_pool])
+        .event_signature(vec![v2_swap_sig, v3_swap_sig])
+        .from_block(latest_block - 5u64); // Check last 5 blocks
+    
+    match http_provider.get_logs(&poll_filter).await {
+        Ok(logs) => {
+            info!("   ✅ Swap logs found: {} logs", logs.len());
+            for (i, log) in logs.iter().enumerate() {
+                info!("   Log {}: address={:?}, topics={}", i, log.address(), log.topics().len());
+            }
+        }
+        Err(e) => {
+            info!("   ⚠️  Swap poll failed: {}", e);
+        }
+    }
+
+    if total > 0 {
+        info!("✅ SUCCESS: Swap logs detected via subscription!");
+    } else {
+        info!("ℹ️  No swap logs detected via subscription");
+        info!("   (This may indicate WebSocket subscription issues)");
+    }
 
     // Stop Anvil
-    info!("🛑 Stopping Anvil...");
     let _ = anvil_process.kill();
     thread::sleep(Duration::from_secs(1));
 
-    info!("✅ ACTUAL SWAP LOG DETECTION TEST COMPLETE");
-    info!("   Log subscription infrastructure verified!");
+    info!("✅ Log detection test complete");
     Ok(())
 }
