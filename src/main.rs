@@ -111,10 +111,10 @@ async fn main() -> Result<()> {
              continue;
          }
          
-         let version_str = fields[2];
-         if fields.len() != 7 {
-             warn!("⚠️ Unexpected field count: {} fields instead of 7", fields.len());
-         }
+          let version_str = fields[2];
+          if fields.len() < 6 || fields.len() > 8 {
+              warn!("⚠️ Unexpected field count: {} fields (expected 6-8)", fields.len());
+          }
          
          if version_str != "2" && version_str != "3" {
              warn!("⚠️ Unknown version string: '{}' (len={})", version_str, version_str.len());
