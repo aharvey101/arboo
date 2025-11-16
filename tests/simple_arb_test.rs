@@ -1,9 +1,9 @@
 use alloy::primitives::address;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::WsConnect;
-use alloy::rpc::types::{Filter, TransactionRequest, BlockTransactionsKind};
+use alloy::rpc::types::{Filter, TransactionRequest};
 use alloy::primitives::U256;
-use alloy::sol_types::{SolCall, SolValue};
+use alloy::sol_types::{SolCall};
 use anyhow::Result;
 use log::info;
 use std::process::{Command, Stdio};
@@ -104,38 +104,55 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    info!("📤 Executing actual Uniswap V2 swap to generate logs...");
-    
-    // Get the default Anvil account
+    // Token addresses
+    let weth = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let usdc = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
     let account = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let usdc = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-    
+    let eth_amount = U256::from(100) * U256::from(10u128.pow(18)); // 100 ETH
+    let v2_router = address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
+
+    // Define all sol! interfaces at the top of the function
+    sol! {
+        function deposit() external payable;
+        
+        function approve(address spender, uint256 amount) external returns (bool);
+        
+        function balanceOf(address account) external view returns (uint256);
+        
+        interface IUniswapV2Router {
+            #[derive(Debug)]
+            function swapExactTokensForTokens(
+                uint amountIn,
+                uint amountOutMin,
+                address[] calldata path,
+                address to,
+                uint deadline
+            ) external returns (uint[] memory amounts);
+        }
+    }
+
+    info!("📤 Executing actual Uniswap V2 swap to generate logs...");
     info!("   WETH: {:?}", weth);
     info!("   USDC: {:?}", usdc);
+    info!("   📍 V2 Router: {:?}", v2_router);
     
     // Step 1: Deposit ETH to WETH
     info!("   Step 1: Depositing ETH to WETH...");
     
-    sol! {
-        function deposit() external payable;
-    }
-    
-    let eth_amount = U256::from(100) * U256::from(10u128.pow(18)); // 100 ETH
     let deposit_call = depositCall {};
     
-    let tx = TransactionRequest::default()
+    let tx_req = TransactionRequest::default()
         .from(account)
         .to(weth)
-        .value(eth_amount)
         .input(deposit_call.abi_encode().into())
+        .value(eth_amount)
         .gas_limit(100000u64);
     
-    match http_provider.send_transaction(tx).await {
+    match http_provider.send_transaction(tx_req).await {
         Ok(pending_tx) => {
             info!("   ✅ WETH deposit sent: {:?}", pending_tx.tx_hash());
             match pending_tx.get_receipt().await {
-                Ok(receipt) => {
+                Ok(_) => {
                     info!("   ✅ WETH deposit mined");
                 }
                 Err(e) => {
@@ -150,25 +167,21 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     tokio::time::sleep(Duration::from_millis(500)).await;
     
-    // Step 2: Approve WETH spending on the router
-    info!("   Step 2: Approving router to spend WETH...");
-    
-    sol! {
-        function approve(address spender, uint256 amount) external returns (bool);
-    }
+    // Step 2: Approve WETH spending on V2 router
+    info!("   Step 2: Approving V2 router to spend WETH...");
     
     let approve_call = approveCall {
-        spender: address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"), // V2 Router (not used for V3 but for consistency)
+        spender: v2_router,
         amount: eth_amount,
     };
     
-    let tx = TransactionRequest::default()
+    let tx_req = TransactionRequest::default()
         .from(account)
         .to(weth)
         .input(approve_call.abi_encode().into())
         .gas_limit(100000u64);
     
-    match http_provider.send_transaction(tx).await {
+    match http_provider.send_transaction(tx_req).await {
         Ok(pending_tx) => {
             info!("   ✅ Approval sent: {:?}", pending_tx.tx_hash());
             match pending_tx.get_receipt().await {
@@ -187,92 +200,34 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     tokio::time::sleep(Duration::from_millis(500)).await;
     
-    // Step 3: Execute V3 swap (using same approach as the E2E test)
-    info!("   Step 3: Executing Uniswap V3 swap (WETH → USDC)...");
+    // Step 3: Execute V2 swap (WETH → USDC)
+    info!("   Step 3: Executing Uniswap V2 swap (WETH → USDC)...");
     
-    // First verify the V3 router exists and has code
-    let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
-    let router_code = http_provider.get_code_at(v3_router).await?;
-    info!("   ✅ V3 Router code: {} bytes", router_code.len());
+    let deadline = U256::from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600,
+    );
     
-    if router_code.is_empty() {
-        info!("   ⚠️  V3 Router has no code! Swap will definitely fail");
-    }
+    let path = vec![weth, usdc];
     
-    // Check if the factory exists - it's at a standard address
-    let uniswap_v3_factory = address!("1F98431c8aD98523631AE4a59f267346ea31F984");
-    let factory_code = http_provider.get_code_at(uniswap_v3_factory).await?;
-    info!("   ℹ️  V3 Factory code: {} bytes", factory_code.len());
-    
-    // The pool we're trying to swap through should exist
-    // For WETH/USDC 500 fee, the canonical address is precomputed
-    // But we don't need to check it - if it doesn't exist, the swap will revert with a clear reason
-    
-    // Also check our WETH balance before swap
-    sol! {
-        function balanceOf(address account) external view returns (uint256);
-    }
-    
-    let balance_call = balanceOfCall { account };
-    let tx_call = TransactionRequest::default()
-        .from(account)
-        .to(weth)
-        .input(balance_call.abi_encode().into());
-    
-    let weth_balance_bytes = http_provider.call(&tx_call).await?;
-    if weth_balance_bytes.len() >= 32 {
-        let weth_balance = U256::from_be_slice(&weth_balance_bytes[0..32]);
-        info!("   ✅ WETH balance before swap: {} WETH", weth_balance / U256::from(10u128.pow(18)));
-    }
-    
-    let min_usdc_out = U256::from(1u64);
-    
-    // Get the current block timestamp and use it for deadline
-    let current_block_num = http_provider.get_block_number().await?;
-    let current_block = http_provider.get_block(current_block_num.into(), BlockTransactionsKind::Hashes).await?
-        .ok_or_else(|| anyhow::anyhow!("Could not get current block"))?;
-    let block_timestamp = current_block.header.timestamp;
-    let deadline = U256::from(block_timestamp + 3600u64); // 1 hour from now
-    
-    sol! {
-        interface ISwapRouter {
-            #[derive(Debug)]
-            struct ExactInputParams {
-                bytes path;
-                address recipient;
-                uint256 deadline;
-                uint256 amountIn;
-                uint256 amountOutMinimum;
-            }
-            function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
-        }
-    }
-    
-    // Create path: WETH + 3000 fee (0.3%) + USDC - this is the most common fee tier for WETH/USDC
-    let mut path = Vec::new();
-    path.extend_from_slice(weth.as_slice()); // WETH address (20 bytes)
-    path.extend_from_slice(&[0x00, 0x0B, 0xB8]); // 3000 fee tier (3 bytes) = 0x0BB8
-    path.extend_from_slice(usdc.as_slice()); // USDC address (20 bytes)
-    
-    let swap_amount = eth_amount; // Use full 100 ETH
-    
-    let swap_params = ISwapRouter::ExactInputParams {
-        path: path.into(),
-        recipient: account,
+    let swap_call = IUniswapV2Router::swapExactTokensForTokensCall {
+        amountIn: eth_amount,
+        amountOutMin: U256::from(1),
+        path,
+        to: account,
         deadline,
-        amountIn: swap_amount,
-        amountOutMinimum: min_usdc_out,
     };
     
-    let swap_call = ISwapRouter::exactInputCall { params: swap_params };
-    
-    let tx = TransactionRequest::default()
+    let tx_req = TransactionRequest::default()
         .from(account)
-        .to(v3_router)
+        .to(v2_router)
         .input(swap_call.abi_encode().into())
         .gas_limit(500000u64);
     
-    match http_provider.send_transaction(tx).await {
+    match http_provider.send_transaction(tx_req).await {
         Ok(pending_tx) => {
             info!("   ✅ Swap sent: {:?}", pending_tx.tx_hash());
             match pending_tx.get_receipt().await {
@@ -281,12 +236,10 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
                     info!("   ✅ Swap status: {:?}", receipt.status());
                     info!("   ✅ Gas used: {:?}", receipt.gas_used);
                     
-                    // Try to get logs from receipt to see revert reason
-                    if !receipt.status() {
-                        info!("   ⚠️  Swap reverted - checking for error data");
-                        // The receipt should have logs that might indicate why it failed
-                    } else {
+                    if receipt.status() {
                         info!("   ✅ Swap execution successful!");
+                    } else {
+                        info!("   ⚠️  Swap reverted");
                     }
                 }
                 Err(e) => {
@@ -306,9 +259,8 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     loop {
         tokio::select! {
-            Some(log) = rx.recv() => {
+            Some(_log) = rx.recv() => {
                 detected += 1;
-                info!("   🎉 Detected log #{}: {:?}", detected, log.address());
             }
             _ = tokio::time::sleep(Duration::from_secs(12)) => {
                 break;
@@ -322,8 +274,13 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     info!("🔍 Checking token balances...");
     
-    // Reuse balanceOf from earlier - note: can't redeclare sol! blocks
-    // Just check WETH balance call response
+    // Check WETH balance
+    let balance_call = balanceOfCall { account };
+    let tx_call = TransactionRequest::default()
+        .from(account)
+        .to(weth)
+        .input(balance_call.abi_encode().into());
+    
     match http_provider.call(&tx_call).await {
         Ok(result) => {
             if result.len() >= 32 {
