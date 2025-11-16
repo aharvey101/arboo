@@ -121,7 +121,7 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
         function deposit() external payable;
     }
     
-    let eth_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 ETH
+    let eth_amount = U256::from(100) * U256::from(10u128.pow(18)); // 100 ETH
     let deposit_call = depositCall {};
     
     let tx = TransactionRequest::default()
@@ -190,7 +190,41 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     // Step 3: Execute V3 swap (using same approach as the E2E test)
     info!("   Step 3: Executing Uniswap V3 swap (WETH → USDC)...");
     
+    // First verify the V3 router exists and has code
     let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
+    let router_code = http_provider.get_code_at(v3_router).await?;
+    info!("   ✅ V3 Router code: {} bytes", router_code.len());
+    
+    if router_code.is_empty() {
+        info!("   ⚠️  V3 Router has no code! Swap will definitely fail");
+    }
+    
+    // Check if the factory exists - it's at a standard address
+    let uniswap_v3_factory = address!("1F98431c8aD98523631AE4a59f267346ea31F984");
+    let factory_code = http_provider.get_code_at(uniswap_v3_factory).await?;
+    info!("   ℹ️  V3 Factory code: {} bytes", factory_code.len());
+    
+    // The pool we're trying to swap through should exist
+    // For WETH/USDC 500 fee, the canonical address is precomputed
+    // But we don't need to check it - if it doesn't exist, the swap will revert with a clear reason
+    
+    // Also check our WETH balance before swap
+    sol! {
+        function balanceOf(address account) external view returns (uint256);
+    }
+    
+    let balance_call = balanceOfCall { account };
+    let tx_call = TransactionRequest::default()
+        .from(account)
+        .to(weth)
+        .input(balance_call.abi_encode().into());
+    
+    let weth_balance_bytes = http_provider.call(&tx_call).await?;
+    if weth_balance_bytes.len() >= 32 {
+        let weth_balance = U256::from_be_slice(&weth_balance_bytes[0..32]);
+        info!("   ✅ WETH balance before swap: {} WETH", weth_balance / U256::from(10u128.pow(18)));
+    }
+    
     let min_usdc_out = U256::from(1u64);
     
     // Get the current block timestamp and use it for deadline
@@ -214,21 +248,23 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
         }
     }
     
-    // Create path: WETH + 3000 fee (0.3%) + USDC (this is a more common fee tier)
+    // Create path: WETH + 3000 fee (0.3%) + USDC - this is the most common fee tier for WETH/USDC
     let mut path = Vec::new();
     path.extend_from_slice(weth.as_slice()); // WETH address (20 bytes)
     path.extend_from_slice(&[0x00, 0x0B, 0xB8]); // 3000 fee tier (3 bytes) = 0x0BB8
     path.extend_from_slice(usdc.as_slice()); // USDC address (20 bytes)
     
-    let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 WETH (much larger)
+    let swap_amount = eth_amount; // Use full 100 ETH
     
-    let swap_call = ISwapRouter::ExactInputParams {
+    let swap_params = ISwapRouter::ExactInputParams {
         path: path.into(),
         recipient: account,
         deadline,
         amountIn: swap_amount,
         amountOutMinimum: min_usdc_out,
     };
+    
+    let swap_call = ISwapRouter::exactInputCall { params: swap_params };
     
     let tx = TransactionRequest::default()
         .from(account)
@@ -243,10 +279,14 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
                 Ok(receipt) => {
                     info!("   ✅ Swap mined in block {:?}", receipt.block_number);
                     info!("   ✅ Swap status: {:?}", receipt.status());
-                    if receipt.status() {
-                        info!("   ✅ Swap execution successful!");
+                    info!("   ✅ Gas used: {:?}", receipt.gas_used);
+                    
+                    // Try to get logs from receipt to see revert reason
+                    if !receipt.status() {
+                        info!("   ⚠️  Swap reverted - checking for error data");
+                        // The receipt should have logs that might indicate why it failed
                     } else {
-                        info!("   ⚠️  Swap reverted");
+                        info!("   ✅ Swap execution successful!");
                     }
                 }
                 Err(e) => {
@@ -282,20 +322,14 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     info!("🔍 Checking token balances...");
     
-    // Check WETH balance via balanceOf
-    sol! {
-        function balanceOf(address account) external view returns (uint256);
-    }
-    
-    let balance_call = balanceOfCall { account };
-    let tx = TransactionRequest::default()
-        .from(account)
-        .to(weth)
-        .input(balance_call.abi_encode().into());
-    
-    match http_provider.call(&tx).await {
+    // Reuse balanceOf from earlier - note: can't redeclare sol! blocks
+    // Just check WETH balance call response
+    match http_provider.call(&tx_call).await {
         Ok(result) => {
-            info!("   WETH balance call response: {:?}", result.len());
+            if result.len() >= 32 {
+                let balance_after = U256::from_be_slice(&result[0..32]);
+                info!("   WETH balance after deposits/approvals: {} WETH", balance_after / U256::from(10u128.pow(18)));
+            }
         }
         Err(e) => {
             info!("   ⚠️  Balance call failed: {}", e);
