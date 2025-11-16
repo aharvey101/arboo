@@ -275,22 +275,25 @@ pub async fn load_all_pools(
     //
     //let mut pools = filtered_pools;
     //info!("amount of pools after liquidity test: {:?}", pools.len());
-    let mut added = 0;
-    //pools.sort_by_key(|p| p.block_number);
-    for pool in pools.iter_mut() {
-        if pool.id == -1 {
-            id += 1;
-            pool.id = id;
-        }
-        if pool.id > last_id {
-            writer.serialize(pool.cache_row())?;
-            added += 1;
-        }
-    }
-    writer.flush()?;
-    log::debug!("Added {:?} new pools", added);
+     let mut added = 0;
+     //pools.sort_by_key(|p| p.block_number);
+     for pool in pools.iter_mut() {
+         if pool.id == -1 {
+             id += 1;
+             pool.id = id;
+         }
+         if pool.id > last_id {
+             writer.serialize(pool.cache_row())?;
+             added += 1;
+         }
+     }
+     // Finalize the CSV writer - this flushes and closes the underlying file properly
+     writer.flush()?;
+     drop(writer);
+     log::debug!("Added {:?} new pools to cache", added);
+     info!("💾 Cache file persisted at: {}", cache_path);
 
-    Ok((pools, last_id))
+     Ok((pools, last_id))
 }
 
 pub async fn load_uniswap_v2_pools(
