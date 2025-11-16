@@ -51,11 +51,13 @@ async fn main() -> Result<()> {
 
      let cache_path = format!("{}/.cached-pools.csv", cache_dir);
      if !Path::new(&cache_path).try_exists()? {
-         info!("Cache doesn't exist, crawling ALL blocks for pools");
-         // Search all blocks: from_block=0 (genesis)
+         info!("Cache doesn't exist, crawling recent blocks for pools");
+         // For forked testnets, pools only exist in recent blocks
+         // Scan the last 100k blocks to find existing pools (should cover all relevant pools)
          // Use chunk size of 10000 blocks to avoid RPC timeouts
+         let from_block = block_number.saturating_sub(100_000);
          let chunk_size = 10000u64;
-         pools::load_all_pools(ws_url.clone(), 0, chunk_size, &cache_path)
+         pools::load_all_pools(ws_url.clone(), from_block, chunk_size, &cache_path)
              .await
              .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
      }
