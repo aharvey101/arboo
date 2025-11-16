@@ -1,7 +1,7 @@
 use alloy::primitives::address;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::WsConnect;
-use alloy::rpc::types::{Filter, TransactionRequest};
+use alloy::rpc::types::{Filter, TransactionRequest, BlockTransactionsKind};
 use alloy::primitives::U256;
 use alloy::sol_types::{SolCall, SolValue};
 use anyhow::Result;
@@ -192,12 +192,13 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
     let min_usdc_out = U256::from(1u64);
-    let deadline = U256::from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() + 300,
-    );
+    
+    // Get the current block timestamp and use it for deadline
+    let current_block_num = http_provider.get_block_number().await?;
+    let current_block = http_provider.get_block(current_block_num.into(), BlockTransactionsKind::Hashes).await?
+        .ok_or_else(|| anyhow::anyhow!("Could not get current block"))?;
+    let block_timestamp = current_block.header.timestamp;
+    let deadline = U256::from(block_timestamp + 3600u64); // 1 hour from now
     
     sol! {
         interface ISwapRouter {
@@ -213,13 +214,13 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
         }
     }
     
-    // Create path: WETH + 500 fee + USDC
+    // Create path: WETH + 3000 fee (0.3%) + USDC (this is a more common fee tier)
     let mut path = Vec::new();
     path.extend_from_slice(weth.as_slice()); // WETH address (20 bytes)
-    path.extend_from_slice(&[0x00, 0x01, 0xF4]); // 500 fee tier (3 bytes)
+    path.extend_from_slice(&[0x00, 0x0B, 0xB8]); // 3000 fee tier (3 bytes) = 0x0BB8
     path.extend_from_slice(usdc.as_slice()); // USDC address (20 bytes)
     
-    let swap_amount = eth_amount / U256::from(100u64); // 0.01 WETH
+    let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 WETH (much larger)
     
     let swap_call = ISwapRouter::ExactInputParams {
         path: path.into(),
@@ -279,7 +280,6 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     info!("📊 Total logs detected via subscription: {}", total);
     info!("   From channel: {}", detected);
     
-    // Check token balances to see if swap actually happened
     info!("🔍 Checking token balances...");
     
     // Check WETH balance via balanceOf
@@ -302,21 +302,26 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
         }
     }
     
-    // Also try eth_getLogs to verify logs were actually emitted
-    info!("🔍 Checking if logs exist on the blockchain...");
-    let latest_block = http_provider.get_block_number().await?;
-    info!("   Latest block: {}", latest_block);
+    // Also try eth_getLogs to verify logs exist (poll for HISTORICAL logs)
+    info!("🔍 Checking if logs exist on the blockchain (polling entire fork history)...");
+    let current_block = http_provider.get_block_number().await?;
+    info!("   Current block: {}", current_block);
     
-    // First, check for ANY logs on the swap pool
+    // Poll for ALL logs on both pools from last 100k blocks (max allowed)
     let poll_filter_all = Filter::new()
-        .address(vec![v2_pool])
-        .from_block(latest_block - 5u64); // Check last 5 blocks
+        .address(vec![v2_pool, v3_pool])
+        .from_block(if current_block > 100000u64 { current_block - 100000u64 } else { 0u64 })
+        .to_block(current_block);
     
     match http_provider.get_logs(&poll_filter_all).await {
         Ok(logs) => {
-            info!("   ✅ All logs on V2 pool: {} logs", logs.len());
-            for (i, log) in logs.iter().enumerate().take(5) {
-                info!("      Log {}: topics={}", i, log.topics().len());
+            info!("   ✅ Total logs found on V2/V3 pools from entire fork: {} logs", logs.len());
+            if logs.is_empty() {
+                info!("   📝 No logs found on either pool - likely no swaps have occurred yet");
+            } else {
+                for (i, log) in logs.iter().enumerate().take(10) {
+                    info!("      Log {}: address={:?}, topics={}, data_len={}", i, log.address(), log.topics().len(), log.data().data.len());
+                }
             }
         }
         Err(e) => {
@@ -324,17 +329,21 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
         }
     }
     
-    // Then check for swap signature specifically
-    let poll_filter = Filter::new()
-        .address(vec![v2_pool, v3_pool])
-        .event_signature(vec![v2_swap_sig, v3_swap_sig])
-        .from_block(latest_block - 5u64); // Check last 5 blocks
+    // Then check for swap signature specifically across the whole fork
+    let swap_sig_v2 = keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
+    let swap_sig_v3 = keccak256("Swap(address,address,int256,int256,uint160,uint128,int24)".as_bytes());
     
-    match http_provider.get_logs(&poll_filter).await {
+    let poll_filter_swaps = Filter::new()
+        .address(vec![v2_pool, v3_pool])
+        .event_signature(vec![swap_sig_v2, swap_sig_v3])
+        .from_block(if current_block > 100000u64 { current_block - 100000u64 } else { 0u64 })
+        .to_block(current_block);
+    
+    match http_provider.get_logs(&poll_filter_swaps).await {
         Ok(logs) => {
-            info!("   ✅ Swap logs found: {} logs", logs.len());
+            info!("   ✅ Swap-specific logs found: {} logs", logs.len());
             for (i, log) in logs.iter().enumerate() {
-                info!("   Log {}: address={:?}, topics={}", i, log.address(), log.topics().len());
+                info!("   Swap Log {}: address={:?}, topics={}", i, log.address(), log.topics().len());
             }
         }
         Err(e) => {
