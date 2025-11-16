@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
      // Load pools map
      let mut pools_map: HashMap<Address, Event> = HashMap::new();
      let path = Path::new(&cache_path);
+     info!("📂 Opening cache file at: {}", cache_path);
      let file = File::open(path).map_err(|e| anyhow::anyhow!("Failed to load pools file {}", e))?;
      //info!("File: {:?}", file);
      let reader = io::BufReader::new(file);
@@ -96,16 +97,35 @@ async fn main() -> Result<()> {
      let mut v2_count = 0;
      let mut v3_count = 0;
      let mut skipped_count = 0;
+     
+     info!("🔍 Starting to parse pools from cache file - checking field lengths");
 
      for line in reader.lines().skip(1) {
          let line = line?;
          let fields: Vec<&str> = line.split(',').collect();
-        match fields[2] {
-            "2" => {
-                v2_count += 1;
-                let pair_address = Address::from_str(fields[1]).map_err(|e| {
-                    anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e)
-                })?;
+         
+         // Debug: check fields count and version field
+         if fields.len() < 6 {
+             warn!("⚠️ Skipping malformed line with {} fields: {}", fields.len(), line);
+             skipped_count += 1;
+             continue;
+         }
+         
+         let version_str = fields[2];
+         if fields.len() != 7 {
+             warn!("⚠️ Unexpected field count: {} fields instead of 7", fields.len());
+         }
+         
+         if version_str != "2" && version_str != "3" {
+             warn!("⚠️ Unknown version string: '{}' (len={})", version_str, version_str.len());
+         }
+         
+         match version_str {
+              "2" => {
+                  v2_count += 1;
+                  let pair_address = Address::from_str(fields[1]).map_err(|e| {
+                     anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e)
+                 })?;
                 pools_map.insert(
                     pair_address,
                     Event::PairCreated(V2PoolCreated {
@@ -122,12 +142,13 @@ async fn main() -> Result<()> {
                     }),
                 );
             }
-            "3" => {
-                v3_count += 1;
-                let pair_address = Address::from_str(fields[1]).map_err(|e| {
-                    anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e)
-                })?;
-                pools_map.insert(
+             "3" => {
+                 v3_count += 1;
+                 info!("📍 Processing V3 pool #{}: address={}", v3_count, fields[1]);
+                 let pair_address = Address::from_str(fields[1]).map_err(|e| {
+                     anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e)
+                 })?;
+                 pools_map.insert(
                     pair_address,
                     Event::PoolCreated(V3PoolCreated {
                         pair_address,
@@ -144,15 +165,18 @@ async fn main() -> Result<()> {
                     }),
                 );
             }
-            _ => {
-                skipped_count += 1;
-                info!(
-                    "Skipping unknown pool version '{}' for address {}",
-                    fields[2], fields[1]
-                );
-                continue;
-            }
-        };
+             _ => {
+                 skipped_count += 1;
+                 warn!(
+                     "⚠️ Skipping unknown pool version '{}' (len={}) for address {}",
+                     version_str, version_str.len(), fields[1]
+                 );
+                 if skipped_count <= 10 {
+                     debug!("Full line: {}", line);
+                 }
+                 continue;
+             }
+         };
     }
 
     let pools_map = Arc::new(RwLock::new(pools_map));
