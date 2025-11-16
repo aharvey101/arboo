@@ -677,7 +677,7 @@ async fn create_arbitrage_strategy(test_env: &TestEnvironment) -> Result<Uniswap
     let config = StrategyConfig {
         enabled: true,
         priority: 90,
-        min_profit_threshold: U256::from(100_000u128),
+        min_profit_threshold: U256::from(1_000_000_000_000_000u128), // 0.001 ETH - realistic profit threshold
         max_gas_price: U256::from(200_000_000_000u64),
         max_position_size: U256::from(10_000_000_000_000_000_000u64),
     };

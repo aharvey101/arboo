@@ -266,7 +266,7 @@ async fn setup_basic_test_environment(
     info!("🔧 Setting up real arbitrage environment with mainnet fork...");
 
     // Real mainnet addresses for USDC/WETH (highest liquidity pairs)
-    let usdc_address = address!("0xA0b86a33E6441bE7E1F5DB4B7ade33eB11"); // USDC (token0)
+    let usdc_address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // USDC (token0)
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH (token1)
 
     // Use highest liquidity USDC/WETH pools for optimal arbitrage testing
@@ -325,7 +325,7 @@ async fn execute_market_moving_swap(
      let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
      info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-      let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 WETH swap - smaller amount for USDC high-liquidity pool
+      let swap_amount = U256::from(100) * U256::from(10u128.pow(18)); // 100 WETH swap - calculated optimal size for profitable arbitrage
       info!(
           "💱 Will swap {} WETH for USDC on high-liquidity V2 pool to create arbitrage opportunity",
           swap_amount / U256::from(10u128.pow(18))

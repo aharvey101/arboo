@@ -205,7 +205,10 @@ impl LogProcessor {
         // Find all pools with the same token pair
         let index_guard = self.token_pair_index.read().await;
         let matching_pools = index_guard.get(&token_pair)?;
-        // Look for a V3 pool among the matching pools
+        
+        // Collect all V3 pools with the same token pair and prioritize by fee tier
+        let mut v3_candidates = Vec::new();
+        
         for &candidate_address in matching_pools {
             if candidate_address == pool_address {
                 continue; // Skip self
@@ -218,21 +221,39 @@ impl LogProcessor {
                 
                 // Validate token pair consistency
                 if Self::is_valid_token_pair(v3_pool.token0, v3_pool.token1) {
-                    debug!(
-                        "Found V2->V3 arbitrage: {:?} -> {:?}",
-                        pool_address, candidate_address
-                    );
-
-                    return Some(LogEvent {
-                        pool_variant: 2, // V2 pool generated the log
-                        corresponding_pool_address: v3_pool.pair_address,
-                        log_pool_address: pool_address,
-                        token0: v2_pool.token0,
-                        token1: v2_pool.token1,
-                        fee: U24::from(v2_pool.fee),
-                    });
+                    v3_candidates.push((candidate_address, v3_pool));
                 }
             }
+        }
+        
+        // Prioritize V3 pools by fee tier (prefer higher fees = higher liquidity for major pairs)
+        // Priority order: 0.3% (3000), 0.05% (500), 1% (10000), 0.01% (100)
+        v3_candidates.sort_by(|a, b| {
+            let fee_priority = |fee: u32| match fee {
+                3000 => 0,  // 0.3% - highest priority (most liquid for major pairs)
+                500 => 1,   // 0.05% - second priority
+                10000 => 2, // 1.0% - third priority  
+                100 => 3,   // 0.01% - fourth priority
+                _ => 4,     // Other fees - lowest priority
+            };
+            fee_priority(a.1.fee).cmp(&fee_priority(b.1.fee))
+        });
+        
+        // Select the highest priority V3 pool
+        if let Some((candidate_address, v3_pool)) = v3_candidates.into_iter().next() {
+            debug!(
+                "Found V2->V3 arbitrage: {:?} -> {:?} (fee: {})",
+                pool_address, candidate_address, v3_pool.fee
+            );
+
+            return Some(LogEvent {
+                pool_variant: 2, // V2 pool generated the log
+                corresponding_pool_address: v3_pool.pair_address,
+                log_pool_address: pool_address,
+                token0: v2_pool.token0,
+                token1: v2_pool.token1,
+                fee: U24::from(v2_pool.fee),
+            });
         }
 
         debug!("No V3 counterpart found for V2 pool: {:?}", pool_address);
