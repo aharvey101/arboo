@@ -186,27 +186,46 @@ pub async fn load_all_pools(
     //        from_block
     //    };
 
-    let to_block = provider
-        .get_block_number()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
+     let to_block = provider
+         .get_block_number()
+         .await
+         .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
 
-    let mut blocks_processed = 0;
+     info!("Current block number: {}", to_block);
 
-    let mut block_range = Vec::new();
+     let mut blocks_processed = 0;
 
-    loop {
-        let start_idx = from_block + blocks_processed;
-        let mut end_idx = start_idx + chunk - 1;
-        if end_idx > to_block {
-            end_idx = to_block;
-            block_range.push((start_idx, end_idx));
-            break;
-        }
-        block_range.push((start_idx, end_idx));
-        blocks_processed += chunk;
-    }
-    log::debug!("Block range: {:?}", block_range);
+     let mut block_range = Vec::new();
+
+     // For forked testnets, scan backwards from current block
+     // Most pools will be in recent blocks on a fork
+     let actual_from_block = if from_block > to_block {
+         // If requested from_block is higher than current block (fork scenario)
+         // Scan from current block backwards with chunk size, but at least scan recent blocks
+         info!("⚠️ Requested start block {} is beyond current block {}. Scanning recent blocks instead.", from_block, to_block);
+         if to_block > 100_000 {
+             to_block.saturating_sub(100_000) // Scan last 100k blocks
+         } else {
+             0 // Scan from genesis on small forks
+         }
+     } else {
+         from_block
+     };
+
+     info!("📡 Pool scanning range: {} to {}", actual_from_block, to_block);
+
+     loop {
+         let start_idx = actual_from_block + blocks_processed;
+         let mut end_idx = start_idx + chunk - 1;
+         if end_idx > to_block {
+             end_idx = to_block;
+             block_range.push((start_idx, end_idx));
+             break;
+         }
+         block_range.push((start_idx, end_idx));
+         blocks_processed += chunk;
+     }
+     log::debug!("Block range: {:?}", block_range);
 
     let pb = ProgressBar::new(block_range.len() as u64);
     pb.set_style(
@@ -312,10 +331,10 @@ pub async fn load_uniswap_v2_pools(
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
-        //        .address(UNISWAP_V2_FACTORY)
+        .address(vec![UNISWAP_V2_FACTORY])
         .event("PairCreated(address,address,address,uint256)");
 
-    info!("🔍 Scanning V2 pools from block {} to {}", from_block, to_block);
+    info!("🔍 Scanning V2 pools from block {} to {} on factory {}", from_block, to_block, UNISWAP_V2_FACTORY);
     let logs = provider.get_logs(&event_filter).await?;
     info!("📊 Found {} V2 PairCreated events", logs.len());
 
@@ -362,10 +381,10 @@ pub async fn load_uniswap_v2_pools(
      let event_filter = Filter::new()
          .from_block(from_block)
          .to_block(to_block)
-         //        .address(UNISWAP_V3_FACTORY)
+         .address(vec![UNISWAP_V3_FACTORY])
          .event("PoolCreated(address,address,uint24,int24,address)");
 
-     info!("🔍 Scanning V3 pools from block {} to {}", from_block, to_block);
+     info!("🔍 Scanning V3 pools from block {} to {} on factory {}", from_block, to_block, UNISWAP_V3_FACTORY);
      let logs = provider.get_logs(&event_filter).await?;
      info!("📊 Found {} V3 PoolCreated events", logs.len());
      for log in logs {
