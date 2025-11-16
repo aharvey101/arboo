@@ -325,7 +325,7 @@ async fn execute_market_moving_swap(
     let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
     info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 ETH swap (much smaller)
+    let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 ETH swap to create larger price imbalance
     info!(
         "💱 Will swap {} ETH for USDC on V2 to create price imbalance",
         swap_amount / U256::from(10u128.pow(18))
