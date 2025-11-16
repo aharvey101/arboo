@@ -265,15 +265,15 @@ async fn setup_basic_test_environment(
 ) -> Result<ArbitrageSetup> {
     info!("🔧 Setting up real arbitrage environment with mainnet fork...");
 
-    // Real mainnet addresses for WETH/USDC (cached pairs with arbitrage opportunities)
+    // Real mainnet addresses for WETH/DAI (better liquidity for arbitrage testing)
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH
-    let usdc_address = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // USDC
+    let dai_address = address!("0x6b175474e89094c44da98b954eedeac495271d0f"); // DAI
 
-    // Use pools that are ACTUALLY in our cache (not the most liquid ones)
-    // V2 Pool: USDC/WETH 0.3% fee (in cache at block 20497505)
-    let v2_pool_address = address!("0xbd504d0a4b16a77e531722c3aea770161347dea7");
-    // V3 Pool: USDC/WETH 0.01% fee (in cache at block 20791480)
-    let v3_pool_address = address!("0xa6d2aac68cafa72c5249aa4d0a379390fe1d40d8");
+    // Use pools that are ACTUALLY in our cache with good liquidity
+    // V2 Pool: WETH/DAI (good liquidity)
+    let v2_pool_address = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84");
+    // V3 Pool: WETH/DAI 0.01% fee (high precision, good for arbitrage)
+    let v3_pool_address = address!("0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9");
 
     // Create arbitrage opportunity by executing a large swap on V2
     info!("💰 Creating arbitrage opportunity with large V2 swap...");
@@ -282,14 +282,14 @@ async fn setup_basic_test_environment(
         v3_pool_address,
         v2_pool_address,
         token0: weth_address,
-        token1: usdc_address,
+        token1: dai_address,
         weth_address,
     };
 
     // Log the addresses for verification
     info!("📍 Pool addresses configured:");
     info!("  WETH: {:#x}", weth_address);
-    info!("  USDC: {:#x}", usdc_address);
+    info!("  DAI: {:#x}", dai_address);
     info!("  V2 Pool: {:#x}", v2_pool_address);
     info!("  V3 Pool: {:#x}", v3_pool_address);
 
@@ -327,7 +327,7 @@ async fn execute_market_moving_swap(
 
     let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 50 ETH swap to create massive price imbalance
     info!(
-        "💱 Will swap {} ETH for USDC on V2 to create price imbalance",
+        "💱 Will swap {} ETH for DAI on V2 to create price imbalance",
         swap_amount / U256::from(10u128.pow(18))
     );
 
@@ -343,8 +343,8 @@ async fn execute_market_moving_swap(
         Ok(tx_hash) => {
             info!("✅ Large swap executed successfully: {:?}", tx_hash);
             info!("📊 ARBITRAGE OPPORTUNITY CREATED!");
-            info!("💰 V2 pool price moved due to ETH->USDC swap");
-            info!("🔍 Should see events from USDC/WETH V2 pool");
+            info!("💰 V2 pool price moved due to ETH->DAI swap");
+            info!("🔍 Should see events from DAI/WETH V2 pool");
             info!("🚨 Arboo should detect this swap event!");
         }
         Err(e) => {
@@ -355,9 +355,9 @@ async fn execute_market_moving_swap(
     }
 
     info!(
-        "✅ Market setup complete - existing mainnet state should provide arbitrage opportunities"
+        "✅ Market setup complete - WETH/DAI pairs ready for arbitrage opportunities"
     );
-    info!("🔍 Arboo should detect price differences between V2 and V3 pools");
+    info!("🔍 Arboo should detect price differences between WETH/DAI V2 and V3 pools");
 
      Ok(())
 }
