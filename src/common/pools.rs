@@ -218,29 +218,35 @@ pub async fn load_all_pools(
     );
 
     for range in block_range {
-        let requests = vec![
-            tokio::task::spawn(load_uniswap_v2_pools(provider.clone(), range.0, range.1)),
-            tokio::task::spawn(load_uniswap_v3_pools(provider.clone(), range.0, range.1)),
-        ];
+         let requests = vec![
+             tokio::task::spawn(load_uniswap_v2_pools(provider.clone(), range.0, range.1)),
+             tokio::task::spawn(load_uniswap_v3_pools(provider.clone(), range.0, range.1)),
+         ];
 
-        let results = futures::future::join_all(requests).await;
-        results.into_iter().for_each(|result| {
-            if let Ok(response) = result {
-                if let Ok(pools_response) = response {
-                    pools.extend(pools_response);
-                }
-            }
-        });
-        // now that we have all the pools, what we need to do is make sure they have atleast 5 eth of liquidity
-        // to do this we need to setup an evm, get the storage for the contract,
-        // Then query the balance of the contract for the token0 and token1
-        // if either of them are less than 5 eth, we will skip the pool
-        // if they are more than 5 eth, we will add the pool to the list
+         let results = futures::future::join_all(requests).await;
+         results.into_iter().for_each(|result| {
+             if let Ok(response) = result {
+                 match response {
+                     Ok(pools_response) => {
+                         pools.extend(pools_response);
+                     }
+                     Err(e) => {
+                         log::error!("⚠️ Error fetching pools for range: {}", e);
+                     }
+                 }
+             }
+         });
+         // now that we have all the pools, what we need to do is make sure they have atleast 5 eth of liquidity
+         // to do this we need to setup an evm, get the storage for the contract,
+         // Then query the balance of the contract for the token0 and token1
+         // if either of them are less than 5 eth, we will skip the pool
+         // if they are more than 5 eth, we will add the pool to the list
 
-        pb.inc(1);
-    }
+         pb.inc(1);
+     }
 
-    log::debug!("amount of pools before liquidity test: {:?}", pools.len());
+     info!("🏁 Total pools discovered: {}", pools.len());
+     log::debug!("amount of pools before liquidity test: {:?}", pools.len());
 
     //    let (evm, caller_address) = create_evm(provider.clone()).await;
     //let evm = Arc::new(tokio::sync::Mutex::new(evm));
@@ -309,7 +315,9 @@ pub async fn load_uniswap_v2_pools(
         //        .address(UNISWAP_V2_FACTORY)
         .event("PairCreated(address,address,address,uint256)");
 
+    info!("🔍 Scanning V2 pools from block {} to {}", from_block, to_block);
     let logs = provider.get_logs(&event_filter).await?;
+    info!("📊 Found {} V2 PairCreated events", logs.len());
 
     for log in logs {
         //let block_number = log.block_number.unwrap_or_default();
@@ -334,30 +342,33 @@ pub async fn load_uniswap_v2_pools(
             version: DexVariant::UniswapV2,
             token0,
             token1,
-            fee: 300,
-            //block_number,
-        };
-        pools.push(pool_data);
-    }
+             fee: 300,
+             //block_number,
+         };
+         pools.push(pool_data);
+     }
 
-    Ok(pools)
-}
+     info!("✅ Successfully loaded {} V2 pools", pools.len());
+     Ok(pools)
+ }
 
-pub async fn load_uniswap_v3_pools(
-    provider: Arc<RootProvider<PubSubFrontend>>,
-    from_block: u64,
-    to_block: u64,
-) -> Result<Vec<Pool>> {
-    let mut pools = Vec::new();
+ pub async fn load_uniswap_v3_pools(
+     provider: Arc<RootProvider<PubSubFrontend>>,
+     from_block: u64,
+     to_block: u64,
+ ) -> Result<Vec<Pool>> {
+     let mut pools = Vec::new();
 
-    let event_filter = Filter::new()
-        .from_block(from_block)
-        .to_block(to_block)
-        //        .address(UNISWAP_V3_FACTORY)
-        .event("PoolCreated(address,address,uint24,int24,address)");
+     let event_filter = Filter::new()
+         .from_block(from_block)
+         .to_block(to_block)
+         //        .address(UNISWAP_V3_FACTORY)
+         .event("PoolCreated(address,address,uint24,int24,address)");
 
-    let logs = provider.get_logs(&event_filter).await?;
-    for log in logs {
+     info!("🔍 Scanning V3 pools from block {} to {}", from_block, to_block);
+     let logs = provider.get_logs(&event_filter).await?;
+     info!("📊 Found {} V3 PoolCreated events", logs.len());
+     for log in logs {
         if log.topics()[1].is_zero() {
             info!("V3 log 1 empty");
             continue;
@@ -386,16 +397,17 @@ pub async fn load_uniswap_v3_pools(
         let pool_data = Pool {
             id: -1,
             address: pool_address,
-            version: DexVariant::UniswapV3,
-            token0,
-            token1,
-            fee,
-            //block_number,
-        };
-        pools.push(pool_data);
-    }
+             version: DexVariant::UniswapV3,
+             token0,
+             token1,
+             fee,
+             //block_number,
+         };
+         pools.push(pool_data);
+     }
 
-    Ok(pools)
+     info!("✅ Successfully loaded {} V3 pools", pools.len());
+     Ok(pools)
 }
 
 alloy::sol! {
