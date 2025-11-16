@@ -8,7 +8,7 @@ use alloy_primitives::aliases::U24;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use revm::primitives::keccak256;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tokio::sync::{broadcast::Sender, mpsc, RwLock};
 
 /// Core log processing service for arbitrage opportunity detection
@@ -77,74 +77,122 @@ impl LogProcessor {
         (processor, event_queue_rx)
     }
 
-    /// Build an efficient index of token pairs to pool addresses
-    fn build_token_pair_index(pairs: &HashMap<Address, Event>) -> HashMap<TokenPair, Vec<Address>> {
-        let mut index = HashMap::new();
+     /// Build an efficient index of token pairs to pool addresses
+     fn build_token_pair_index(pairs: &HashMap<Address, Event>) -> HashMap<TokenPair, Vec<Address>> {
+         let mut index = HashMap::new();
+         
+         // Define our target tokens for detailed logging
+         let dai_addr = Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap_or_default();
+         let weth_addr = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap_or_default();
 
-        for (pool_address, event) in pairs {
-            let token_pair = match event {
-                Event::PairCreated(pair) => TokenPair::new(pair.token0, pair.token1),
-                Event::PoolCreated(pool) => TokenPair::new(pool.token0, pool.token1),
-            };
+         for (pool_address, event) in pairs {
+             let token_pair = match event {
+                 Event::PairCreated(pair) => {
+                     let tp = TokenPair::new(pair.token0, pair.token1);
+                     // Log DAI/WETH pairs
+                     if (pair.token0 == dai_addr && pair.token1 == weth_addr) ||
+                        (pair.token0 == weth_addr && pair.token1 == dai_addr) {
+                         info!("📍 Indexing V2 DAI/WETH pool: {:?} (token0={:?}, token1={:?}, fee={})", 
+                             pool_address, pair.token0, pair.token1, pair.fee);
+                     }
+                     tp
+                 }
+                 Event::PoolCreated(pool) => {
+                     let tp = TokenPair::new(pool.token0, pool.token1);
+                     // Log DAI/WETH pairs
+                     if (pool.token0 == dai_addr && pool.token1 == weth_addr) ||
+                        (pool.token0 == weth_addr && pool.token1 == dai_addr) {
+                         info!("📍 Indexing V3 DAI/WETH pool: {:?} (token0={:?}, token1={:?}, fee={})", 
+                             pool_address, pool.token0, pool.token1, pool.fee);
+                     }
+                     tp
+                 }
+             };
 
-            index
-                .entry(token_pair)
-                .or_insert_with(Vec::new)
-                .push(*pool_address);
-        }
+             index
+                 .entry(token_pair)
+                 .or_insert_with(Vec::new)
+                 .push(*pool_address);
+         }
 
-        debug!("Built token pair index with {} unique pairs", index.len());
-        index
-    }
+         debug!("Built token pair index with {} unique pairs", index.len());
+         index
+     }
 
-    /// Process a single log event and attempt to create arbitrage opportunities
-    pub async fn process_log(&self, log: &Log) -> Option<LogEvent> {
-        let pool_address = log.address();
-        
-        // Check if pool exists in our cache
-        let pairs_guard = self.pairs.read().await;
-        if !pairs_guard.contains_key(&pool_address) {
-            drop(pairs_guard); // Release read lock before attempting discovery
-            debug!("Log from unknown pool: {:?}, attempting dynamic discovery", pool_address);
-            
-            // Try to discover the pool dynamically
-            if let Some(event) = self.discover_pool_from_logs(pool_address).await {
-                // Add discovered pool to cache
-                let mut pairs_mut = self.pairs.write().await;
-                pairs_mut.insert(pool_address, event.clone());
-                drop(pairs_mut);
-                
-                // Update token pair index
-                let token_pair = match &event {
-                    Event::PairCreated(pair) => TokenPair::new(pair.token0, pair.token1),
-                    Event::PoolCreated(pool) => TokenPair::new(pool.token0, pool.token1),
-                };
-                let mut index = self.token_pair_index.write().await;
-                index
-                    .entry(token_pair)
-                    .or_insert_with(Vec::new)
-                    .push(pool_address);
-                info!("✨ Dynamically discovered and cached pool: {:?}", pool_address);
-                
-                // Continue processing with the newly discovered pool
-            } else {
-                debug!("Failed to discover pool: {:?}", pool_address);
-                return None;
-            }
-        }
-        
-        // Look up the pool that generated this log
-        let pairs_guard = self.pairs.read().await;
-        let source_event = pairs_guard.get(&pool_address)?.clone();
-        drop(pairs_guard);
-        debug!("Processing swap log from known pool: {:?}", pool_address);
+     /// Process a single log event and attempt to create arbitrage opportunities
+     pub async fn process_log(&self, log: &Log) -> Option<LogEvent> {
+         let pool_address = log.address();
+         
+         // Define our target tokens for detailed logging
+         let dai_addr = Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap_or_default();
+         let weth_addr = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap_or_default();
+         
+         // Check if pool exists in our cache
+         let pairs_guard = self.pairs.read().await;
+         let pool_exists = pairs_guard.contains_key(&pool_address);
+         
+         if let Some(event) = pairs_guard.get(&pool_address) {
+             // Log if this is a DAI/WETH pool
+             match event {
+                 Event::PairCreated(pair) => {
+                     if (pair.token0 == dai_addr && pair.token1 == weth_addr) ||
+                        (pair.token0 == weth_addr && pair.token1 == dai_addr) {
+                         info!("📥 Received log from V2 DAI/WETH pool: {:?}", pool_address);
+                     }
+                 }
+                 Event::PoolCreated(pool) => {
+                     if (pool.token0 == dai_addr && pool.token1 == weth_addr) ||
+                        (pool.token0 == weth_addr && pool.token1 == dai_addr) {
+                         info!("📥 Received log from V3 DAI/WETH pool: {:?}", pool_address);
+                     }
+                 }
+             }
+         }
+         
+         if !pool_exists {
+             drop(pairs_guard); // Release read lock before attempting discovery
+             warn!("⚠️ Log from unknown pool: {:?}, attempting dynamic discovery", pool_address);
+             
+             // Try to discover the pool dynamically
+             if let Some(event) = self.discover_pool_from_logs(pool_address).await {
+                 // Add discovered pool to cache
+                 let mut pairs_mut = self.pairs.write().await;
+                 pairs_mut.insert(pool_address, event.clone());
+                 drop(pairs_mut);
+                 
+                 // Update token pair index
+                 let token_pair = match &event {
+                     Event::PairCreated(pair) => TokenPair::new(pair.token0, pair.token1),
+                     Event::PoolCreated(pool) => TokenPair::new(pool.token0, pool.token1),
+                 };
+                 let mut index = self.token_pair_index.write().await;
+                 index
+                     .entry(token_pair)
+                     .or_insert_with(Vec::new)
+                     .push(pool_address);
+                 info!("✨ Dynamically discovered and cached pool: {:?}", pool_address);
+                 
+                 // Continue processing with the newly discovered pool
+             } else {
+                 warn!("❌ Failed to discover pool: {:?}", pool_address);
+                 return None;
+             }
+         } else {
+             drop(pairs_guard);
+         }
+         
+         // Look up the pool that generated this log
+         let pairs_guard = self.pairs.read().await;
+         let source_event = pairs_guard.get(&pool_address)?.clone();
+         drop(pairs_guard);
+         debug!("Processing swap log from known pool: {:?}", pool_address);
 
-        // Now that we know this pool exists, find potential arbitrage with the other version
-        match source_event {
-            Event::PairCreated(v2_pool) => self.find_arbitrage_for_v2_pool(&v2_pool, pool_address).await,
-            Event::PoolCreated(v3_pool) => self.find_arbitrage_for_v3_pool(&v3_pool, pool_address).await,
-        }
-    }
+         // Now that we know this pool exists, find potential arbitrage with the other version
+         match source_event {
+             Event::PairCreated(v2_pool) => self.find_arbitrage_for_v2_pool(&v2_pool, pool_address).await,
+             Event::PoolCreated(v3_pool) => self.find_arbitrage_for_v3_pool(&v3_pool, pool_address).await,
+         }
+     }
 
     /// Find V3 counterpart for a V2 pool to create arbitrage opportunity
     async fn find_arbitrage_for_v2_pool(

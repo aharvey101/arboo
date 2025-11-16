@@ -99,85 +99,102 @@ async fn main() -> Result<()> {
      let mut skipped_count = 0;
      
      info!("🔍 Starting to parse pools from cache file - checking field lengths");
+     
+     // Define our target tokens for detailed logging
+     let dai_addr = "0x6b175474e89094c44da98b954eedeac495271d0f".to_lowercase();
+     let weth_addr = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_lowercase();
 
      for line in reader.lines().skip(1) {
-         let line = line?;
-         let fields: Vec<&str> = line.split(',').collect();
-         
-         // Debug: check fields count and version field
-         if fields.len() < 6 {
-             warn!("⚠️ Skipping malformed line with {} fields: {}", fields.len(), line);
-             skipped_count += 1;
-             continue;
-         }
-         
+          let line = line?;
+          let fields: Vec<&str> = line.split(',').collect();
+          
+          // Debug: check fields count and version field
+          if fields.len() < 6 {
+              warn!("⚠️ Skipping malformed line with {} fields: {}", fields.len(), line);
+              skipped_count += 1;
+              continue;
+          }
+          
           let version_str = fields[2];
           if fields.len() < 6 || fields.len() > 8 {
               warn!("⚠️ Unexpected field count: {} fields (expected 6-8)", fields.len());
           }
-         
-         if version_str != "2" && version_str != "3" {
-             warn!("⚠️ Unknown version string: '{}' (len={})", version_str, version_str.len());
-         }
-         
-         match version_str {
-              "2" => {
-                  v2_count += 1;
-                  let pair_address = Address::from_str(fields[1]).map_err(|e| {
-                     anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e)
-                 })?;
-                pools_map.insert(
-                    pair_address,
-                    Event::PairCreated(V2PoolCreated {
-                        pair_address,
-                        token0: Address::from_str(fields[3]).map_err(|e| {
-                            anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e)
-                        })?,
-                        token1: Address::from_str(fields[4]).map_err(|e| {
-                            anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e)
-                        })?,
-                        fee: fields[5].parse::<u32>().map_err(|e| {
-                            anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e)
-                        })?,
-                    }),
-                );
-            }
-             "3" => {
-                 v3_count += 1;
-                 info!("📍 Processing V3 pool #{}: address={}", v3_count, fields[1]);
-                 let pair_address = Address::from_str(fields[1]).map_err(|e| {
-                     anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e)
-                 })?;
+          
+          if version_str != "2" && version_str != "3" {
+              warn!("⚠️ Unknown version string: '{}' (len={})", version_str, version_str.len());
+          }
+          
+          // Get token addresses for logging
+          let token0_lower = fields.get(3).map(|t| t.to_lowercase()).unwrap_or_default();
+          let token1_lower = fields.get(4).map(|t| t.to_lowercase()).unwrap_or_default();
+          let is_dai_weth = (token0_lower == dai_addr && token1_lower == weth_addr) ||
+                            (token0_lower == weth_addr && token1_lower == dai_addr);
+          
+          match version_str {
+               "2" => {
+                   v2_count += 1;
+                   if is_dai_weth {
+                       info!("✅ Found V2 DAI/WETH pool: address={}, token0={}, token1={}, fee={}", 
+                           fields[1], fields[3], fields[4], fields[5]);
+                   }
+                   let pair_address = Address::from_str(fields[1]).map_err(|e| {
+                      anyhow::anyhow!("Invalid V2 pair address '{}': {}", fields[1], e)
+                  })?;
                  pools_map.insert(
-                    pair_address,
-                    Event::PoolCreated(V3PoolCreated {
-                        pair_address,
-                        token0: Address::from_str(fields[3]).map_err(|e| {
-                            anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e)
-                        })?,
-                        token1: Address::from_str(fields[4]).map_err(|e| {
-                            anyhow::anyhow!("Invalid V3 token1 address '{}': {}", fields[4], e)
-                        })?,
-                        fee: fields[5].parse::<u32>().map_err(|e| {
-                            anyhow::anyhow!("Invalid V3 fee '{}': {}", fields[5], e)
-                        })?,
-                        tick_spacing: 0i32,
-                    }),
-                );
-            }
-             _ => {
-                 skipped_count += 1;
-                 warn!(
-                     "⚠️ Skipping unknown pool version '{}' (len={}) for address {}",
-                     version_str, version_str.len(), fields[1]
+                     pair_address,
+                     Event::PairCreated(V2PoolCreated {
+                         pair_address,
+                         token0: Address::from_str(fields[3]).map_err(|e| {
+                             anyhow::anyhow!("Invalid V2 token0 address '{}': {}", fields[3], e)
+                         })?,
+                         token1: Address::from_str(fields[4]).map_err(|e| {
+                             anyhow::anyhow!("Invalid V2 token1 address '{}': {}", fields[4], e)
+                         })?,
+                         fee: fields[5].parse::<u32>().map_err(|e| {
+                             anyhow::anyhow!("Invalid V2 fee '{}': {}", fields[5], e)
+                         })?,
+                     }),
                  );
-                 if skipped_count <= 10 {
-                     debug!("Full line: {}", line);
-                 }
-                 continue;
              }
-         };
-    }
+              "3" => {
+                  v3_count += 1;
+                  if is_dai_weth {
+                      info!("✅ Found V3 DAI/WETH pool: address={}, token0={}, token1={}, fee={}", 
+                          fields[1], fields[3], fields[4], fields[5]);
+                  }
+                  let pair_address = Address::from_str(fields[1]).map_err(|e| {
+                      anyhow::anyhow!("Invalid V3 pair address '{}': {}", fields[1], e)
+                  })?;
+                  pools_map.insert(
+                     pair_address,
+                     Event::PoolCreated(V3PoolCreated {
+                         pair_address,
+                         token0: Address::from_str(fields[3]).map_err(|e| {
+                             anyhow::anyhow!("Invalid V3 token0 address '{}': {}", fields[3], e)
+                         })?,
+                         token1: Address::from_str(fields[4]).map_err(|e| {
+                             anyhow::anyhow!("Invalid V3 token1 address '{}': {}", fields[4], e)
+                         })?,
+                         fee: fields[5].parse::<u32>().map_err(|e| {
+                             anyhow::anyhow!("Invalid V3 fee '{}': {}", fields[5], e)
+                         })?,
+                         tick_spacing: 0i32,
+                     }),
+                 );
+             }
+              _ => {
+                  skipped_count += 1;
+                  warn!(
+                      "⚠️ Skipping unknown pool version '{}' (len={}) for address {}",
+                      version_str, version_str.len(), fields[1]
+                  );
+                  if skipped_count <= 10 {
+                      debug!("Full line: {}", line);
+                  }
+                  continue;
+              }
+          };
+     }
 
     let pools_map = Arc::new(RwLock::new(pools_map));
     info!(
