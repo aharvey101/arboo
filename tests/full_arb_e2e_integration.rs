@@ -170,19 +170,19 @@ async fn run_e2e_test() -> Result<()> {
      // Analyze the output for successful simulations and validate requirements
      analyze_arboo_output(&arboo_output)?;
 
-     // Check final WETH balance to see if arbitrage executed
-     let final_weth_balance = get_token_balance(&provider, funded_account, arbitrage_setup.weth_address).await?;
-     let weth_balance_change = if final_weth_balance > balance_after_setup {
-         let diff = final_weth_balance - balance_after_setup;
-         format!("+{} WETH", diff / U256::from(10u128.pow(18)))
-     } else if final_weth_balance < balance_after_setup {
-         let diff = balance_after_setup - final_weth_balance;
-         format!("-{} WETH", diff / U256::from(10u128.pow(18)))
-     } else {
-         "0 WETH".to_string()
-     };
-     info!("💰 Final WETH balance: {} WETH", final_weth_balance / U256::from(10u128.pow(18)));
-     info!("📊 WETH balance change: {}", weth_balance_change);
+      // Check final WETH balance to see if arbitrage executed
+      let final_weth_balance = get_token_balance(&provider, funded_account, arbitrage_setup.weth_address).await?;
+      let weth_balance_change = if final_weth_balance > balance_after_setup {
+          let diff = final_weth_balance - balance_after_setup;
+          format!("+{} WETH", diff / U256::from(10u128.pow(18)))
+      } else if final_weth_balance < balance_after_setup {
+          let diff = balance_after_setup - final_weth_balance;
+          format!("-{} WETH", diff / U256::from(10u128.pow(18)))
+      } else {
+          "0 WETH".to_string()
+      };
+      info!("💰 Final WETH balance: {} WETH", final_weth_balance / U256::from(10u128.pow(18)));
+      info!("📊 WETH balance change: {}", weth_balance_change);
 
       // Assert that WETH balance increased (arbitrage was profitable and executed)
       if final_weth_balance <= balance_after_setup {

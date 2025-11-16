@@ -295,9 +295,9 @@ impl LogProcessor {
     /// Discover pool details from blockchain when pool is not in cache
     /// Attempts to determine if pool is V2 or V3 and extract token pair
     async fn discover_pool_from_logs(&self, pool_address: Address) -> Option<Event> {
-        debug!("Attempting to discover pool {} from historical logs", pool_address);
+        debug!("Attempting to discover pool {} from historical logs or direct calls", pool_address);
         
-        // Get a few recent blocks to search for pool creation events
+        // First try to discover from historical factory events
         let current_block = match self.provider.get_block_number().await {
             Ok(block) => block,
             Err(e) => {
@@ -306,8 +306,8 @@ impl LogProcessor {
             }
         };
         
-        // Search back up to 100 blocks for PoolCreated/PairCreated events from this address
-        let from_block = current_block.saturating_sub(100);
+        // Search back up to 1000 blocks for PoolCreated/PairCreated events from this address
+        let from_block = current_block.saturating_sub(1000);
         
         // Try V3 PoolCreated event first
         if let Ok(event) = self.try_discover_v3_pool(pool_address, from_block, current_block).await {
@@ -319,7 +319,146 @@ impl LogProcessor {
             return Some(event);
         }
         
-        debug!("Could not discover pool {} in recent blocks", pool_address);
+        // If not found in recent blocks, try querying the pool directly
+        debug!("Pool creation events not found in recent blocks, attempting direct pool query");
+        if let Some(event) = self.discover_pool_by_querying(pool_address).await {
+            return Some(event);
+        }
+        
+        debug!("Could not discover pool {} in recent blocks or by direct query", pool_address);
+        None
+    }
+
+    /// Try to discover pool by querying the pool contract directly
+    async fn discover_pool_by_querying(&self, pool_address: Address) -> Option<Event> {
+        // Try to determine if it's a V2 or V3 pool by querying known methods
+        
+        // For V2 pairs, try to call token0() and token1()
+        if let Some(event) = self.try_query_v2_pool(pool_address).await {
+            return Some(event);
+        }
+        
+        // For V3 pools, try to call token0(), token1(), and fee()
+        if let Some(event) = self.try_query_v3_pool(pool_address).await {
+            return Some(event);
+        }
+        
+        None
+    }
+
+    /// Query a V2 pool directly for its token addresses
+    async fn try_query_v2_pool(&self, pool_address: Address) -> Option<Event> {
+        use alloy::sol_types::SolCall;
+        
+        alloy::sol! {
+            function token0() external view returns (address);
+            function token1() external view returns (address);
+        }
+        
+        // Try to call token0()
+        let token0_call = token0Call {};
+        let token0_result = self.provider
+            .call(
+                &alloy::rpc::types::TransactionRequest::default()
+                    .to(pool_address)
+                    .input(token0_call.abi_encode().into()),
+            )
+            .await
+            .ok()?;
+        
+        // Try to call token1()
+        let token1_call = token1Call {};
+        let token1_result = self.provider
+            .call(
+                &alloy::rpc::types::TransactionRequest::default()
+                    .to(pool_address)
+                    .input(token1_call.abi_encode().into()),
+            )
+            .await
+            .ok()?;
+        
+        // Decode results
+        use alloy_sol_types::SolValue;
+        let token0 = Address::abi_decode(&token0_result, false).ok()?;
+        let token1 = Address::abi_decode(&token1_result, false).ok()?;
+        
+        if token0 != token1 && token0 != Address::ZERO && token1 != Address::ZERO {
+            info!("✅ Discovered V2 pair by querying: {:?} (token0: {:?}, token1: {:?})",
+                  pool_address, token0, token1);
+            
+            return Some(Event::PairCreated(super::pairs::V2PoolCreated {
+                pair_address: pool_address,
+                token0,
+                token1,
+                fee: 3000, // V2 default fee
+            }));
+        }
+        
+        None
+    }
+
+    /// Query a V3 pool directly for its token addresses and fee
+    async fn try_query_v3_pool(&self, pool_address: Address) -> Option<Event> {
+        use alloy::sol_types::SolCall;
+        
+        alloy::sol! {
+            function token0() external view returns (address);
+            function token1() external view returns (address);
+            function fee() external view returns (uint24);
+        }
+        
+        // Try to call token0()
+        let token0_call = token0Call {};
+        let token0_result = self.provider
+            .call(
+                &alloy::rpc::types::TransactionRequest::default()
+                    .to(pool_address)
+                    .input(token0_call.abi_encode().into()),
+            )
+            .await
+            .ok()?;
+        
+        // Try to call token1()
+        let token1_call = token1Call {};
+        let token1_result = self.provider
+            .call(
+                &alloy::rpc::types::TransactionRequest::default()
+                    .to(pool_address)
+                    .input(token1_call.abi_encode().into()),
+            )
+            .await
+            .ok()?;
+        
+        // Try to call fee()
+        let fee_call = feeCall {};
+        let fee_result = self.provider
+            .call(
+                &alloy::rpc::types::TransactionRequest::default()
+                    .to(pool_address)
+                    .input(fee_call.abi_encode().into()),
+            )
+            .await
+            .ok()?;
+        
+        // Decode results
+        use alloy_sol_types::SolValue;
+        let token0 = Address::abi_decode(&token0_result, false).ok()?;
+        let token1 = Address::abi_decode(&token1_result, false).ok()?;
+        let fee = u32::abi_decode(&fee_result, false).ok()?;
+        
+        if token0 != token1 && token0 != Address::ZERO && token1 != Address::ZERO {
+            info!("✅ Discovered V3 pool by querying: {:?} (token0: {:?}, token1: {:?}, fee: {})",
+                  pool_address, token0, token1, fee);
+            
+            return Some(Event::PoolCreated(super::pairs::V3PoolCreated {
+                pair_address: pool_address,
+                token0,
+                token1,
+                fee,
+                tick_spacing: 0,
+            }));
+        }
+        
         None
     }
 
@@ -521,9 +660,17 @@ pub async fn get_logs(
         }
     };
     
-    // Create event signature filters from the current block onward
-    let filter = create_swap_event_filter(current_block);
-    info!("Log subscription will capture events from block {} onward", current_block);
+    // Subscribe from a slightly earlier block to catch recent swaps that may have happened during startup
+    // This helps capture swap events that occurred during arboo compilation and initialization
+    let subscription_start_block = if current_block > 10 {
+        current_block - 10
+    } else {
+        0
+    };
+    
+    // Create event signature filters from the subscription start block onward
+    let filter = create_swap_event_filter(subscription_start_block);
+    info!("Log subscription will capture events from block {} onward (current block: {})", subscription_start_block, current_block);
     
     // Subscribe to logs
     let stream = match subscribe_to_logs(&client, filter).await {
