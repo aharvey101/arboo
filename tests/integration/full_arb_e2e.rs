@@ -265,14 +265,14 @@ async fn setup_basic_test_environment(
 ) -> Result<ArbitrageSetup> {
     info!("🔧 Setting up real arbitrage environment with mainnet fork...");
 
-    // Real mainnet addresses for WETH/DAI (better liquidity for arbitrage testing)
-    let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH
-    let dai_address = address!("0x6b175474e89094c44da98b954eedeac495271d0f"); // DAI
+    // Real mainnet addresses for DAI/WETH (verified pools in our cache)
+    let dai_address = address!("0x6b175474e89094c44da98b954eedeac495271d0f"); // DAI (token0)
+    let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH (token1)
 
-    // Use pools that are ACTUALLY in our cache with good liquidity
-    // V2 Pool: WETH/DAI (good liquidity)
+    // Use verified pools from cache (ID 13620 and 37367)
+    // V2 Pool (DAI/WETH, fee 300): 0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84
+    // V3 Pool (DAI/WETH, fee 10): 0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9
     let v2_pool_address = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84");
-    // V3 Pool: WETH/DAI 0.01% fee (high precision, good for arbitrage)
     let v3_pool_address = address!("0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9");
 
     // Create arbitrage opportunity by executing a large swap on V2
@@ -281,17 +281,17 @@ async fn setup_basic_test_environment(
     let setup = ArbitrageSetup {
         v3_pool_address,
         v2_pool_address,
-        token0: weth_address,
-        token1: dai_address,
+        token0: dai_address,
+        token1: weth_address,
         weth_address,
     };
 
     // Log the addresses for verification
     info!("📍 Pool addresses configured:");
-    info!("  WETH: {:#x}", weth_address);
     info!("  DAI: {:#x}", dai_address);
-    info!("  V2 Pool: {:#x}", v2_pool_address);
-    info!("  V3 Pool: {:#x}", v3_pool_address);
+    info!("  WETH: {:#x}", weth_address);
+    info!("  V2 Pool (DAI/WETH, fee 300): {:#x}", v2_pool_address);
+    info!("  V3 Pool (DAI/WETH, fee 10): {:#x}", v3_pool_address);
 
     let current_block = provider.get_block_number().await?;
     info!(
@@ -315,29 +315,29 @@ async fn execute_market_moving_swap(
     info!("💰 Using Anvil pre-funded account with 10,000 ETH");
     info!("🎭 No impersonation needed - account has signing capability");
 
-    info!("📍 Funded account: {:#x}", funded_account);
-    info!("📍 V2 Pool: {:#x}", setup.v2_pool_address);
-    info!("📍 V3 Pool: {:#x}", setup.v3_pool_address);
-    info!("📍 Token0 (WETH): {:#x}", setup.token0);
-    info!("📍 Token1 (USDC): {:#x}", setup.token1);
+     info!("📍 Funded account: {:#x}", funded_account);
+     info!("📍 V2 Pool: {:#x}", setup.v2_pool_address);
+     info!("📍 V3 Pool: {:#x}", setup.v3_pool_address);
+     info!("📍 Token0 (DAI): {:#x}", setup.token0);
+     info!("📍 Token1 (WETH): {:#x}", setup.token1);
 
-    // Uniswap V3 SwapRouter address (not Universal Router)
-    let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
-    info!("📍 V3 SwapRouter: {:#x}", v3_router);
+     // Uniswap V3 SwapRouter address (not Universal Router)
+     let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
+     info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-    let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 50 ETH swap to create massive price imbalance
-    info!(
-        "💱 Will swap {} ETH for DAI on V2 to create price imbalance",
-        swap_amount / U256::from(10u128.pow(18))
-    );
+     let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 50 WETH swap to create massive price imbalance
+     info!(
+         "💱 Will swap {} WETH for DAI on V2 to create price imbalance",
+         swap_amount / U256::from(10u128.pow(18))
+     );
 
-    match execute_uniswap_v2_swap(
-        provider,
-        funded_account,
-        swap_amount,
-        setup.token0, // WETH (for deposit and approval)
-        setup.token1, // USDC (target token)
-    )
+     match execute_uniswap_v2_swap(
+         provider,
+         funded_account,
+         swap_amount,
+         setup.token1, // WETH (for deposit and approval)
+         setup.token0, // DAI (target token)
+     )
     .await
     {
         Ok(tx_hash) => {
