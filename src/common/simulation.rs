@@ -419,23 +419,23 @@ impl MultiContractSimulator {
                 function_call.abi_encode()
             }
             ContractType::ArbitrageV2ToV3 => {
-                // Add V2 to V3 arbitrage call here
+                // V2 to V3 arbitrage call matching actual contract function signature
                 alloy::sol! {
                     function flashSwap_V2_to_V3(
-                        address pool0,
-                        uint24 fee1,
+                        address v2Pool,
                         address tokenIn,
                         address tokenOut,
                         uint256 amountIn,
+                        uint24 v3Fee
                     ) external;
                 }
 
                 let function_call = flashSwap_V2_to_V3Call {
-                    pool0: target_pool,
-                    fee1: fee,
+                    v2Pool: target_pool,
                     tokenIn: token_a,
                     tokenOut: token_b,
                     amountIn: amount,
+                    v3Fee: fee,
                 };
                 function_call.abi_encode()
             }
@@ -468,18 +468,15 @@ impl MultiContractSimulator {
                     )
                     .await?;
 
-                // Calculate profit in target token
-                let target_token = if token_b == get_address(AddressType::Weth) {
-                    token_a
-                } else {
-                    token_b
-                };
+                // Calculate profit in WETH (standard arbitrage profit measurement)
+                // In arbitrage, we typically start and end with WETH to measure profit
+                let weth_address = get_address(AddressType::Weth);
                 let profit = final_token_balances
-                    .get(&target_token)
+                    .get(&weth_address)
                     .unwrap_or(&U256::ZERO)
                     .saturating_sub(
                         *initial_token_balances
-                            .get(&target_token)
+                            .get(&weth_address)
                             .unwrap_or(&U256::ZERO),
                     );
 
@@ -487,9 +484,16 @@ impl MultiContractSimulator {
 
                 if enable_logging {
                     info!(
-                        "✅ Arbitrage simulation complete - Profit: {} wei, Duration: {:?}",
+                        "✅ Arbitrage simulation complete - WETH Profit: {} wei, Duration: {:?}",
                         profit, execution_time
                     );
+                    info!("📊 Token balance changes:");
+                    for (token, final_balance) in &final_token_balances {
+                        let initial_balance = initial_token_balances.get(token).unwrap_or(&U256::ZERO);
+                        let change = final_balance.saturating_sub(*initial_balance);
+                        info!("  Token {:#x}: {} -> {} (change: {} wei)", 
+                            token, initial_balance, final_balance, change);
+                    }
                 }
 
                 Ok(SimulationResult {

@@ -265,15 +265,15 @@ async fn setup_basic_test_environment(
 ) -> Result<ArbitrageSetup> {
     info!("🔧 Setting up real arbitrage environment with mainnet fork...");
 
-    // Real mainnet addresses for DAI/WETH (verified pools in our cache)
+    // Real mainnet addresses for DAI/WETH (using higher liquidity pools)
     let dai_address = address!("0x6b175474e89094c44da98b954eedeac495271d0f"); // DAI (token0)
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH (token1)
 
-    // Use verified pools from cache (ID 13620 and 37367)
-    // V2 Pool (DAI/WETH, fee 300): 0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84
-    // V3 Pool (DAI/WETH, fee 10): 0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9
-    let v2_pool_address = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84");
-    let v3_pool_address = address!("0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9");
+    // Use the highest liquidity DAI/WETH pools for optimal arbitrage testing
+    // V2 Pool (DAI/WETH): 0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11 - Classic high-liquidity Uniswap V2 
+    // V3 Pool (DAI/WETH): 0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8 - 0.3% fee pool with good liquidity
+    let v2_pool_address = address!("0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"); // High-liquidity V2 DAI/WETH
+    let v3_pool_address = address!("0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8"); // High-liquidity V3 DAI/WETH (0.3%)
 
     // Create arbitrage opportunity by executing a large swap on V2
     info!("💰 Creating arbitrage opportunity with large V2 swap...");
@@ -290,8 +290,8 @@ async fn setup_basic_test_environment(
     info!("📍 Pool addresses configured:");
     info!("  DAI: {:#x}", dai_address);
     info!("  WETH: {:#x}", weth_address);
-    info!("  V2 Pool (DAI/WETH, fee 300): {:#x}", v2_pool_address);
-    info!("  V3 Pool (DAI/WETH, fee 10): {:#x}", v3_pool_address);
+    info!("  V2 Pool (DAI/WETH): {:#x} - High-liquidity V2 pool", v2_pool_address);
+    info!("  V3 Pool (DAI/WETH): {:#x} - High-liquidity V3 pool (0.3% fee)", v3_pool_address);
 
     let current_block = provider.get_block_number().await?;
     info!(
@@ -325,25 +325,25 @@ async fn execute_market_moving_swap(
      let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
      info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-     let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 50 WETH swap to create massive price imbalance
-     info!(
-         "💱 Will swap {} WETH for DAI on V2 to create price imbalance",
-         swap_amount / U256::from(10u128.pow(18))
-     );
+      let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 WETH swap - optimized for USDC high-liquidity pool
+      info!(
+          "💱 Will swap {} WETH for DAI on high-liquidity V2 pool to create arbitrage opportunity",
+          swap_amount / U256::from(10u128.pow(18))
+      );
 
       match execute_uniswap_v2_swap(
           provider,
           funded_account,
           swap_amount,
           setup.token1, // WETH
-          setup.token0, // DAI
+           setup.token0, // DAI
       )
     .await
     {
         Ok(tx_hash) => {
             info!("✅ Large swap executed successfully: {:?}", tx_hash);
             info!("📊 ARBITRAGE OPPORTUNITY CREATED!");
-            info!("💰 V2 pool price moved due to ETH->DAI swap");
+            info!("💰 High-liquidity V2 pool price moved due to ETH->DAI swap");
             info!("🔍 Should see events from DAI/WETH V2 pool");
             info!("🚨 Arboo should detect this swap event!");
         }
@@ -355,9 +355,9 @@ async fn execute_market_moving_swap(
     }
 
     info!(
-        "✅ Market setup complete - WETH/DAI pairs ready for arbitrage opportunities"
+        "✅ Market setup complete - High-liquidity DAI/WETH pairs ready for profitable arbitrage"
     );
-    info!("🔍 Arboo should detect price differences between WETH/DAI V2 and V3 pools");
+    info!("🔍 Arboo should detect price differences between DAI/WETH V2 and V3 pools");
 
      Ok(())
 }

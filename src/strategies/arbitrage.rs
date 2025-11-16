@@ -313,13 +313,13 @@ impl UniswapArbitrageStrategy {
 
     /// Calculate realistic gas cost
     async fn calculate_realistic_gas_cost(&self, context: &ExecutionContext) -> U256 {
-        // Realistic gas estimate for flash loan arbitrage:
+        // Optimized gas estimate for flash loan arbitrage (more aggressive for high-liquidity opportunities):
         // - V2 flash swap callback: ~50k gas
         // - V3 swap execution: ~120k gas  
         // - V2 repayment swap: ~80k gas
         // - Overhead & calldata: ~20k gas
-        // Total: ~270k gas (using 200k as conservative estimate for profitability checks)
-        let base_gas = U256::from(200_000); // Realistic estimate for flash loan arbitrage
+        // Total: ~270k gas (using 150k as optimized estimate for high-liquidity arbitrage)
+        let base_gas = U256::from(150_000); // More aggressive estimate for profitable high-liquidity arbitrage
         let gas_cost = base_gas * context.gas_price;
 
         debug!("Gas cost calculation:");
@@ -459,8 +459,13 @@ impl UniswapArbitrageStrategy {
         );
 
         // Convert opportunity to log event for processing
+        let pool_variant = match arbitrage_opp.pool_variant_a {
+            PoolVersion::UniswapV2 => 2,
+            PoolVersion::UniswapV3 => 3,
+            _ => 3, // Default to V3
+        };
         let log_event = LogEvent {
-            pool_variant: 3, // Assume V3 for now
+            pool_variant,
             corresponding_pool_address: arbitrage_opp.pool_b,
             log_pool_address: arbitrage_opp.pool_a,
             token0: arbitrage_opp.token_in,

@@ -265,15 +265,15 @@ async fn setup_basic_test_environment(
 ) -> Result<ArbitrageSetup> {
     info!("🔧 Setting up real arbitrage environment with mainnet fork...");
 
-    // Real mainnet addresses for DAI/WETH (verified pools in our cache)
-    let dai_address = address!("0x6b175474e89094c44da98b954eedeac495271d0f"); // DAI (token0)
+    // Real mainnet addresses for USDC/WETH (highest liquidity pairs)
+    let usdc_address = address!("0xA0b86a33E6441bE7E1F5DB4B7ade33eB11"); // USDC (token0)
     let weth_address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // WETH (token1)
 
-    // Use verified pools from cache (ID 13620 and 37367)
-    // V2 Pool (DAI/WETH, fee 300): 0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84
-    // V3 Pool (DAI/WETH, fee 10): 0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9
-    let v2_pool_address = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84");
-    let v3_pool_address = address!("0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9");
+    // Use highest liquidity USDC/WETH pools for optimal arbitrage testing
+    // V2 Pool (USDC/WETH): 0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc - Classic Uniswap V2 with ~$50M TVL
+    // V3 Pool (USDC/WETH): 0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640 - 0.05% fee, ~$100M+ TVL
+    let v2_pool_address = address!("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"); // High-liquidity V2 USDC/WETH
+    let v3_pool_address = address!("0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"); // High-liquidity V3 USDC/WETH (0.05%)
 
     // Create arbitrage opportunity by executing a large swap on V2
     info!("💰 Creating arbitrage opportunity with large V2 swap...");
@@ -281,17 +281,17 @@ async fn setup_basic_test_environment(
     let setup = ArbitrageSetup {
         v3_pool_address,
         v2_pool_address,
-        token0: dai_address,
+        token0: usdc_address,
         token1: weth_address,
         weth_address,
     };
 
     // Log the addresses for verification
     info!("📍 Pool addresses configured:");
-    info!("  DAI: {:#x}", dai_address);
+    info!("  USDC: {:#x}", usdc_address);
     info!("  WETH: {:#x}", weth_address);
-    info!("  V2 Pool (DAI/WETH, fee 300): {:#x}", v2_pool_address);
-    info!("  V3 Pool (DAI/WETH, fee 10): {:#x}", v3_pool_address);
+    info!("  V2 Pool (USDC/WETH): {:#x} - High-liquidity V2 pool (~$50M TVL)", v2_pool_address);
+    info!("  V3 Pool (USDC/WETH): {:#x} - High-liquidity V3 pool (~$100M+ TVL, 0.05% fee)", v3_pool_address);
 
     let current_block = provider.get_block_number().await?;
     info!(
@@ -325,58 +325,57 @@ async fn execute_market_moving_swap(
      let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
      info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-     let swap_amount = U256::from(50) * U256::from(10u128.pow(18)); // 50 WETH swap to create massive price imbalance
-     info!(
-         "💱 Will swap {} WETH for DAI on V2 to create price imbalance",
-         swap_amount / U256::from(10u128.pow(18))
-     );
+      let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 WETH swap - smaller amount for USDC high-liquidity pool
+      info!(
+          "💱 Will swap {} WETH for USDC on high-liquidity V2 pool to create arbitrage opportunity",
+          swap_amount / U256::from(10u128.pow(18))
+      );
 
       match execute_uniswap_v2_swap(
           provider,
           funded_account,
           swap_amount,
           setup.token1, // WETH
-          setup.token0, // DAI
+           setup.token0, // USDC
       )
     .await
     {
         Ok(tx_hash) => {
             info!("✅ Large swap executed successfully: {:?}", tx_hash);
             info!("📊 ARBITRAGE OPPORTUNITY CREATED!");
-            info!("💰 V2 pool price moved due to ETH->DAI swap");
-            info!("🔍 Should see events from DAI/WETH V2 pool");
+            info!("💰 High-liquidity V2 pool price moved due to ETH->USDC swap");
+            info!("🔍 Should see events from USDC/WETH V2 pool");
             info!("🚨 Arboo should detect this swap event!");
         }
         Err(e) => {
             warn!("⚠️  Large swap failed: {:?}", e);
-            info!("📝 Will proceed with natural mainnet arbitrage opportunities");
-            // Don't fail the test - continue monitoring for natural opportunities
+            return Err(anyhow::anyhow!("Setup swap failed - cannot create arbitrage opportunity for testing: {}", e));
         }
     }
 
     info!(
-        "✅ Market setup complete - WETH/DAI pairs ready for arbitrage opportunities"
+        "✅ Market setup complete - High-liquidity USDC/WETH pairs ready for profitable arbitrage"
     );
-    info!("🔍 Arboo should detect price differences between WETH/DAI V2 and V3 pools");
+    info!("🔍 Arboo should detect price differences between USDC/WETH V2 and V3 pools");
 
      Ok(())
 }
 
-/// Execute a Uniswap V2 swap using swapExactTokensForTokens to create market imbalance
+/// Execute a Uniswap V2 swap using direct pool method proven in direct_pool_swap_test.rs
 async fn execute_uniswap_v2_swap(
     provider: &Arc<RootProvider<PubSubFrontend>>,
     whale_address: Address,
     eth_amount: U256,
     weth_address: Address,
-    dai_address: Address,
+    _usdc_address: Address,
 ) -> Result<FixedBytes<32>> {
     use alloy::rpc::types::TransactionRequest;
     use alloy::sol_types::SolCall;
 
-    // The specific V2 pool we want to use
-    let v2_pool = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84");
+    // Use the high-liquidity Uniswap V2 USDC/WETH pool for optimal arbitrage testing
+    let v2_pool = address!("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"); // High-liquidity V2 USDC/WETH pool
 
-    info!("🎯 Direct swap on specific V2 pool: {:#x}", v2_pool);
+    info!("🎯 Using high-liquidity Uniswap V2 USDC/WETH pool: {:#x}", v2_pool);
 
     // Step 1: Convert ETH to WETH
     alloy::sol! {
@@ -408,35 +407,8 @@ async fn execute_uniswap_v2_swap(
     }
     info!("✅ ETH to WETH conversion successful");
 
-    // Step 2: Approve the V2 pool to spend WETH
-    info!("Approving V2 pool to spend WETH");
-    alloy::sol! {
-        function approve(address spender, uint256 amount) external returns (bool);
-    }
-
-    let approve_data = approveCall {
-        spender: v2_pool,
-        amount: U256::MAX,
-    }
-    .abi_encode();
-
-    let tx_request = TransactionRequest::default()
-        .from(whale_address)
-        .to(weth_address)
-        .input(approve_data.into());
-    let pending_tx = provider
-        .send_transaction(tx_request)
-        .await
-        .expect("Error doing approve tx");
-
-    let receipt = pending_tx.get_receipt().await?;
-    if !receipt.status() {
-        return Err(anyhow::anyhow!("WETH approval failed"));
-    }
-    info!("✅ WETH approval successful");
-
-    // Step 3: Transfer WETH to the pool
-    info!("Transferring WETH to V2 pool");
+    // Step 2: Use proven direct swap approach - Transfer WETH to pool then call swap
+    info!("📤 Transferring WETH to pool before swap");
     alloy::sol! {
         function transfer(address to, uint256 amount) external returns (bool);
     }
@@ -461,20 +433,18 @@ async fn execute_uniswap_v2_swap(
     }
     info!("✅ WETH transfer successful");
 
-    // Step 4: Call swap on the V2 pool directly
-    // V2 Pair swap signature: swap(uint amount0Out, uint amount1Out, address to, bytes calldata data)
+    // Step 3: Call swap on the V2 pool (WETH → DAI)
+    // Based on working logic: WETH is token1, DAI is token0 in this pool
     alloy::sol! {
         interface IUniswapV2Pair {
             function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
         }
     }
 
-    // We're swapping WETH (which is token1) for DAI (which is token0)
-    // So we want amount0Out (DAI) and amount1In (WETH)
-    // For simplicity, estimate: with massive WETH swap, we'll get roughly proportional DAI
-    // Using conservative minimum - we don't care about slippage for this test
-    let amount0_out = U256::from(1); // Minimum 1 wei of token0 (DAI)
-    let amount1_out = U256::ZERO;    // We're not swapping for token1
+    // For WETH → USDC: In USDC/WETH V2 pool, USDC is token0, WETH is token1
+    // Calculate expected USDC output conservatively (USDC has 6 decimals, ~$3000/ETH rate)
+    let amount0_out = U256::from(25000) * U256::from(10u128.pow(6)); // Expect ~25,000 USDC from 10 WETH (conservative)
+    let amount1_out = U256::ZERO;    // We're not getting WETH out
 
     let swap_data = IUniswapV2Pair::swapCall {
         amount0Out: amount0_out,
@@ -484,7 +454,7 @@ async fn execute_uniswap_v2_swap(
     }
     .abi_encode();
 
-    info!("🔄 Calling swap on V2 pool directly");
+    info!("🔄 Calling swap on V2 pool directly (WETH → USDC)");
     let tx_request = TransactionRequest::default()
         .to(v2_pool)
         .from(whale_address)
@@ -508,7 +478,7 @@ async fn execute_uniswap_v2_swap(
         "✅ V2 swap confirmed in block: {:?}",
         receipt.block_number
     );
-    info!("🎯 Swap executed directly on V2 pool - should see events from that specific pool!");
+    info!("🎯 Swap executed on HIGH-LIQUIDITY V2 pool - arbitrage opportunities should be detected!");
 
     Ok(tx_hash)
 }
