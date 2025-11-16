@@ -50,40 +50,56 @@ async fn main() -> Result<()> {
     let provider = Arc::new(provider);
 
      let cache_path = format!("{}/.cached-pools.csv", cache_dir);
-     if !Path::new(&cache_path).try_exists()? {
-         info!("Cache doesn't exist, crawling recent blocks for pools");
-         // For forked testnets, pools only exist in recent blocks
-         // Scan the last 100k blocks to find existing pools (should cover all relevant pools)
-         // Use chunk size of 10000 blocks to avoid RPC timeouts
-         let from_block = block_number.saturating_sub(100_000);
-         let chunk_size = 10000u64;
-         pools::load_all_pools(ws_url.clone(), from_block, chunk_size, &cache_path)
+     
+     // Check if cache exists and has pools
+     let should_scan_blocks = if !Path::new(&cache_path).try_exists()? {
+         info!("Cache doesn't exist, crawling blocks for pools");
+         true
+     } else {
+         // Check if cache file is empty (only has headers)
+         let file = File::open(&cache_path).map_err(|e| anyhow::anyhow!("Failed to open pools file {}", e))?;
+         let reader = io::BufReader::new(file);
+         let line_count = reader.lines().count();
+         
+         if line_count <= 1 {
+             // Only header or completely empty
+             info!("Cache file is empty (only {} lines), crawling blocks for pools", line_count);
+             true
+         } else {
+             info!("Cache file exists with {} lines, using cached pools", line_count);
+             false
+         }
+     };
+
+     if should_scan_blocks {
+         // Start from block 100k (when most pools were created) with 50k block chunks
+         pools::load_all_pools(ws_url.clone(), 100_000, 50_000, &cache_path)
              .await
              .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
      }
 
-    let mut set = JoinSet::new();
+     let mut set = JoinSet::new();
 
-    // Create cancellation token for graceful shutdown
-    let cancellation_token = CancellationToken::new();
+     // Create cancellation token for graceful shutdown
+     let cancellation_token = CancellationToken::new();
 
-    // Create channels for different event types
-    let (log_event_sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
+     // Create channels for different event types
+     let (log_event_sender, _): (Sender<LogEvent>, _) = broadcast::channel(512);
 
-    // Load pools map
-    let mut pools_map: HashMap<Address, Event> = HashMap::new();
-    let path = Path::new(&cache_path);
-    let file = File::open(path).map_err(|e| anyhow::anyhow!("Failed to load pools file {}", e))?;
-    //info!("File: {:?}", file);
-    let reader = io::BufReader::new(file);
+     // Load pools map
+     let mut pools_map: HashMap<Address, Event> = HashMap::new();
+     let path = Path::new(&cache_path);
+     let file = File::open(path).map_err(|e| anyhow::anyhow!("Failed to load pools file {}", e))?;
+     //info!("File: {:?}", file);
+     let reader = io::BufReader::new(file);
 
-    let mut v2_count = 0;
-    let mut v3_count = 0;
-    let mut skipped_count = 0;
+     let mut v2_count = 0;
+     let mut v3_count = 0;
+     let mut skipped_count = 0;
 
-    for line in reader.lines().skip(1) {
-        let line = line?;
-        let fields: Vec<&str> = line.split(',').collect();
+     for line in reader.lines().skip(1) {
+         let line = line?;
+         let fields: Vec<&str> = line.split(',').collect();
         match fields[2] {
             "2" => {
                 v2_count += 1;
