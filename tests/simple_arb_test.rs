@@ -3,7 +3,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::WsConnect;
 use alloy::rpc::types::{Filter, TransactionRequest};
 use alloy::primitives::U256;
-use alloy::sol_types::SolCall;
+use alloy::sol_types::{SolCall, SolValue};
 use anyhow::Result;
 use log::info;
 use std::process::{Command, Stdio};
@@ -110,12 +110,9 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     let account = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     let usdc = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-    let v2_router = address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
     
-    info!("   Account: {:?}", account);
     info!("   WETH: {:?}", weth);
     info!("   USDC: {:?}", usdc);
-    info!("   V2 Router: {:?}", v2_router);
     
     // Step 1: Deposit ETH to WETH
     info!("   Step 1: Depositing ETH to WETH...");
@@ -161,7 +158,7 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     }
     
     let approve_call = approveCall {
-        spender: v2_router,
+        spender: address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D"), // V2 Router (not used for V3 but for consistency)
         amount: eth_amount,
     };
     
@@ -190,56 +187,53 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
     
     tokio::time::sleep(Duration::from_millis(500)).await;
     
-    // Step 3: Execute V2 swap
-    info!("   Step 3: Executing Uniswap V2 swap (WETH → USDC)...");
+    // Step 3: Execute V3 swap (using same approach as the E2E test)
+    info!("   Step 3: Executing Uniswap V3 swap (WETH → USDC)...");
     
-    // Manually construct the swap calldata
-    // Function signature: swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline)
-    // Selector: 0x38ed1739
+    let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
+    let min_usdc_out = U256::from(1u64);
+    let deadline = U256::from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() + 300,
+    );
     
-    let mut calldata = vec![0x38, 0xed, 0x17, 0x39]; // Function selector
+    sol! {
+        interface ISwapRouter {
+            #[derive(Debug)]
+            struct ExactInputParams {
+                bytes path;
+                address recipient;
+                uint256 deadline;
+                uint256 amountIn;
+                uint256 amountOutMinimum;
+            }
+            function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
+        }
+    }
     
-    // Add the parameters as 32-byte words
-    // amountIn = 0.01 WETH = 10^16
-    let amount_in = eth_amount / U256::from(100u64);
-    calldata.extend_from_slice(&amount_in.to_be_bytes::<32>());
+    // Create path: WETH + 500 fee + USDC
+    let mut path = Vec::new();
+    path.extend_from_slice(weth.as_slice()); // WETH address (20 bytes)
+    path.extend_from_slice(&[0x00, 0x01, 0xF4]); // 500 fee tier (3 bytes)
+    path.extend_from_slice(usdc.as_slice()); // USDC address (20 bytes)
     
-    // amountOutMin = 0
-    calldata.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+    let swap_amount = eth_amount / U256::from(100u64); // 0.01 WETH
     
-    // path (address array) - offset to the dynamic data
-    let path_offset = U256::from(96u64); // 3 * 32 bytes for the first 3 params
-    calldata.extend_from_slice(&path_offset.to_be_bytes::<32>());
-    
-    // to address - need to pad it to 32 bytes
-    let mut account_padded = [0u8; 32];
-    account_padded[12..].copy_from_slice(account.as_slice());
-    calldata.extend_from_slice(&account_padded);
-    
-    // deadline
-    let block = http_provider.get_block_number().await?;
-    let deadline = U256::from(block) + U256::from(3600u64);
-    calldata.extend_from_slice(&deadline.to_be_bytes::<32>());
-    
-    // Now add the dynamic array data
-    // Array length
-    calldata.extend_from_slice(&U256::from(2u64).to_be_bytes::<32>()); // 2 addresses
-    
-    // WETH address
-    let mut weth_padded = [0u8; 32];
-    weth_padded[12..].copy_from_slice(weth.as_slice());
-    calldata.extend_from_slice(&weth_padded);
-    
-    // USDC address
-    let mut usdc_padded = [0u8; 32];
-    usdc_padded[12..].copy_from_slice(usdc.as_slice());
-    calldata.extend_from_slice(&usdc_padded);
+    let swap_call = ISwapRouter::ExactInputParams {
+        path: path.into(),
+        recipient: account,
+        deadline,
+        amountIn: swap_amount,
+        amountOutMinimum: min_usdc_out,
+    };
     
     let tx = TransactionRequest::default()
         .from(account)
-        .to(v2_router)
-        .input(calldata.into())
-        .gas_limit(300000u64);
+        .to(v3_router)
+        .input(swap_call.abi_encode().into())
+        .gas_limit(500000u64);
     
     match http_provider.send_transaction(tx).await {
         Ok(pending_tx) => {
@@ -248,7 +242,11 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
                 Ok(receipt) => {
                     info!("   ✅ Swap mined in block {:?}", receipt.block_number);
                     info!("   ✅ Swap status: {:?}", receipt.status());
-                    info!("   ✅ Swap execution completed!");
+                    if receipt.status() {
+                        info!("   ✅ Swap execution successful!");
+                    } else {
+                        info!("   ⚠️  Swap reverted");
+                    }
                 }
                 Err(e) => {
                     info!("   ⚠️  Could not get receipt: {}", e);
@@ -256,7 +254,7 @@ async fn test_detect_actual_swap_logs() -> Result<()> {
             }
         }
         Err(e) => {
-            info!("   ⚠️  Swap failed: {}", e);
+            info!("   ⚠️  Swap send failed: {}", e);
         }
     }
     
