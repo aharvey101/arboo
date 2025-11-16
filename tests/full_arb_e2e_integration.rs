@@ -362,166 +362,13 @@ async fn execute_market_moving_swap(
      Ok(())
 }
 
-/// Execute a Uniswap V2 swap using swapExactTokensForTokens to create market imbalance
+/// Execute a Uniswap V2 swap using the router (which may route through any pool)
 async fn execute_uniswap_v2_swap(
     provider: &Arc<RootProvider<PubSubFrontend>>,
     whale_address: Address,
     eth_amount: U256,
     weth_address: Address,
     dai_address: Address,
-) -> Result<FixedBytes<32>> {
-    use alloy::rpc::types::TransactionRequest;
-    use alloy::sol_types::SolCall;
-
-    // The specific V2 pool we want to use
-    let v2_pool = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84");
-
-    info!("🎯 Direct swap on specific V2 pool: {:#x}", v2_pool);
-
-    // Step 1: Convert ETH to WETH
-    alloy::sol! {
-        function deposit() external payable;
-    };
-
-    let deposit_call = depositCall {};
-
-    let tx_request = TransactionRequest::default()
-        .from(whale_address)
-        .to(weth_address) // WETH contract address
-        .input(deposit_call.abi_encode().into())
-        .value(eth_amount) // Send the ETH amount we want to convert
-        .gas_limit(100000u64);
-
-    info!(
-        "Converting {} ETH to WETH",
-        eth_amount / U256::from(10u128.pow(18))
-    );
-    let pending_tx = provider
-        .send_transaction(tx_request)
-        .await
-        .expect("Error converting ETH to WETH");
-
-    let receipt = pending_tx.get_receipt().await?;
-    if !receipt.status() {
-        info!("receipt: {:?}", receipt);
-        return Err(anyhow::anyhow!("ETH to WETH conversion failed"));
-    }
-    info!("✅ ETH to WETH conversion successful");
-
-    // Step 2: Approve the V2 pool to spend WETH
-    info!("Approving V2 pool to spend WETH");
-    alloy::sol! {
-        function approve(address spender, uint256 amount) external returns (bool);
-    }
-
-    let approve_data = approveCall {
-        spender: v2_pool,
-        amount: U256::MAX,
-    }
-    .abi_encode();
-
-    let tx_request = TransactionRequest::default()
-        .from(whale_address)
-        .to(weth_address)
-        .input(approve_data.into());
-    let pending_tx = provider
-        .send_transaction(tx_request)
-        .await
-        .expect("Error doing approve tx");
-
-    let receipt = pending_tx.get_receipt().await?;
-    if !receipt.status() {
-        return Err(anyhow::anyhow!("WETH approval failed"));
-    }
-    info!("✅ WETH approval successful");
-
-    // Step 3: Transfer WETH to the pool
-    info!("Transferring WETH to V2 pool");
-    alloy::sol! {
-        function transfer(address to, uint256 amount) external returns (bool);
-    }
-
-    let transfer_data = transferCall {
-        to: v2_pool,
-        amount: eth_amount,
-    }
-    .abi_encode();
-
-    let tx_request = TransactionRequest::default()
-        .from(whale_address)
-        .to(weth_address)
-        .input(transfer_data.into());
-    let pending_tx = provider
-        .send_transaction(tx_request)
-        .await?;
-
-    let receipt = pending_tx.get_receipt().await?;
-    if !receipt.status() {
-        return Err(anyhow::anyhow!("WETH transfer failed"));
-    }
-    info!("✅ WETH transfer successful");
-
-    // Step 4: Call swap on the V2 pool directly
-    // V2 Pair swap signature: swap(uint amount0Out, uint amount1Out, address to, bytes calldata data)
-    alloy::sol! {
-        interface IUniswapV2Pair {
-            function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
-        }
-    }
-
-    // We're swapping WETH (which is token1) for DAI (which is token0)
-    // So we want amount0Out (DAI) and amount1In (WETH)
-    // For simplicity, estimate: with massive WETH swap, we'll get roughly proportional DAI
-    // Using conservative minimum - we don't care about slippage for this test
-    let amount0_out = U256::from(1); // Minimum 1 wei of token0 (DAI)
-    let amount1_out = U256::ZERO;    // We're not swapping for token1
-
-    let swap_data = IUniswapV2Pair::swapCall {
-        amount0Out: amount0_out,
-        amount1Out: amount1_out,
-        to: whale_address,
-        data: vec![].into(),
-    }
-    .abi_encode();
-
-    info!("🔄 Calling swap on V2 pool directly");
-    let tx_request = TransactionRequest::default()
-        .to(v2_pool)
-        .from(whale_address)
-        .input(swap_data.into())
-        .gas_limit(500000u64);
-
-    let pending_tx = provider.send_transaction(tx_request).await?;
-    let tx_hash = *pending_tx.tx_hash();
-
-    info!("📝 Transaction sent: {:?}", tx_hash);
-
-    let receipt = pending_tx.get_receipt().await?;
-
-    if !receipt.status() {
-        warn!("💥 Transaction failed!");
-        warn!("Receipt: {:?}", receipt);
-        warn!("Gas used: {:?}", receipt.gas_used);
-        return Err(anyhow::anyhow!("V2 swap transaction failed with receipt: {:?}", receipt));
-    }
-    info!(
-        "✅ V2 swap confirmed in block: {:?}",
-        receipt.block_number
-    );
-    info!("🎯 Swap executed directly on V2 pool - should see events from that specific pool!");
-
-    Ok(tx_hash)
-}
-
-/// Execute a Uniswap V3 swap using exactInput to create market imbalance
-async fn execute_uniswap_v3_swap(
-    provider: &Arc<RootProvider<PubSubFrontend>>,
-    whale_address: Address,
-    router_address: Address,
-    eth_amount: U256,
-    token0: Address,
-    token1: Address,
-    _setup: &ArbitrageSetup,
 ) -> Result<FixedBytes<32>> {
     use alloy::rpc::types::TransactionRequest;
     use alloy::sol_types::SolCall;
@@ -534,7 +381,10 @@ async fn execute_uniswap_v3_swap(
             + 300,
     );
 
-    // WETH contract has a simple deposit() function to convert ETH to WETH
+    info!("🔄 Executing V2 swap via router");
+    info!("   WETH to DAI amount: {} WETH", eth_amount / U256::from(10u128.pow(18)));
+
+    // Step 1: Convert ETH to WETH
     alloy::sol! {
         function deposit() external payable;
     };
@@ -543,15 +393,12 @@ async fn execute_uniswap_v3_swap(
 
     let tx_request = TransactionRequest::default()
         .from(whale_address)
-        .to(token0) // WETH contract address
+        .to(weth_address)
         .input(deposit_call.abi_encode().into())
-        .value(eth_amount) // Send the ETH amount we want to convert
+        .value(eth_amount)
         .gas_limit(100000u64);
 
-    info!(
-        "Converting {} ETH to WETH",
-        eth_amount / U256::from(10u128.pow(18))
-    );
+    info!("Converting {} ETH to WETH", eth_amount / U256::from(10u128.pow(18)));
     let pending_tx = provider
         .send_transaction(tx_request)
         .await
@@ -559,99 +406,83 @@ async fn execute_uniswap_v3_swap(
 
     let receipt = pending_tx.get_receipt().await?;
     if !receipt.status() {
-        info!("receipt: {:?}", receipt);
         return Err(anyhow::anyhow!("ETH to WETH conversion failed"));
     }
     info!("✅ ETH to WETH conversion successful");
-    info!("Approving router to spend WETH");
+
+    // Step 2: Approve V2 router to spend WETH
+    info!("Approving V2 router to spend WETH");
     alloy::sol! {
         function approve(address spender, uint256 amount) external returns (bool);
     }
 
+    let v2_router = address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
     let approve_data = approveCall {
-        spender: router_address, // Approve the router to spend our WETH
-        amount: U256::MAX,       // Infinite approval, you can set a specific amount instead
+        spender: v2_router,
+        amount: U256::MAX,
     }
     .abi_encode();
 
     let tx_request = TransactionRequest::default()
         .from(whale_address)
-        .to(token0) // Call approve on the WETH token contract
+        .to(weth_address)
         .input(approve_data.into());
-    let pending_tx = provider
-        .send_transaction(tx_request)
-        .await
-        .expect("Error doing approve tx");
+    let pending_tx = provider.send_transaction(tx_request).await?;
 
     let receipt = pending_tx.get_receipt().await?;
     if !receipt.status() {
         return Err(anyhow::anyhow!("WETH approval failed"));
     }
     info!("✅ WETH approval successful");
-    let min_usdt_out = U256::from(1u64);
 
+    // Step 3: Call swapExactTokensForTokens on V2 router
     alloy::sol! {
-        interface ISwapRouter {
-              #[derive(Debug)]
-              struct ExactInputParams {
-                bytes path;
-                address recipient;
-                uint256 deadline;
-                uint256 amountIn;
-                uint256 amountOutMinimum;
-              }
-       function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
-    }
+        interface IUniswapV2Router {
+            function swapExactTokensForTokens(
+                uint amountIn,
+                uint amountOutMin,
+                address[] calldata path,
+                address to,
+                uint deadline
+            ) external returns (uint[] memory amounts);
+        }
     }
 
-    // Create path: tokenIn + fee + tokenOut
-    // WETH (token0) -> 500 fee tier -> USDC (token1) - this one actually works!
-    let mut path = Vec::new();
-    path.extend_from_slice(token0.as_slice()); // WETH address (20 bytes)
-    path.extend_from_slice(&[0x00, 0x01, 0xF4]); // 500 fee tier (3 bytes) = 0x01F4
-    path.extend_from_slice(token1.as_slice()); // USDC address (20 bytes)
-
-    let swap_call = ISwapRouter::ExactInputParams {
-        path: path.into(),
-        recipient: whale_address,
-        deadline,
+    // Router will choose the best path - could be our pool or another one with liquidity
+    // The important thing is that events will be emitted from whatever pool(s) it uses
+    let swap_call = IUniswapV2Router::swapExactTokensForTokensCall {
         amountIn: eth_amount,
-        amountOutMinimum: min_usdt_out,
+        amountOutMin: U256::from(1), // Accept any amount
+        path: vec![weth_address, dai_address],
+        to: whale_address,
+        deadline,
     };
 
-    info!("Doing swap with: {:?} ", swap_call);
-    let swap_call = ISwapRouter::exactInputCall { params: swap_call };
+    info!("🔄 Calling swapExactTokensForTokens on V2 router");
+    info!("   Path: WETH -> DAI");
+    info!("   Amount: {} WETH", eth_amount / U256::from(10u128.pow(18)));
 
     let tx_request = TransactionRequest::default()
-        .to(router_address)
+        .to(v2_router)
         .from(whale_address)
-        .value(U256::ZERO)
         .input(swap_call.abi_encode().into())
-        .gas_limit(500000u64); // Increased gas limit
-
-    info!(
-        "🔄 Sending {} ETH swap transaction from whale address",
-        eth_amount / U256::from(10u128.pow(18))
-    );
+        .gas_limit(500000u64);
 
     let pending_tx = provider.send_transaction(tx_request).await?;
     let tx_hash = *pending_tx.tx_hash();
 
-    info!("📝 Transaction sent: {:?}", tx_hash);
+    info!("📝 Swap transaction sent: {:?}", tx_hash);
 
     let receipt = pending_tx.get_receipt().await?;
 
     if !receipt.status() {
-        warn!("💥 Transaction failed!");
-        warn!("Receipt: {:?}", receipt);
+        warn!("💥 Swap transaction failed!");
         warn!("Gas used: {:?}", receipt.gas_used);
-        warn!("Effective gas price: {:?}", receipt.effective_gas_price);
-        return Err(anyhow::anyhow!("Transaction failed with receipt: {:?}", receipt));
+        return Err(anyhow::anyhow!("V2 swap via router failed"));
     }
-    info!(
-        "✅ Transaction confirmed in block: {:?}",
-        receipt.block_number
-    );
+    info!("✅ V2 swap confirmed in block: {:?}", receipt.block_number);
+    info!("📊 Swap will emit events from whichever pool(s) had liquidity");
+    info!("🔍 Arboo's dynamic pool discovery will identify any pools that emit events");
 
     Ok(tx_hash)
 }
