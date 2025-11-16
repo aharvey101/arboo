@@ -49,15 +49,16 @@ async fn main() -> Result<()> {
 
     let provider = Arc::new(provider);
 
-    let cache_path = format!("{}/.cached-pools.csv", cache_dir);
-    if !Path::new(&cache_path).try_exists()? {
-        info!("Cache doesn't exist, crawling ALL blocks for pools");
-        // Search all blocks: from_block=0 (genesis), chunk should cover all blocks to current
-        // Using a large chunk size to get all pools in one go
-        pools::load_all_pools(ws_url.clone(), 0, block_number, &cache_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
-    }
+     let cache_path = format!("{}/.cached-pools.csv", cache_dir);
+     if !Path::new(&cache_path).try_exists()? {
+         info!("Cache doesn't exist, crawling ALL blocks for pools");
+         // Search all blocks: from_block=0 (genesis)
+         // Use chunk size of 10000 blocks to avoid RPC timeouts
+         let chunk_size = 10000u64;
+         pools::load_all_pools(ws_url.clone(), 0, chunk_size, &cache_path)
+             .await
+             .map_err(|e| anyhow::anyhow!("Failed to load pools: {}", e))?;
+     }
 
     let mut set = JoinSet::new();
 
