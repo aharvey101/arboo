@@ -241,3 +241,77 @@ async fn test_pool_loading_infrastructure(ws_url: String, start_block: u64, end_
     Ok(())
 }
 
+#[tokio::test]
+async fn test_append_pool_to_cache() -> Result<()> {
+    use arbooo::common::pools::append_pool_to_cache;
+    use arbooo::common::pairs::{Event, V2PoolCreated, V3PoolCreated};
+    use alloy_primitives::Address;
+    use std::str::FromStr;
+    
+    logger::setup_logger();
+    info!("🧪 Testing append_pool_to_cache functionality");
+
+    let test_cache_dir = "/tmp/arboo_test_cache_append";
+    let test_cache_file = format!("{}/test-append-pools.csv", test_cache_dir);
+
+    // Clean up any existing test file
+    if Path::new(&test_cache_file).exists() {
+        fs::remove_file(&test_cache_file)?;
+    }
+    fs::create_dir_all(test_cache_dir)?;
+
+    // Test adding a V2 pool
+    let v2_event = Event::PairCreated(V2PoolCreated {
+        pair_address: Address::from_str("0x0000000000000000000000000000000000000001")?,
+        token0: Address::from_str("0x0000000000000000000000000000000000000002")?,
+        token1: Address::from_str("0x0000000000000000000000000000000000000003")?,
+        fee: 3000,
+    });
+
+    info!("📝 Adding V2 pool to cache");
+    let v2_id = append_pool_to_cache(&v2_event, &test_cache_file).await?;
+    assert_eq!(v2_id, 0, "First pool should have ID 0");
+
+    // Test adding a V3 pool
+    let v3_event = Event::PoolCreated(V3PoolCreated {
+        pair_address: Address::from_str("0x0000000000000000000000000000000000000004")?,
+        token0: Address::from_str("0x0000000000000000000000000000000000000005")?,
+        token1: Address::from_str("0x0000000000000000000000000000000000000006")?,
+        fee: 500,
+        tick_spacing: 10,
+    });
+
+    info!("📝 Adding V3 pool to cache");
+    let v3_id = append_pool_to_cache(&v3_event, &test_cache_file).await?;
+    assert_eq!(v3_id, 1, "Second pool should have ID 1");
+
+    // Verify the file contents
+    let file_contents = fs::read_to_string(&test_cache_file)?;
+    info!("📄 Cache file contents:\n{}", file_contents);
+
+    // Should have header + 2 data rows
+    let lines: Vec<&str> = file_contents.trim().split('\n').collect();
+    assert_eq!(lines.len(), 3, "Should have header + 2 pool entries");
+
+    // Check header
+    assert_eq!(lines[0], "id,address,version,token0,token1,fee", "Header should match expected format");
+
+    // Check V2 pool entry
+    assert!(lines[1].contains("0x0000000000000000000000000000000000000001"), "V2 pool address should be in file");
+    assert!(lines[1].contains(",2,"), "V2 pool should have version 2");
+    assert!(lines[1].contains(",3000"), "V2 pool should have fee 3000");
+
+    // Check V3 pool entry  
+    assert!(lines[2].contains("0x0000000000000000000000000000000000000004"), "V3 pool address should be in file");
+    assert!(lines[2].contains(",3,"), "V3 pool should have version 3");
+    assert!(lines[2].contains(",500"), "V3 pool should have fee 500");
+
+    info!("✅ Pool cache append functionality works correctly");
+
+    // Clean up test file
+    fs::remove_file(&test_cache_file)?;
+    fs::remove_dir_all(test_cache_dir)?;
+
+    Ok(())
+}
+

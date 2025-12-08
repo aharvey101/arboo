@@ -325,7 +325,7 @@ async fn execute_market_moving_swap(
      let v3_router = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
      info!("📍 V3 SwapRouter: {:#x}", v3_router);
 
-      let swap_amount = U256::from(10) * U256::from(10u128.pow(18)); // 10 WETH swap - optimized for USDC high-liquidity pool
+      let swap_amount = U256::from(100) * U256::from(10u128.pow(18)); // 100 WETH swap - calculated optimal size for profitable arbitrage
       info!(
           "💱 Will swap {} WETH for DAI on high-liquidity V2 pool to create arbitrage opportunity",
           swap_amount / U256::from(10u128.pow(18))

@@ -61,21 +61,22 @@ async fn test_simple_arbitrage_detection() -> Result<()> {
     info!("  WETH: {:#x}", weth);
     info!("  USDC: {:#x}", usdc);
 
-    // Step 3: Try to find WETH-USDC pools
-    // Common Uniswap V2 pool: WETH-USDC
-    let uniswap_v2_weth_usdc = address!("B4e16d0168e52d7dC3BE5dE2E7C0c4e4F8deCd45");
-    let uniswap_v3_weth_usdc_500 = address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
+    // Step 3: Try to find WETH-USDC pools from cache
+    // V2 WETH-USDC pool from cache (ID 4202): 0xbd504d0a4b16a77e531722c3aea770161347dea7
+    // V3 WETH-USDC pool from cache (ID 23331): 0xa6d2aac68cafa72c5249aa4d0a379390fe1d40d8
+    let uniswap_v2_weth_usdc = address!("bd504d0a4b16a77e531722c3aea770161347dea7");
+    let uniswap_v3_weth_usdc_10 = address!("a6d2aac68cafa72c5249aa4d0a379390fe1d40d8");
 
     info!("🔍 STEP 2: Check if pools exist on fork");
-    info!("  V2 WETH-USDC: {:#x}", uniswap_v2_weth_usdc);
-    info!("  V3 WETH-USDC 0.05%: {:#x}", uniswap_v3_weth_usdc_500);
+    info!("  V2 WETH-USDC (from cache): {:#x}", uniswap_v2_weth_usdc);
+    info!("  V3 WETH-USDC 0.001% (from cache): {:#x}", uniswap_v3_weth_usdc_10);
 
     // Check V2 pool code
     let v2_code = provider.get_code_at(uniswap_v2_weth_usdc).await?;
     info!("  V2 pool code size: {} bytes", v2_code.len());
 
     // Check V3 pool code
-    let v3_code = provider.get_code_at(uniswap_v3_weth_usdc_500).await?;
+    let v3_code = provider.get_code_at(uniswap_v3_weth_usdc_10).await?;
     info!("  V3 pool code size: {} bytes", v3_code.len());
 
     // Step 4: Check pool reserves by calling getReserves
@@ -86,7 +87,7 @@ async fn test_simple_arbitrage_detection() -> Result<()> {
     info!("  V2 Reserves: reserve0={}, reserve1={}", v2_reserves.0, v2_reserves.1);
 
     // Get V3 reserves
-    let v3_reserves = get_v3_reserves(&provider, uniswap_v3_weth_usdc_500).await?;
+    let v3_reserves = get_v3_reserves(&provider, uniswap_v3_weth_usdc_10).await?;
     info!("  V3 Reserves: reserve0={}, reserve1={}", v3_reserves.0, v3_reserves.1);
 
     // Step 5: Calculate price difference

@@ -1,8 +1,7 @@
-use alloy::primitives::address;
+use alloy::primitives::{address, U256, Address};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::WsConnect;
 use alloy::rpc::types::{Filter, TransactionRequest};
-use alloy::primitives::U256;
 use alloy::sol_types::SolCall;
 use alloy_sol_types::SolValue;
 use anyhow::Result;
@@ -52,16 +51,14 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
 
     let ws_provider = Arc::new(ws_provider);
 
-    // Pool and token addresses
-    let v2_pool = address!("0x0606c53d3ddda7fbcdfea72bbb540ce1cfd29b84"); // DAI/WETH 0.3%
-    let v3_pool = address!("0xb9c7807d2428dc9d5fb6dcdd56aec89d204c64a9"); // DAI/WETH 0.01%
+    // Pool and token addresses - Use verified Uniswap V2 pools
+    let v2_pool = address!("0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"); // DAI/WETH Uniswap V2 pool
     let dai = address!("0x6b175474e89094c44da98b954eedeac495271d0f");
     let weth = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     let account = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"); // Anvil account #0
 
-    info!("📍 Pools and Tokens:");
+    info!("📍 Pool and Tokens:");
     info!("   V2 Pool: {:?}", v2_pool);
-    info!("   V3 Pool: {:?}", v3_pool);
     info!("   DAI: {:?}", dai);
     info!("   WETH: {:?}", weth);
     info!("   Account: {:?}", account);
@@ -69,11 +66,10 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
     // Setup log subscription BEFORE swap
     info!("📥 Setting up log subscription...");
     let v2_swap_sig = keccak256("Swap(address,uint256,uint256,uint256,uint256,address)".as_bytes());
-    let v3_swap_sig = keccak256("Swap(address,address,int256,int256,uint160,uint128,int24)".as_bytes());
 
     let filter = Filter::new()
-        .address(vec![v2_pool, v3_pool])
-        .event_signature(vec![v2_swap_sig, v3_swap_sig]);
+        .address(vec![v2_pool])  // Only monitor the V2 pool we're testing
+        .event_signature(vec![v2_swap_sig]);
 
     let subscription = ws_provider.subscribe_logs(&filter).await?;
     let mut stream = subscription.into_stream();
@@ -109,6 +105,8 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
         interface IUniswapV2Pair {
             function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
             function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
+            function token0() external view returns (address);
+            function token1() external view returns (address);
         }
     }
 
@@ -116,8 +114,33 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
     let http_url = format!("http://127.0.0.1:{}", anvil.port).parse()?;
     let http_provider = ProviderBuilder::new().on_http(http_url);
 
-    // Step 1: Get pool reserves before swap
-    info!("\n📊 STEP 1: Checking initial pool reserves...");
+    // Step 1: Verify pool tokens and get reserves
+    info!("\n📊 STEP 1: Verifying pool tokens and reserves...");
+    
+    // Check token0 and token1
+    let token0_call = IUniswapV2Pair::token0Call {};
+    let token0_result = http_provider
+        .call(
+            &TransactionRequest::default()
+                .to(v2_pool)
+                .input(token0_call.abi_encode().into()),
+        )
+        .await?;
+    let token0_addr = Address::abi_decode(&token0_result, false)?;
+    
+    let token1_call = IUniswapV2Pair::token1Call {};
+    let token1_result = http_provider
+        .call(
+            &TransactionRequest::default()
+                .to(v2_pool)
+                .input(token1_call.abi_encode().into()),
+        )
+        .await?;
+    let token1_addr = Address::abi_decode(&token1_result, false)?;
+    
+    info!("   Pool token0: {:?}", token0_addr);
+    info!("   Pool token1: {:?}", token1_addr);
+    
     let reserves_call = IUniswapV2Pair::getReservesCall {};
     let reserves_result = http_provider
         .call(
@@ -128,8 +151,8 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
         .await?;
 
     let (reserve0, reserve1, _) = <(u128, u128, u32)>::abi_decode(&reserves_result, false)?;
-    info!("   DAI reserves: {} (raw)", reserve0);
-    info!("   WETH reserves: {} (raw)", reserve1);
+    info!("   Token0 reserves: {} (raw)", reserve0);
+    info!("   Token1 reserves: {} (raw)", reserve1);
 
     // Step 2: Fund account with WETH
     info!("\n💰 STEP 2: Funding account with WETH...");
@@ -156,91 +179,92 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Step 3: Approve pool to spend WETH
-    info!("\n🔐 STEP 3: Approving pool to spend WETH...");
-    let approve_call = approveCall {
-        spender: v2_pool,
-        amount: eth_amount,
-    };
-
-    let tx_req = TransactionRequest::default()
-        .from(account)
-        .to(weth)
-        .input(approve_call.abi_encode().into())
-        .gas_limit(100000u64);
-
-    match http_provider.send_transaction(tx_req).await {
-        Ok(pending_tx) => {
-            info!("   ✅ Approval sent: {:?}", pending_tx.tx_hash());
-            match pending_tx.get_receipt().await {
-                Ok(_) => info!("   ✅ Approval mined"),
-                Err(e) => info!("   ⚠️  Receipt error: {}", e),
-            }
-        }
-        Err(e) => info!("   ❌ Approval failed: {}", e),
-    }
+    // Step 3: We don't need approval for direct swaps, skip this step
+    info!("\n🔐 STEP 3: Direct swaps don't require pre-approval, skipping...");
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Step 4: Transfer WETH to pool
-    info!("\n🔄 STEP 4: Transferring WETH to pool...");
-    let transfer_call = transferCall {
+    // Step 4: Skip separate transfer - we'll transfer as part of the swap
+    info!("\n⏭️  STEP 4: Skipping separate transfer - will transfer during swap...");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Step 5: Execute direct swap on V2 pool (proper Uniswap V2 method)
+    info!("\n🔄 STEP 5: Executing DIRECT swap on V2 pool (WETH → DAI)...");
+    
+    // Determine which token is which in the pool
+    let (weth_is_token0, dai_is_token0) = if token0_addr == weth {
+        (true, false)
+    } else if token0_addr == dai {
+        (false, true) 
+    } else {
+        return Err(anyhow::anyhow!("Pool doesn't contain WETH/DAI pair"));
+    };
+    
+    // Calculate expected output based on correct token order
+    let swap_amount = U256::from(1) * U256::from(10u128.pow(18)); // 1 WETH
+    let (reserve_in, reserve_out) = if weth_is_token0 {
+        (reserve0, reserve1) // WETH input, DAI output
+    } else {
+        (reserve1, reserve0) // WETH input, DAI output  
+    };
+    
+    // Uniswap V2 formula: amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+    let amount_in_with_fee = (swap_amount * U256::from(997)) / U256::from(1000);
+    let expected_dai_out = (amount_in_with_fee * U256::from(reserve_out)) / (U256::from(reserve_in) + amount_in_with_fee);
+    
+    info!("   WETH is token0: {}", weth_is_token0);
+    info!("   Amount in (WETH): {}", swap_amount / U256::from(10u128.pow(18)));
+    info!("   Expected out (DAI): {}", expected_dai_out / U256::from(10u128.pow(18)));
+    
+    // Step 5a: Transfer WETH to pool (required before calling swap)
+    info!("   📤 Transferring WETH to pool before swap...");
+    let transfer_to_pool_call = transferCall {
         to: v2_pool,
-        amount: eth_amount / U256::from(2), // Transfer 50 WETH to test
+        amount: swap_amount,
     };
-
-    let tx_req = TransactionRequest::default()
+    
+    let transfer_tx = TransactionRequest::default()
         .from(account)
         .to(weth)
-        .input(transfer_call.abi_encode().into())
+        .input(transfer_to_pool_call.abi_encode().into())
         .gas_limit(100000u64);
-
-    let transfer_amount = eth_amount / U256::from(2);
-    match http_provider.send_transaction(tx_req).await {
+        
+    match http_provider.send_transaction(transfer_tx).await {
         Ok(pending_tx) => {
-            info!("   ✅ Transfer sent: {:?}", pending_tx.tx_hash());
+            info!("   ✅ WETH transfer to pool sent: {:?}", pending_tx.tx_hash());
             match pending_tx.get_receipt().await {
-                Ok(_) => info!("   ✅ Transfer mined - {} WETH in pool", transfer_amount / U256::from(10u128.pow(18))),
-                Err(e) => info!("   ⚠️  Receipt error: {}", e),
+                Ok(_) => info!("   ✅ WETH transfer mined"),
+                Err(e) => info!("   ⚠️  Transfer receipt error: {}", e),
             }
         }
-        Err(e) => info!("   ❌ Transfer failed: {}", e),
+        Err(e) => return Err(anyhow::anyhow!("Failed to transfer WETH to pool: {}", e)),
     }
-
+    
     tokio::time::sleep(Duration::from_millis(500)).await;
+    
+    // Step 5b: Call swap with correct amount0Out/amount1Out
+    info!("   🔄 Calling swap function on pool...");
+    let (amount0_out, amount1_out) = if weth_is_token0 {
+        (U256::ZERO, expected_dai_out)  // WETH in (token0), DAI out (token1)
+    } else {
+        (expected_dai_out, U256::ZERO)  // WETH in (token1), DAI out (token0)
+    };
+    
+    let swap_call = IUniswapV2Pair::swapCall {
+        amount0Out: amount0_out,
+        amount1Out: amount1_out,
+        to: account,
+        data: Vec::new().into(),
+    };
+    
+    let swap_tx = TransactionRequest::default()
+        .from(account)
+        .to(v2_pool)
+        .input(swap_call.abi_encode().into())
+        .gas_limit(300000u64);
 
-    // Step 5: Execute direct swap on V2 pool
-    info!("\n🔄 STEP 5: Executing DIRECT swap on V2 pool...");
-    info!("   Swap: WETH → DAI");
-
-    // Calculate expected DAI output using Uniswap formula
-    // amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
-    let amount_in = transfer_amount;
-    let amount_in_with_fee = (amount_in * U256::from(997)) / U256::from(1000);
-    let amount_out = (amount_in_with_fee * U256::from(reserve0)) / (U256::from(reserve1) + amount_in_with_fee);
-
-    info!("   Amount in (WETH): {}", amount_in / U256::from(10u128.pow(18)));
-    info!("   Expected out (DAI): {}", amount_out / U256::from(10u128.pow(18)));
-
-     // Call swap directly on pool
-     // swap(uint amount0Out, uint amount1Out, address to, bytes calldata data)
-     // amount0Out = DAI output, amount1Out = 0
-     let swap_data = TransactionRequest::default()
-         .from(account)
-         .to(v2_pool)
-         .input(
-             IUniswapV2Pair::swapCall {
-                 amount0Out: amount_out,
-                 amount1Out: U256::ZERO,
-                 to: account,
-                 data: Vec::new().into(),
-             }
-             .abi_encode()
-             .into(),
-         )
-         .gas_limit(300000u64);
-
-    match http_provider.send_transaction(swap_data).await {
+    match http_provider.send_transaction(swap_tx).await {
         Ok(pending_tx) => {
             info!("   ✅ Swap sent: {:?}", pending_tx.tx_hash());
             match pending_tx.get_receipt().await {
@@ -248,15 +272,16 @@ async fn test_direct_v2_pool_swap() -> Result<()> {
                     info!("   ✅ Swap mined in block {:?}", receipt.block_number);
                     info!("   ✅ Gas used: {}", receipt.gas_used);
                     if receipt.status() {
-                        info!("   ✅ SWAP EXECUTION SUCCESSFUL!");
+                        info!("   🎉 SWAP EXECUTION SUCCESSFUL!");
                     } else {
-                        info!("   ⚠️  Swap reverted - insufficient liquidity or slippage?");
+                        info!("   ❌ Swap reverted");
+                        return Err(anyhow::anyhow!("Swap transaction reverted"));
                     }
                 }
                 Err(e) => info!("   ⚠️  Receipt error: {}", e),
             }
         }
-        Err(e) => info!("   ❌ Swap failed: {}", e),
+        Err(e) => return Err(anyhow::anyhow!("Swap transaction failed: {}", e)),
     }
 
     // Step 6: Wait for events
