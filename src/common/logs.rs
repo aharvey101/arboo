@@ -20,6 +20,8 @@ pub struct LogProcessor {
     event_queue_tx: mpsc::Sender<LogEvent>,
     // Add provider for dynamic pool discovery
     provider: Arc<RootProvider<PubSubFrontend>>,
+    // Cache path for persisting newly discovered pools
+    cache_path: String,
 }
 
 /// Represents a token pair for efficient indexing
@@ -52,6 +54,7 @@ impl LogProcessor {
         pairs: HashMap<Address, Event>,
         event_sender: Sender<LogEvent>,
         provider: Arc<RootProvider<PubSubFrontend>>,
+        cache_path: String,
     ) -> (Self, mpsc::Receiver<LogEvent>) {
         let token_pair_index = Self::build_token_pair_index(&pairs);
 
@@ -72,6 +75,7 @@ impl LogProcessor {
             event_sender,
             event_queue_tx,
             provider,
+            cache_path,
         };
 
         (processor, event_queue_rx)
@@ -149,31 +153,42 @@ impl LogProcessor {
              }
          }
          
-         if !pool_exists {
-             drop(pairs_guard); // Release read lock before attempting discovery
-             warn!("⚠️ Log from unknown pool: {:?}, attempting dynamic discovery", pool_address);
-             
-             // Try to discover the pool dynamically
-             if let Some(event) = self.discover_pool_from_logs(pool_address).await {
-                 // Add discovered pool to cache
-                 let mut pairs_mut = self.pairs.write().await;
-                 pairs_mut.insert(pool_address, event.clone());
-                 drop(pairs_mut);
-                 
-                 // Update token pair index
-                 let token_pair = match &event {
-                     Event::PairCreated(pair) => TokenPair::new(pair.token0, pair.token1),
-                     Event::PoolCreated(pool) => TokenPair::new(pool.token0, pool.token1),
-                 };
-                 let mut index = self.token_pair_index.write().await;
-                 index
-                     .entry(token_pair)
-                     .or_insert_with(Vec::new)
-                     .push(pool_address);
-                 info!("✨ Dynamically discovered and cached pool: {:?}", pool_address);
-                 
-                 // Continue processing with the newly discovered pool
-             } else {
+          if !pool_exists {
+              drop(pairs_guard); // Release read lock before attempting discovery
+              warn!("⚠️ Log from unknown pool: {:?}, attempting dynamic discovery", pool_address);
+              
+              // Try to discover the pool dynamically
+              if let Some(event) = self.discover_pool_from_logs(pool_address).await {
+                  // Add discovered pool to cache
+                  let mut pairs_mut = self.pairs.write().await;
+                  pairs_mut.insert(pool_address, event.clone());
+                  drop(pairs_mut);
+                  
+                  // Update token pair index
+                  let token_pair = match &event {
+                      Event::PairCreated(pair) => TokenPair::new(pair.token0, pair.token1),
+                      Event::PoolCreated(pool) => TokenPair::new(pool.token0, pool.token1),
+                  };
+                  let mut index = self.token_pair_index.write().await;
+                  index
+                      .entry(token_pair)
+                      .or_insert_with(Vec::new)
+                      .push(pool_address);
+                  
+                  // Persist to CSV cache file
+                  match crate::common::pools::append_pool_to_cache(&event, &self.cache_path).await {
+                      Ok(pool_id) => {
+                          info!("✨ Dynamically discovered, cached, and persisted pool: {:?} (ID: {})", 
+                               pool_address, pool_id);
+                      }
+                      Err(e) => {
+                          warn!("⚠️ Failed to persist discovered pool to cache: {}", e);
+                          info!("✨ Dynamically discovered and cached pool (memory only): {:?}", pool_address);
+                      }
+                  }
+                  
+                  // Continue processing with the newly discovered pool
+              } else {
                  warn!("❌ Failed to discover pool: {:?}", pool_address);
                  return None;
              }
@@ -626,10 +641,11 @@ pub async fn get_logs(
     pairs: HashMap<Address, Event>,
     event_sender: Sender<LogEvent>,
     cancellation_token: tokio_util::sync::CancellationToken,
+    cache_path: String,
 ) {
     info!("Starting log subscription service...");
 
-    let (processor, mut event_queue_rx) = LogProcessor::new(pairs, event_sender.clone(), client.clone());
+    let (processor, mut event_queue_rx) = LogProcessor::new(pairs, event_sender.clone(), client.clone(), cache_path);
 
     // Spawn queue processor task to handle events from queue to broadcast
     let sender_clone = event_sender.clone();

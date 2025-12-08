@@ -224,6 +224,7 @@ async fn main() -> Result<()> {
         pools_map_for_logs,
         log_event_sender,
         cancellation_token.clone(),
+        cache_path.clone(),
     ));
 
     // Start strategy manager on main thread (non-Send types can't cross thread boundaries)

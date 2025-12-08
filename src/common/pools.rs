@@ -449,3 +449,114 @@ pub struct PoolLiquidity {
     pub sqrt_price_x96: U256,
     pub tick: i32,
 }
+
+/// Append a single dynamically discovered pool to the CSV cache
+/// This function handles proper ID generation and maintains thread safety
+pub async fn append_pool_to_cache(
+    event: &crate::common::pairs::Event,
+    cache_path: &str,
+) -> Result<i64> {
+    use tokio::sync::Mutex;
+    use csv::Writer;
+    
+    // Thread-safe static for managing the next available ID
+    static NEXT_ID: tokio::sync::OnceCell<Mutex<i64>> = tokio::sync::OnceCell::const_new();
+    
+    // Get or initialize the next available ID
+    let pool_id = {
+        let mutex = NEXT_ID.get_or_init(|| async {
+            // Initialize by reading the last ID from the cache file
+            let last_id = get_last_id_from_cache(cache_path).await.unwrap_or(-1);
+            Mutex::new(last_id)
+        }).await;
+        
+        let mut next_id = mutex.lock().await;
+        *next_id += 1;
+        *next_id
+    };
+    
+    // Create the Pool struct from the Event
+    let pool = Pool {
+        id: pool_id,
+        address: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.pair_address,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.pair_address,
+        },
+        version: match event {
+            crate::common::pairs::Event::PairCreated(_) => DexVariant::UniswapV2,
+            crate::common::pairs::Event::PoolCreated(_) => DexVariant::UniswapV3,
+        },
+        token0: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.token0,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.token0,
+        },
+        token1: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.token1,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.token1,
+        },
+        fee: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.fee,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.fee,
+        },
+    };
+    
+    // Ensure the cache directory exists
+    if let Some(parent) = Path::new(cache_path).parent() {
+        create_dir_all(parent)?;
+    }
+    
+    // Check if file exists to determine if we need to write headers
+    let file_exists = Path::new(cache_path).exists();
+    
+    // Open file in append mode
+    let file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(cache_path)?;
+    
+    let mut writer = Writer::from_writer(file);
+    
+    // Write headers if this is a new file
+    if !file_exists {
+        writer.write_record([
+            "id", "address", "version", "token0", "token1", "fee",
+        ])?;
+    }
+    
+    // Serialize and write the pool
+    writer.serialize(pool.cache_row())?;
+    writer.flush()?;
+    
+    log::info!(
+        "✅ Persisted discovered pool to cache: {} (id: {}, version: {}, tokens: {} -> {})",
+        pool.address,
+        pool.id,
+        pool.version.num(),
+        pool.token0,
+        pool.token1
+    );
+    
+    Ok(pool_id)
+}
+
+/// Helper function to read the last ID from the cache file
+async fn get_last_id_from_cache(cache_path: &str) -> Result<i64> {
+    if !Path::new(cache_path).exists() {
+        return Ok(-1);
+    }
+    
+    let mut reader = csv::Reader::from_path(cache_path)?;
+    let mut last_id = -1;
+    
+    for result in reader.records() {
+        if let Ok(record) = result {
+            if let Some(id_str) = record.get(0) {
+                if let Ok(id) = id_str.parse::<i64>() {
+                    last_id = last_id.max(id);
+                }
+            }
+        }
+    }
+    
+    Ok(last_id)
+}
