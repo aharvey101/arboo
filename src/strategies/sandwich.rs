@@ -1,7 +1,7 @@
 use crate::strategies::traits::*;
 use async_trait::async_trait;
 use anyhow::Result;
-use revm::primitives::{Address, U256};
+use revm::primitives::U256;
 use log::{info, debug};
 
 /// Sandwich Attack Strategy

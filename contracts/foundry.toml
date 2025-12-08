@@ -6,7 +6,7 @@ libs = ["lib"]
 # auto_detect_solc = false
 remappings = [
     "@uniswap=lib",
-    "@openzeppelin/contracts/token/ERC20=lib/openzeppelin-contracts/contracts/interfaces/",
+    "@openzeppelin/contracts=lib/openzeppelin-contracts/contracts/",
 ]
 
 [rpc_endpoints]

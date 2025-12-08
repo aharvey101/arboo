@@ -182,7 +182,7 @@ async fn test_pool_discovery_infrastructure() -> Result<()> {
 
 fn create_test_pool_set() -> Vec<arbooo::common::pools::Pool> {
     use arbooo::common::pools::{Pool, DexVariant};
-    use arbooo::arbitrage::simulation::{get_address, AddressType};
+    use arbooo::common::simulation::{get_address, AddressType};
 
     let weth = get_address(AddressType::Weth);
     let dai = alloy::primitives::address!("6B175474E89094C44Da98b954EedeAC495271d0F");

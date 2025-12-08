@@ -264,38 +264,14 @@ async fn create_arbitrage_strategy(test_env: &TestEnvironment) -> Result<Uniswap
     let config = StrategyConfig {
         enabled: true,
         max_gas_price: U256::from(100_000_000_000u64),
-        min_profit_threshold: U256::from(1_000_000u64),
+        min_profit_threshold: U256::from(1_000_000_000_000_000u128), // 0.001 ETH - realistic profit threshold
         max_position_size: U256::from(10_000_000_000_000_000_000u64),
         priority: 90,
     };
 
-    let pools_map = Arc::new(RwLock::new(HashMap::<alloy_primitives::Address, Event>::new()));
+    let strategy = UniswapArbitrageStrategy::new(config, test_env.test_config.ws_url.clone(), 4).await?;
 
-    let mut pools_guard = pools_map.write().await;
-    pools_guard.insert(
-        address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
-        Event::PoolCreated(arbooo::common::pairs::V3PoolCreated {
-            pair_address: address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
-            token0: address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"),
-            token1: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-            fee: 3000,
-            tick_spacing: 60,
-        }),
-    );
-    pools_guard.insert(
-        address!("5777d92f208679DB4b9778590Fa3CAB3aC9e2168"),
-        Event::PairCreated(arbooo::common::pairs::V2PoolCreated {
-            pair_address: address!("5777d92f208679DB4b9778590Fa3CAB3aC9e2168"),
-            token0: address!("A0b86a33E6441E4C536C53D5BBD7AE4B9a24C6F2"),
-            token1: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-            fee: 3000,
-        }),
-    );
-    drop(pools_guard);
-
-    let connection_pool = ConnectionPool::new(test_env.test_config.ws_url.clone(), 4);
-
-    Ok(UniswapArbitrageStrategy::new(config, pools_map, connection_pool))
+    Ok(strategy)
 }
 
 async fn create_test_execution_context(test_env: &TestEnvironment) -> Result<ExecutionContext> {
@@ -306,7 +282,6 @@ async fn create_test_execution_context(test_env: &TestEnvironment) -> Result<Exe
         block_number,
         gas_price: U256::from(50_000_000_000u64),
         base_fee: U256::from(30_000_000_000u64),
-        executor_address: address!("742d35Cc6634C0532925a3b8d1C4AC1B8b5C0000"),
         max_gas_limit: 2_000_000,
     })
 }
@@ -317,7 +292,7 @@ async fn process_with_strategy(
     context: &ExecutionContext,
 ) -> Result<()> {
 
-    let opportunities = strategy.scan_opportunities(log_event).await?;
+    let opportunities = strategy.identify_opportunities(log_event, context).await?;
 
     if opportunities.is_empty() {
         return Ok(());

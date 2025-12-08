@@ -2,7 +2,7 @@ use alloy::network::Ethereum;
 use alloy::providers::{ProviderBuilder, RootProvider, WsConnect};
 use alloy::pubsub::PubSubFrontend;
 use anyhow::Result;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;

@@ -186,27 +186,46 @@ pub async fn load_all_pools(
     //        from_block
     //    };
 
-    let to_block = provider
-        .get_block_number()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
+     let to_block = provider
+         .get_block_number()
+         .await
+         .map_err(|e| anyhow::anyhow!("Failed to get latest block number: {}", e))?;
 
-    let mut blocks_processed = 0;
+     info!("Current block number: {}", to_block);
 
-    let mut block_range = Vec::new();
+     let mut blocks_processed = 0;
 
-    loop {
-        let start_idx = from_block + blocks_processed;
-        let mut end_idx = start_idx + chunk - 1;
-        if end_idx > to_block {
-            end_idx = to_block;
-            block_range.push((start_idx, end_idx));
-            break;
-        }
-        block_range.push((start_idx, end_idx));
-        blocks_processed += chunk;
-    }
-    log::debug!("Block range: {:?}", block_range);
+     let mut block_range = Vec::new();
+
+     // For forked testnets, scan backwards from current block
+     // Most pools will be in recent blocks on a fork
+     let actual_from_block = if from_block > to_block {
+         // If requested from_block is higher than current block (fork scenario)
+         // Scan from current block backwards with chunk size, but at least scan recent blocks
+         info!("⚠️ Requested start block {} is beyond current block {}. Scanning recent blocks instead.", from_block, to_block);
+         if to_block > 100_000 {
+             to_block.saturating_sub(100_000) // Scan last 100k blocks
+         } else {
+             0 // Scan from genesis on small forks
+         }
+     } else {
+         from_block
+     };
+
+     info!("📡 Pool scanning range: {} to {}", actual_from_block, to_block);
+
+     loop {
+         let start_idx = actual_from_block + blocks_processed;
+         let mut end_idx = start_idx + chunk - 1;
+         if end_idx > to_block {
+             end_idx = to_block;
+             block_range.push((start_idx, end_idx));
+             break;
+         }
+         block_range.push((start_idx, end_idx));
+         blocks_processed += chunk;
+     }
+     log::debug!("Block range: {:?}", block_range);
 
     let pb = ProgressBar::new(block_range.len() as u64);
     pb.set_style(
@@ -218,29 +237,35 @@ pub async fn load_all_pools(
     );
 
     for range in block_range {
-        let requests = vec![
-            tokio::task::spawn(load_uniswap_v2_pools(provider.clone(), range.0, range.1)),
-            tokio::task::spawn(load_uniswap_v3_pools(provider.clone(), range.0, range.1)),
-        ];
+         let requests = vec![
+             tokio::task::spawn(load_uniswap_v2_pools(provider.clone(), range.0, range.1)),
+             tokio::task::spawn(load_uniswap_v3_pools(provider.clone(), range.0, range.1)),
+         ];
 
-        let results = futures::future::join_all(requests).await;
-        results.into_iter().for_each(|result| {
-            if let Ok(response) = result {
-                if let Ok(pools_response) = response {
-                    pools.extend(pools_response);
-                }
-            }
-        });
-        // now that we have all the pools, what we need to do is make sure they have atleast 5 eth of liquidity
-        // to do this we need to setup an evm, get the storage for the contract,
-        // Then query the balance of the contract for the token0 and token1
-        // if either of them are less than 5 eth, we will skip the pool
-        // if they are more than 5 eth, we will add the pool to the list
+         let results = futures::future::join_all(requests).await;
+         results.into_iter().for_each(|result| {
+             if let Ok(response) = result {
+                 match response {
+                     Ok(pools_response) => {
+                         pools.extend(pools_response);
+                     }
+                     Err(e) => {
+                         log::error!("⚠️ Error fetching pools for range: {}", e);
+                     }
+                 }
+             }
+         });
+         // now that we have all the pools, what we need to do is make sure they have atleast 5 eth of liquidity
+         // to do this we need to setup an evm, get the storage for the contract,
+         // Then query the balance of the contract for the token0 and token1
+         // if either of them are less than 5 eth, we will skip the pool
+         // if they are more than 5 eth, we will add the pool to the list
 
-        pb.inc(1);
-    }
+         pb.inc(1);
+     }
 
-    log::debug!("amount of pools before liquidity test: {:?}", pools.len());
+     info!("🏁 Total pools discovered: {}", pools.len());
+     log::debug!("amount of pools before liquidity test: {:?}", pools.len());
 
     //    let (evm, caller_address) = create_evm(provider.clone()).await;
     //let evm = Arc::new(tokio::sync::Mutex::new(evm));
@@ -275,22 +300,25 @@ pub async fn load_all_pools(
     //
     //let mut pools = filtered_pools;
     //info!("amount of pools after liquidity test: {:?}", pools.len());
-    let mut added = 0;
-    //pools.sort_by_key(|p| p.block_number);
-    for pool in pools.iter_mut() {
-        if pool.id == -1 {
-            id += 1;
-            pool.id = id;
-        }
-        if pool.id > last_id {
-            writer.serialize(pool.cache_row())?;
-            added += 1;
-        }
-    }
-    writer.flush()?;
-    log::debug!("Added {:?} new pools", added);
+     let mut added = 0;
+     //pools.sort_by_key(|p| p.block_number);
+     for pool in pools.iter_mut() {
+         if pool.id == -1 {
+             id += 1;
+             pool.id = id;
+         }
+         if pool.id > last_id {
+             writer.serialize(pool.cache_row())?;
+             added += 1;
+         }
+     }
+     // Finalize the CSV writer - this flushes and closes the underlying file properly
+     writer.flush()?;
+     drop(writer);
+     log::debug!("Added {:?} new pools to cache", added);
+     info!("💾 Cache file persisted at: {}", cache_path);
 
-    Ok((pools, last_id))
+     Ok((pools, last_id))
 }
 
 pub async fn load_uniswap_v2_pools(
@@ -303,10 +331,12 @@ pub async fn load_uniswap_v2_pools(
     let event_filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block)
-        //        .address(UNISWAP_V2_FACTORY)
+        .address(vec![UNISWAP_V2_FACTORY])
         .event("PairCreated(address,address,address,uint256)");
 
+    info!("🔍 Scanning V2 pools from block {} to {} on factory {}", from_block, to_block, UNISWAP_V2_FACTORY);
     let logs = provider.get_logs(&event_filter).await?;
+    info!("📊 Found {} V2 PairCreated events", logs.len());
 
     for log in logs {
         //let block_number = log.block_number.unwrap_or_default();
@@ -331,30 +361,33 @@ pub async fn load_uniswap_v2_pools(
             version: DexVariant::UniswapV2,
             token0,
             token1,
-            fee: 300,
-            //block_number,
-        };
-        pools.push(pool_data);
-    }
+             fee: 300,
+             //block_number,
+         };
+         pools.push(pool_data);
+     }
 
-    Ok(pools)
-}
+     info!("✅ Successfully loaded {} V2 pools", pools.len());
+     Ok(pools)
+ }
 
-pub async fn load_uniswap_v3_pools(
-    provider: Arc<RootProvider<PubSubFrontend>>,
-    from_block: u64,
-    to_block: u64,
-) -> Result<Vec<Pool>> {
-    let mut pools = Vec::new();
+ pub async fn load_uniswap_v3_pools(
+     provider: Arc<RootProvider<PubSubFrontend>>,
+     from_block: u64,
+     to_block: u64,
+ ) -> Result<Vec<Pool>> {
+     let mut pools = Vec::new();
 
-    let event_filter = Filter::new()
-        .from_block(from_block)
-        .to_block(to_block)
-        //        .address(UNISWAP_V3_FACTORY)
-        .event("PoolCreated(address,address,uint24,int24,address)");
+     let event_filter = Filter::new()
+         .from_block(from_block)
+         .to_block(to_block)
+         .address(vec![UNISWAP_V3_FACTORY])
+         .event("PoolCreated(address,address,uint24,int24,address)");
 
-    let logs = provider.get_logs(&event_filter).await?;
-    for log in logs {
+     info!("🔍 Scanning V3 pools from block {} to {} on factory {}", from_block, to_block, UNISWAP_V3_FACTORY);
+     let logs = provider.get_logs(&event_filter).await?;
+     info!("📊 Found {} V3 PoolCreated events", logs.len());
+     for log in logs {
         if log.topics()[1].is_zero() {
             info!("V3 log 1 empty");
             continue;
@@ -383,16 +416,17 @@ pub async fn load_uniswap_v3_pools(
         let pool_data = Pool {
             id: -1,
             address: pool_address,
-            version: DexVariant::UniswapV3,
-            token0,
-            token1,
-            fee,
-            //block_number,
-        };
-        pools.push(pool_data);
-    }
+             version: DexVariant::UniswapV3,
+             token0,
+             token1,
+             fee,
+             //block_number,
+         };
+         pools.push(pool_data);
+     }
 
-    Ok(pools)
+     info!("✅ Successfully loaded {} V3 pools", pools.len());
+     Ok(pools)
 }
 
 alloy::sol! {
@@ -414,4 +448,115 @@ pub struct PoolLiquidity {
     pub liquidity: U256,
     pub sqrt_price_x96: U256,
     pub tick: i32,
+}
+
+/// Append a single dynamically discovered pool to the CSV cache
+/// This function handles proper ID generation and maintains thread safety
+pub async fn append_pool_to_cache(
+    event: &crate::common::pairs::Event,
+    cache_path: &str,
+) -> Result<i64> {
+    use tokio::sync::Mutex;
+    use csv::Writer;
+    
+    // Thread-safe static for managing the next available ID
+    static NEXT_ID: tokio::sync::OnceCell<Mutex<i64>> = tokio::sync::OnceCell::const_new();
+    
+    // Get or initialize the next available ID
+    let pool_id = {
+        let mutex = NEXT_ID.get_or_init(|| async {
+            // Initialize by reading the last ID from the cache file
+            let last_id = get_last_id_from_cache(cache_path).await.unwrap_or(-1);
+            Mutex::new(last_id)
+        }).await;
+        
+        let mut next_id = mutex.lock().await;
+        *next_id += 1;
+        *next_id
+    };
+    
+    // Create the Pool struct from the Event
+    let pool = Pool {
+        id: pool_id,
+        address: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.pair_address,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.pair_address,
+        },
+        version: match event {
+            crate::common::pairs::Event::PairCreated(_) => DexVariant::UniswapV2,
+            crate::common::pairs::Event::PoolCreated(_) => DexVariant::UniswapV3,
+        },
+        token0: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.token0,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.token0,
+        },
+        token1: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.token1,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.token1,
+        },
+        fee: match event {
+            crate::common::pairs::Event::PairCreated(pair) => pair.fee,
+            crate::common::pairs::Event::PoolCreated(pool) => pool.fee,
+        },
+    };
+    
+    // Ensure the cache directory exists
+    if let Some(parent) = Path::new(cache_path).parent() {
+        create_dir_all(parent)?;
+    }
+    
+    // Check if file exists to determine if we need to write headers
+    let file_exists = Path::new(cache_path).exists();
+    
+    // Open file in append mode
+    let file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(cache_path)?;
+    
+    let mut writer = Writer::from_writer(file);
+    
+    // Write headers if this is a new file
+    if !file_exists {
+        writer.write_record([
+            "id", "address", "version", "token0", "token1", "fee",
+        ])?;
+    }
+    
+    // Serialize and write the pool
+    writer.serialize(pool.cache_row())?;
+    writer.flush()?;
+    
+    log::info!(
+        "✅ Persisted discovered pool to cache: {} (id: {}, version: {}, tokens: {} -> {})",
+        pool.address,
+        pool.id,
+        pool.version.num(),
+        pool.token0,
+        pool.token1
+    );
+    
+    Ok(pool_id)
+}
+
+/// Helper function to read the last ID from the cache file
+async fn get_last_id_from_cache(cache_path: &str) -> Result<i64> {
+    if !Path::new(cache_path).exists() {
+        return Ok(-1);
+    }
+    
+    let mut reader = csv::Reader::from_path(cache_path)?;
+    let mut last_id = -1;
+    
+    for result in reader.records() {
+        if let Ok(record) = result {
+            if let Some(id_str) = record.get(0) {
+                if let Ok(id) = id_str.parse::<i64>() {
+                    last_id = last_id.max(id);
+                }
+            }
+        }
+    }
+    
+    Ok(last_id)
 }

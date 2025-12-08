@@ -1,7 +1,7 @@
 use crate::common::logs::LogEvent;
 use crate::strategies::arbitrage::UniswapArbitrageStrategy;
 use crate::strategies::traits::*;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use anyhow::Result;
 use log::{debug, error, info};
 
@@ -113,7 +113,7 @@ impl StrategyManager {
             return Ok(results);
         }
 
-        info!(
+        debug!(
             "🔍 Found {} opportunities, processing with enhanced simulation",
             opportunities.len()
         );

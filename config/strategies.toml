@@ -11,7 +11,7 @@ ws_url = "wss://eth-mainnet.g.alchemy.com/v2/your-api-key"
 [strategies.arbitrage]
 enabled = true
 priority = 90
-min_profit_threshold = "100000000000000"  # 0.0001 ETH in wei
+min_profit_threshold = "1000000000000000"  # 0.001 ETH in wei (more realistic for testing)
 max_gas_price = "100000000000"           # 100 gwei
 max_position_size = "1000000000000000000000"  # 1000 ETH
 description = "Uniswap V2/V3 arbitrage opportunities"
